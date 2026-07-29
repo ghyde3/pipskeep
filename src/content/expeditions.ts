@@ -45,13 +45,21 @@ export const expeditions: Readonly<Record<ExpeditionId, ExpeditionDef>> = {
     name: "Meadow",
     unlockKeepLevel: tuning.expeditions.meadow.unlockKeepLevel,
     durationMs: tuning.expeditions.meadow.durationMs,
+    // ROUND 2A: Wood ("fallen twigs") added. Wood previously dropped ONLY
+    // in the Forest, which unlocks at Keep level 2, which itself cost
+    // Wood — the game could not progress past level 1. Kept deliberately
+    // modest: the Forest still yields more than twice as much Wood per
+    // trip, so unlocking it still reads as the upgrade it is. Guarded by
+    // core/economy/reachability.test.ts.
     lootTable: [
-      { itemId: "berry", weight: 60 },
-      { itemId: "fiber", weight: 40 },
+      { itemId: "berry", weight: 40 },
+      { itemId: "fiber", weight: 35 },
+      { itemId: "wood", weight: 25 },
     ],
     lootRolls: tuning.expeditions.meadow.lootRolls,
     eggChance: tuning.expeditions.meadow.eggChance,
-    flavor: "Sun-warmed grass, suspiciously friendly bees, snacks everywhere.",
+    flavor:
+      "Sun-warmed grass, suspiciously friendly bees, snacks and fallen twigs everywhere.",
   },
   forest: {
     id: "forest",

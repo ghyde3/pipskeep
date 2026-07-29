@@ -185,32 +185,48 @@ describe("the Phase 4 gate: send → advance → Returning → collect exact see
     const reveal = returned.pendingReveals[0];
 
     // Item-by-item against the fixed seed. Pinned literal first —
-    // seed 42's fresh "expedition-loot" stream rolls meadow (60/40,
-    // 2 base rolls, lazy pip → no bonus) as: berry, berry, no egg.
-    expect(reveal?.items).toEqual(["berry", "berry"]);
+    // seed 42's fresh "expedition-loot" stream rolls the Meadow (Berry
+    // 40 / Fiber 35 / Wood 25, 3 base rolls, lazy pip → no Curious
+    // bonus) as: berry, berry, wood — and no egg.
+    expect(reveal?.items).toEqual(["berry", "berry", "wood"]);
     expect(reveal?.egg).toBeNull();
     expect(reveal?.completedAt).toBe(T0 + MEADOW_MS);
 
     // Independent first-principles re-derivation of the same rolls
     // (raw stream arithmetic over the weighted table — no reuse of the
-    // implementation under test).
+    // implementation under test). Table-driven so a content rebalance
+    // moves both sides together instead of silently un-pinning one.
     const ref = createRng(SEED).stream(EXPEDITION_LOOT_STREAM);
-    const pickMeadow = (r: number): string => (r * 100 < 60 ? "berry" : "fiber");
-    expect(reveal?.items).toEqual([pickMeadow(ref.next()), pickMeadow(ref.next())]);
-    expect(ref.next() < 0.08).toBe(false); // the egg roll, consumed third
+    const meadowTable = contentExpeditions.meadow.lootTable;
+    const meadowTotal = meadowTable.reduce((sum, e) => sum + e.weight, 0);
+    const pickMeadow = (r: number): string => {
+      let acc = r * meadowTotal;
+      for (const entry of meadowTable) {
+        acc -= entry.weight;
+        if (acc < 0) return entry.itemId;
+      }
+      throw new Error("meadow reference roll fell through");
+    };
+    expect(reveal?.items).toEqual(
+      Array.from({ length: contentExpeditions.meadow.lootRolls }, () =>
+        pickMeadow(ref.next()),
+      ),
+    );
+    // The egg roll, consumed after every base roll.
+    expect(ref.next() < contentExpeditions.meadow.eggChance).toBe(false);
 
     // 4) Nothing entered the pantry yet — the reveal moment gates it.
     expect(returned.inventory).toEqual({});
     expect(returned.resources).toEqual({});
 
-    // 5) ACKNOWLEDGE: loot lands (berries are food → inventory), pip
-    //    arrives home Idle, queue empties.
+    // 5) ACKNOWLEDGE: loot lands, split by the food registry — Berries
+    //    are food → inventory; Wood is a resource → resources (§6.3).
     const collected = rootReducer(returned, {
       type: "ACKNOWLEDGE_REVEAL",
       at: T0 + MEADOW_MS + 1_000,
     });
     expect(collected.inventory).toEqual({ berry: 2 });
-    expect(collected.resources).toEqual({});
+    expect(collected.resources).toEqual({ wood: 1 });
     expect(collected.pendingReveals).toEqual([]);
     expect(collected.pips["pip-1"]?.activity).toBe(PipActivity.Idle);
     expect(collected.pips["pip-1"]?.expedition).toBeNull();
@@ -450,7 +466,14 @@ describe("assignment legality (spec §6.1/§4.6/§4.7)", () => {
       expeditionId: "meadow",
       at: T0 + 1,
     });
-    expect(refused.lastAssignOutcome).toMatchObject({ ok: false, reason: "occupied" });
+    // `occupiedUntil` is the occupying Pip's derived return moment, so the
+    // UI can tell the player exactly when to retry (spec: refusals carry
+    // enough to write "why + when").
+    expect(refused.lastAssignOutcome).toMatchObject({
+      ok: false,
+      reason: "occupied",
+      occupiedUntil: T0 + MEADOW_MS,
+    });
     expect(refused.pips["pip-2"]?.activity).toBe(PipActivity.Idle);
 
     // A Returning pip still holds its slot until the reveal is collected.
@@ -469,7 +492,11 @@ describe("assignment legality (spec §6.1/§4.6/§4.7)", () => {
       expeditionId: "meadow",
       at: T0,
     });
-    expect(stillRefused.lastAssignOutcome).toMatchObject({ ok: false, reason: "occupied" });
+    expect(stillRefused.lastAssignOutcome).toMatchObject({
+      ok: false,
+      reason: "occupied",
+      occupiedUntil: T0 + MEADOW_MS,
+    });
 
     // A DIFFERENT expedition is fine — multiple pips out simultaneously.
     const forestOk = rootReducer(state, {
@@ -484,14 +511,19 @@ describe("assignment legality (spec §6.1/§4.6/§4.7)", () => {
 
   it("locked expeditions refuse until the Keep level unlocks them (spec §9)", () => {
     const level1 = makeState({ keep: { level: 1, placements: {} } });
-    for (const locked of ["forest", "shore"]) {
+    for (const locked of ["forest", "shore"] as const) {
       const refused = rootReducer(level1, {
         type: "ASSIGN_EXPEDITION",
         pipId: "pip-1",
         expeditionId: locked,
         at: T0,
       });
-      expect(refused.lastAssignOutcome).toMatchObject({ ok: false, reason: "locked" });
+      expect(refused.lastAssignOutcome).toMatchObject({
+        ok: false,
+        reason: "locked",
+        requiredKeepLevel: contentExpeditions[locked]?.unlockKeepLevel,
+        currentKeepLevel: 1,
+      });
       expect(refused.pips["pip-1"]?.activity).toBe(PipActivity.Idle);
     }
     // Meadow needs level 1; forest unlocks at 2, shore still locked.
@@ -521,18 +553,28 @@ describe("assignment legality (spec §6.1/§4.6/§4.7)", () => {
     ).toMatchObject({ ok: false, reason: "locked" });
   });
 
-  it("Piplings cannot go (spec §4.6) — refused with a Refusal-context line", () => {
+  it("Piplings refuse expeditions NOT on the supervised-trip allowlist — refused with a Refusal-context line AND growsUpAt (spec §4.6, round 2A)", () => {
+    // Forest is level-2+ and NOT in tuning.pipling.allowedExpeditionIds
+    // (only Meadow is, round 2A's "supervised short trip" amendment) —
+    // still the age-gated case the spec originally described.
+    const hatchedAt = T0 - 3 * HOUR_MS;
     const state = makeState({
-      pips: { "pip-1": makePip("pip-1", { lifeStage: LifeStage.Pipling }) },
+      pips: {
+        "pip-1": makePip("pip-1", { lifeStage: LifeStage.Pipling, hatchedAt }),
+      },
     });
     const refused = rootReducer(state, {
       type: "ASSIGN_EXPEDITION",
       pipId: "pip-1",
-      expeditionId: "meadow",
+      expeditionId: "forest",
       at: T0,
     });
     const outcome = refused.lastAssignOutcome;
-    expect(outcome).toMatchObject({ ok: false, reason: "pipling" });
+    expect(outcome).toMatchObject({
+      ok: false,
+      reason: "pipling",
+      growsUpAt: hatchedAt + tuning.pipling.durationMs,
+    });
     if (outcome !== null && !outcome.ok) {
       expect(outcome.line).toBeTypeOf("string");
       expect(outcome.lineId).toMatch(/^lazy\/refusal\//);
@@ -541,6 +583,21 @@ describe("assignment legality (spec §6.1/§4.6/§4.7)", () => {
     // The dialogue draw advanced the dialogue cursor — and nothing else.
     expect(refused.rngState["dialogue"]).toBeTypeOf("number");
     expect(refused.rngState[EXPEDITION_LOOT_STREAM]).toBeUndefined();
+  });
+
+  it("Piplings CAN go on the Meadow — the round 2A supervised-trip amendment", () => {
+    expect(tuning.pipling.allowedExpeditionIds).toEqual(["meadow"]);
+    const state = makeState({
+      pips: { "pip-1": makePip("pip-1", { lifeStage: LifeStage.Pipling }) },
+    });
+    const sent = rootReducer(state, {
+      type: "ASSIGN_EXPEDITION",
+      pipId: "pip-1",
+      expeditionId: "meadow",
+      at: T0,
+    });
+    expect(sent.lastAssignOutcome).toMatchObject({ ok: true, expeditionId: "meadow" });
+    expect(sent.pips["pip-1"]?.activity).toBe(PipActivity.OnExpedition);
   });
 
   it("Sulking pips refuse with dialogue (spec §4.7), and stay Sulking", () => {

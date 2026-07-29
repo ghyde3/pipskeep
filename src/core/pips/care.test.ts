@@ -14,8 +14,8 @@ import { SECOND_MS, tuning } from "../../content/tuning";
 import { createRng } from "../rng";
 import { LifeStage, PipActivity } from "./types";
 import type { PipNeeds, PipState } from "./types";
-import { QUIRKS_STREAM, performCare } from "./care";
-import type { CareRequest, CareStateSlice } from "./care";
+import { CARE_ACTIONS, QUIRKS_STREAM, performCare } from "./care";
+import type { CareAction, CareRequest, CareStateSlice } from "./care";
 
 const needs = (overrides: Partial<PipNeeds> = {}): PipNeeds => ({
   hunger: 50,
@@ -98,7 +98,7 @@ function findQuirksSeed(test: (roll: number) => boolean): number {
 const WHIM = tuning.playRefusal.lazyFlavorRefusalChance;
 
 describe("Feed — spec §5", () => {
-  it("Berry: +25 Hunger, consumes one berry, other needs untouched", () => {
+  it("Berry: +45 Hunger, consumes one berry, other needs untouched", () => {
     const state = makeState();
     const { state: next, outcome } = performCare(state, {
       action: "feed",
@@ -107,14 +107,14 @@ describe("Feed — spec §5", () => {
       at: 1_000,
     });
     expect(outcome.applied).toBe(true);
-    expect(pip(next).needs.hunger).toBe(50 + tuning.foods.berry.hunger); // 75
+    expect(pip(next).needs.hunger).toBe(50 + tuning.foods.berry.hunger); // 95
     expect(pip(next).needs.happiness).toBe(50);
     expect(pip(next).needs.energy).toBe(50);
     expect(next.inventory["berry"]).toBe(2);
     expect(next.inventory["stew"]).toBe(1);
   });
 
-  it("Stew: +50 Hunger AND +5 Happiness (content side effect)", () => {
+  it("Stew: +75 Hunger AND +15 Happiness (content side effect)", () => {
     const state = makeState();
     const { state: next } = performCare(state, {
       action: "feed",
@@ -122,8 +122,8 @@ describe("Feed — spec §5", () => {
       foodId: "stew",
       at: 1_000,
     });
-    expect(pip(next).needs.hunger).toBe(100); // 50 + 50
-    expect(pip(next).needs.happiness).toBe(50 + tuning.foods.stew.happiness); // 55
+    expect(pip(next).needs.hunger).toBe(100); // 50 + 75, clamped
+    expect(pip(next).needs.happiness).toBe(50 + tuning.foods.stew.happiness); // 65
     expect(next.inventory["stew"]).toBe(0);
   });
 
@@ -204,10 +204,28 @@ describe("Clean — spec §5 (deliberately trivial, 60s cooldown)", () => {
       10_000 + 60 * SECOND_MS,
     );
   });
+
+  // Found by playtest: a save whose cooldown stamps were written under a
+  // skewed clock (debug time-skip, a system clock change, a timezone shift)
+  // read back as ~32 HOURS of remaining cooldown, soft-locking the button.
+  // §4.5 clamps negative elapsed for decay; cooldowns must do the same.
+  it("treats a future cooldown stamp as expired instead of locking for hours", () => {
+    const now = 10_000;
+    const state = makeState({
+      pip: makePip({ needs: needs({ cleanliness: 1 }) }),
+      // Stamped 32h in the future — what a +24h debug skew leaves behind.
+      cooldowns: { "pip-1": { clean: now + 32 * 60 * 60 * 1000 } },
+    });
+
+    const result = performCare(state, { action: "clean", pipId: "pip-1", at: now });
+    expect(result.outcome.applied).toBe(true);
+    expect(result.outcome.refusalReason).toBeUndefined();
+    expect(result.state.cooldowns["pip-1"]?.clean).toBe(now);
+  });
 });
 
 describe("Play — spec §5 effects and refusal matrix (v1.1)", () => {
-  it("+20 Happiness, −10 Energy", () => {
+  it("+40 Happiness, −10 Energy", () => {
     const state = makeState();
     const { state: next, outcome } = performCare(state, {
       action: "play",
@@ -215,8 +233,8 @@ describe("Play — spec §5 effects and refusal matrix (v1.1)", () => {
       at: 1_000,
     });
     expect(outcome.applied).toBe(true);
-    expect(pip(next).needs.happiness).toBe(70);
-    expect(pip(next).needs.energy).toBe(40);
+    expect(pip(next).needs.happiness).toBe(50 + tuning.care.play.happiness); // 90
+    expect(pip(next).needs.energy).toBe(50 + tuning.care.play.energy); // 40
   });
 
   it("any Pip refuses below 10 Energy: 9.99 refuses, 10 plays", () => {
@@ -329,25 +347,25 @@ describe("Play — spec §5 effects and refusal matrix (v1.1)", () => {
   });
 });
 
-describe("Pet — spec §5 (+8, Clingy +14, 30s cooldown)", () => {
-  it("+8 Happiness for a non-Clingy Pip", () => {
+describe("Pet — spec §5 (+20, Clingy +30, 30s cooldown)", () => {
+  it("+20 Happiness for a non-Clingy Pip", () => {
     const state = makeState();
     const { state: next } = performCare(state, {
       action: "pet",
       pipId: "pip-1",
       at: 0,
     });
-    expect(pip(next).needs.happiness).toBe(58);
+    expect(pip(next).needs.happiness).toBe(50 + tuning.care.pet.happiness); // 70
   });
 
-  it("Clingy gets +14 instead", () => {
+  it("Clingy gets +30 instead", () => {
     const state = makeState({ pip: makePip({ personalityId: "clingy" }) });
     const { state: next } = performCare(state, {
       action: "pet",
       pipId: "pip-1",
       at: 0,
     });
-    expect(pip(next).needs.happiness).toBe(64);
+    expect(pip(next).needs.happiness).toBe(50 + tuning.care.pet.clingyHappiness); // 80
   });
 
   it("blocks within the 30s cooldown and unblocks at EXACTLY the boundary", () => {
@@ -366,7 +384,9 @@ describe("Pet — spec §5 (+8, Clingy +14, 30s cooldown)", () => {
     clock.advance(1);
     const boundary = pet(clock.now());
     expect(boundary.outcome.applied).toBe(true);
-    expect(pip(boundary.state).needs.happiness).toBe(66); // 50 + 8 + 8
+    expect(pip(boundary.state).needs.happiness).toBe(
+      50 + 2 * tuning.care.pet.happiness,
+    ); // 50 + 20 + 20
   });
 
   it("cooldowns are per Pip: petting one Pip does not block another", () => {
@@ -404,7 +424,11 @@ describe("Rest toggle — spec §5 (via the state machine)", () => {
     expect(pip(on.state).activity).toBe(PipActivity.Resting);
   });
 
-  it("a Sulking Pip declines the Rest toggle with a Refusal line", () => {
+  it("round 2A fix: a Sulking Pip's Rest toggle now SUCCEEDS — begins Resting, still sulking, speaks from the Sulking pool", () => {
+    // Before this round, beginRest required activity === Idle, so a
+    // Sulking Pip's Rest toggle refused with `refusalReason: "machine"`
+    // — and since Rest is the only source of Energy, a Pip that Sulked
+    // at 0 Energy had no path back. This is the fix (machine.ts).
     const state = makeState({
       pip: makePip({ activity: PipActivity.Sulking, needs: needs({ hunger: 0 }) }),
     });
@@ -413,11 +437,27 @@ describe("Rest toggle — spec §5 (via the state machine)", () => {
       pipId: "pip-1",
       at: 0,
     });
-    expect(outcome.applied).toBe(false);
-    expect(outcome.refusalReason).toBe("machine");
-    expect(outcome.dialogueContext).toBe("refusal");
-    expect(outcome.lineId).toBeDefined();
-    expect(pip(next).activity).toBe(PipActivity.Sulking); // unchanged
+    expect(outcome.applied).toBe(true);
+    expect(outcome.refusalReason).toBeUndefined();
+    // Still guilt-tripping (Hunger is still 0) — the success line is
+    // drawn from the Sulking pool, not a mood pool, even though the Pip
+    // is now Resting.
+    expect(outcome.dialogueContext).toBe("sulking");
+    expect(outcome.line).toBeTypeOf("string");
+    expect(pip(next).activity).toBe(PipActivity.Resting);
+    expect(pip(next).sulking).toBe(true);
+  });
+
+  it("a fully-recovered-but-still-Resting Pip speaks from its mood, not the Sulking pool", () => {
+    // sulking: false (already exited via evaluateSulk elsewhere) but
+    // activity still Resting — care.ts must read `isSulking`, not the
+    // bare activity check, or this would wrongly draw a Sulking line.
+    const state = makeState({
+      pip: makePip({ activity: PipActivity.Resting, sulking: false }),
+    });
+    const { outcome } = performCare(state, { action: "pet", pipId: "pip-1", at: 0 });
+    expect(outcome.applied).toBe(true);
+    expect(outcome.dialogueContext).not.toBe("sulking");
   });
 });
 
@@ -433,7 +473,9 @@ describe("Give Item — spec §5 / §4.6 (gift record + content effects)", () =>
     expect(outcome.applied).toBe(true);
     expect(pip(next).lastGiftItemId).toBe("stew");
     expect(next.inventory["stew"]).toBe(0);
-    expect(pip(next).needs.happiness).toBe(55); // side effect, +5
+    expect(pip(next).needs.happiness).toBe(
+      50 + tuning.foods.stew.happiness,
+    ); // side effect only, +15
     expect(pip(next).needs.hunger).toBe(50); // hunger restore is Feed-only
   });
 
@@ -484,6 +526,66 @@ describe("care legality and outcomes — spec §4.7 / §4.4", () => {
       expect(outcome.applied).toBe(false);
       expect(outcome.refusalReason).toBe("busy");
       expect(next).toBe(state);
+    }
+  });
+
+  /** Build one request per action against pip-1 (round 2A audit: every
+   * care action gated on `canReceiveCare` alone, spec §4.7). */
+  function requestFor(action: CareAction, at: number): CareRequest {
+    switch (action) {
+      case "feed":
+        return { action, pipId: "pip-1", foodId: "berry", at };
+      case "giveItem":
+        return { action, pipId: "pip-1", itemId: "berry", at };
+      case "clean":
+      case "play":
+      case "pet":
+      case "restToggle":
+        return { action, pipId: "pip-1", at };
+    }
+  }
+
+  describe("EVERY care action × EVERY activity (round 2A audit: spec §4.7 legality)", () => {
+    const expectedLegal: Record<PipActivity, boolean> = {
+      [PipActivity.Idle]: true,
+      [PipActivity.Resting]: true,
+      [PipActivity.Sulking]: true,
+      [PipActivity.AssignedJob]: false,
+      [PipActivity.OnExpedition]: false,
+      [PipActivity.Returning]: false,
+    };
+    const ALL_ACTIVITIES = Object.values(PipActivity);
+
+    for (const activity of ALL_ACTIVITIES) {
+      for (const action of CARE_ACTIONS) {
+        const legal = expectedLegal[activity];
+        it(`${action} from ${activity} is ${legal ? "legal" : "blocked as busy"}`, () => {
+          const away =
+            activity === PipActivity.OnExpedition ||
+            activity === PipActivity.Returning;
+          const fixture = makePip({
+            activity,
+            // Full Energy so Play's OWN refusal ladder (spec §5) never
+            // interferes — this matrix isolates the ACTIVITY check only.
+            needs: needs({ energy: 100 }),
+            expedition: away
+              ? { expeditionId: "meadow", departedAt: 0, durationMs: 1 }
+              : null,
+          });
+          const state = makeState({ pip: fixture });
+          const { state: next, outcome } = performCare(
+            state,
+            requestFor(action, 0),
+          );
+          if (legal) {
+            expect(outcome.applied).toBe(true);
+          } else {
+            expect(outcome.applied).toBe(false);
+            expect(outcome.refusalReason).toBe("busy");
+            expect(next).toBe(state); // structural block costs nothing
+          }
+        });
+      }
     }
   });
 

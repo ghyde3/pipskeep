@@ -6,19 +6,36 @@
  * away entirely (verified by grepping dist/ for DEBUG_MENU_MARKER).
  *
  * Split like recovery.ts for node-environment testability:
- * - `createDebugMenuController` — the logic: time skew (+TICK so decay
- *   applies immediately), grants, export/import, corrupt-my-save. Fully
- *   unit-tested with injected seams in debugMenu.test.ts.
+ * - `createDebugMenuController` — the logic: time skew, grants,
+ *   export/import, corrupt-my-save. Fully unit-tested with injected
+ *   seams in debugMenu.test.ts.
+ * - `createSkewSliderController` — a tiny PURE controller (no DOM, no
+ *   clock) for the time slider: unit (Minutes/Hours/Days) → dynamic max
+ *   → clamped value → ms conversion. Exists standalone so the model is
+ *   unit-testable without touching the DOM shell.
  * - `initDebugMenu` — the DOM shell: a wrench button + panel, toggled by
  *   the button or the backquote key. Styles are inlined here (NOT in
  *   ui.css) so nothing debug-flavored ships in the production bundle.
  *
- * Time skew is the QA fast-forward: it shifts the ONE shared OffsetClock
- * (src/app/appClock.ts), so every timestamp consumer — TICK decay now,
- * expedition/egg timers in Phase 4 — moves together. Skews do not
- * persist: after a skewed session, a plain reload sees `savedAt` in the
- * future and §4.5 clamps the negative elapsed to 0. That is the desired
- * QA semantics (nothing double-decays).
+ * ROUND 2A FIX (playtest finding #4): time skew is the QA fast-forward —
+ * it shifts the ONE shared OffsetClock (src/app/appClock.ts), so every
+ * timestamp consumer moves together. Previously the skip dispatched a
+ * plain TICK at the post-skew time, which applies RAW uncapped decay and
+ * never exercises the §4.5 offline rate cap — so a 24h debug skip was far
+ * harsher than a real 24h absence (and never ran the cap's segmentation,
+ * expedition-return, or egg-completion handling either). The default skip
+ * now dispatches `CATCHUP { savedAt: preSkewNow, now: postSkewNow }` —
+ * EXACTLY what boot() does when it loads a save (src/app/main.ts): the
+ * same engine, same cap, same events. A debug skip and "closing the tab"
+ * for the same duration now produce identical state (see the
+ * catchup-equivalence test in debugMenu.test.ts).
+ *
+ * A secondary "raw" mode is kept for QA that specifically wants to watch
+ * uncapped live-tick decay (dispatches TICK, like the old default) — the
+ * DOM shell exposes it as the honestly-labelled "live decay (no cap)"
+ * toggle, off by default. Skews do not persist: after a skewed session, a
+ * plain reload sees `savedAt` in the future and §4.5 clamps the negative
+ * elapsed to 0 (nothing double-decays).
  *
  * Spawn egg (spec §14, Phase 4 — the seam, now filled): dispatches
  * DEBUG_SPAWN_EGG with `at` BACKDATED by the full incubation length,
@@ -45,6 +62,10 @@ import { resolveIncubationMs } from "../core/eggs";
 /** Unique needle for the prod-bundle tree-shake check (`grep dist/`). */
 export const DEBUG_MENU_MARKER = "pipskeep-debug-menu";
 
+/** A calendar fact (24h/day), not a tuning literal — kept local since it
+ * is structural, exactly like `tuning.ts`'s own `HOUR_MS = 60 * MINUTE_MS`. */
+const DAY_MS = 24 * HOUR_MS;
+
 export const DEBUG_EXPORT_FILENAME = "pipskeep-save.json";
 
 /** What the grant buttons hand out (spec §14 "grant resources"). */
@@ -69,6 +90,19 @@ export type DebugImportResult =
   | { readonly ok: true; readonly fromVersion: number }
   | { readonly ok: false; readonly error: SaveBlobError };
 
+/**
+ * How a time skip is applied (Round 2A, finding #4):
+ * - `"catchup"` (default) — dispatches CATCHUP over the skewed window,
+ *   simulating a real absence: segmentation, the §4.5 offline rate cap,
+ *   and expedition/egg completions all run exactly as they would after
+ *   closing the tab.
+ * - `"raw"` — dispatches a plain TICK at the post-skew time: uncapped,
+ *   instantaneous decay. Kept for QA that wants to watch live-tick
+ *   behavior rather than an absence; exposed honestly in the DOM shell
+ *   as "live decay (no cap)".
+ */
+export type SkewMode = "catchup" | "raw";
+
 export interface DebugMenuControllerDeps {
   readonly store: Store<GameState, GameAction>;
   readonly clock: SkewableClock;
@@ -82,9 +116,10 @@ export interface DebugMenuControllerDeps {
 }
 
 export interface DebugMenuController {
-  /** Shift the shared clock by `ms`, then TICK so decay (and, from
-   * Phase 4, expedition/egg timer checks) applies immediately. */
-  skewBy(ms: number): void;
+  /** Shift the shared clock by `ms`, then apply the elapsed window via
+   * `mode` (default `"catchup"` — see `SkewMode`). `mode: "raw"` reverts
+   * to the old plain-TICK QA behavior for watching live decay. */
+  skewBy(ms: number, mode?: SkewMode): void;
   offsetMs(): number;
   grantBerries(): void;
   grantStew(): void;
@@ -110,9 +145,18 @@ export function createDebugMenuController(
   deps: DebugMenuControllerDeps,
 ): DebugMenuController {
   return {
-    skewBy(ms: number): void {
+    skewBy(ms: number, mode: SkewMode = "catchup"): void {
+      const savedAt = deps.clock.now();
       deps.clock.skew(ms);
-      deps.store.dispatch({ type: "TICK", at: deps.clock.now() });
+      const now = deps.clock.now();
+      if (mode === "raw") {
+        deps.store.dispatch({ type: "TICK", at: now });
+      } else {
+        // Simulate a real absence (finding #4): the same CATCHUP action
+        // boot() dispatches over `savedAt → now` on load, so a debug skip
+        // and closing the tab for the same span land identically.
+        deps.store.dispatch({ type: "CATCHUP", savedAt, now });
+      }
     },
 
     offsetMs: () => deps.clock.offsetMs(),
@@ -196,21 +240,112 @@ export function createDebugMenuController(
   };
 }
 
-/** "+0s", "+1h", "+25h", "+1h 30m", "-45m" — the offset readout. */
+/**
+ * Human-friendly total offset readout (item #3): "+0s", "+1h", "+1d 1h",
+ * "+2d 6h", "+1h 30m", "-45m". Shows at most the two most-significant
+ * non-zero units (days→hours→minutes→seconds) so a multi-day skew reads
+ * as "clock +2d 6h" rather than a pile of tiny units.
+ */
 export function formatOffset(ms: number): string {
   const sign = ms < 0 ? "-" : "+";
   let rest = Math.abs(ms);
+  const d = Math.floor(rest / DAY_MS);
+  rest -= d * DAY_MS;
   const h = Math.floor(rest / HOUR_MS);
   rest -= h * HOUR_MS;
   const m = Math.floor(rest / MINUTE_MS);
   rest -= m * MINUTE_MS;
   const s = rest / SECOND_MS;
-  const parts: string[] = [];
-  if (h > 0) parts.push(`${h}h`);
-  if (m > 0) parts.push(`${m}m`);
-  if (s > 0) parts.push(`${s}s`);
+  const all: string[] = [];
+  if (d > 0) all.push(`${d}d`);
+  if (h > 0) all.push(`${h}h`);
+  if (m > 0) all.push(`${m}m`);
+  if (s > 0) all.push(`${s}s`);
+  const parts = all.slice(0, 2);
   if (parts.length === 0) parts.push("0s");
   return sign + parts.join(" ");
+}
+
+// ---------------------------------------------------------------------------
+// Time slider — pure controller (item #2)
+// ---------------------------------------------------------------------------
+
+/** The slider's unit toggle. */
+export const SKEW_UNITS = ["minutes", "hours", "days"] as const;
+export type SkewUnit = (typeof SKEW_UNITS)[number];
+
+/** Dynamic slider max per unit, as requested: minutes 60 / hours 24 /
+ * days 30. */
+export const SKEW_UNIT_MAX: Readonly<Record<SkewUnit, number>> = {
+  minutes: 60,
+  hours: 24,
+  days: 30,
+};
+
+const SKEW_UNIT_MS: Readonly<Record<SkewUnit, number>> = {
+  minutes: MINUTE_MS,
+  hours: HOUR_MS,
+  days: DAY_MS,
+};
+
+/** Clamp a raw slider value to `[1, SKEW_UNIT_MAX[unit]]`, rounding to a
+ * whole number (non-finite input falls back to 1 rather than propagating
+ * NaN into the clock). */
+export function clampSkewValue(unit: SkewUnit, value: number): number {
+  if (!Number.isFinite(value)) return 1;
+  return Math.min(Math.max(Math.round(value), 1), SKEW_UNIT_MAX[unit]);
+}
+
+/** The clamped `unit`/`value` converted to milliseconds — what the Skip
+ * button hands to `skewBy`. */
+export function skewValueToMs(unit: SkewUnit, value: number): number {
+  return clampSkewValue(unit, value) * SKEW_UNIT_MS[unit];
+}
+
+export interface SkewSliderState {
+  readonly unit: SkewUnit;
+  readonly value: number;
+}
+
+/**
+ * Pure model for the time slider: unit → dynamic max → clamped value →
+ * ms conversion. No DOM, no clock — the DOM shell below is a thin
+ * wrapper around this, and it is exactly what debugMenu.test.ts drives
+ * directly (unit → max → clamped value → ms conversion, as requested).
+ */
+export interface SkewSliderController {
+  getState(): SkewSliderState;
+  /** The current unit's slider max (60 / 24 / 30). */
+  getMax(): number;
+  /** Switch units, re-clamping the existing numeric value to the new
+   * max (e.g. 45 minutes → switching to Days re-clamps to 30). */
+  setUnit(unit: SkewUnit): SkewSliderState;
+  /** Set the raw slider value, clamped to the current unit's range. */
+  setValue(value: number): SkewSliderState;
+  /** The selected amount converted to milliseconds. */
+  toMs(): number;
+}
+
+export function createSkewSliderController(
+  initial: Partial<SkewSliderState> = {},
+): SkewSliderController {
+  let unit: SkewUnit = initial.unit ?? "hours";
+  let value = clampSkewValue(unit, initial.value ?? 1);
+
+  return {
+    getState: () => ({ unit, value }),
+    getMax: () => SKEW_UNIT_MAX[unit],
+    setUnit(next: SkewUnit): SkewSliderState {
+      unit = next;
+      value = clampSkewValue(unit, value);
+      return { unit, value };
+    },
+    setValue(next: number): SkewSliderState {
+      value = clampSkewValue(unit, next);
+      return { unit, value };
+    },
+    toMs: () => skewValueToMs(unit, value),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -243,7 +378,7 @@ const DEBUG_STYLES = `
   background: rgba(255, 253, 246, 0.9); cursor: pointer; font-size: 16px;
   line-height: 1; padding: 0; opacity: 0.65; }
 .pk-debug-toggle:hover { opacity: 1; }
-.pk-debug-panel { position: absolute; right: 0; bottom: 40px; width: 232px;
+.pk-debug-panel { position: absolute; right: 0; bottom: 40px; width: 260px;
   background: rgba(38, 46, 38, 0.94); color: #e8f0e4; border-radius: 12px;
   padding: 10px; display: flex; flex-direction: column; gap: 8px;
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35); }
@@ -254,11 +389,31 @@ const DEBUG_STYLES = `
 .pk-debug-row { display: flex; gap: 6px; flex-wrap: wrap; }
 .pk-debug-row > button { flex: 1 1 auto; border: 1px solid rgba(232, 240, 228, 0.25);
   background: rgba(232, 240, 228, 0.08); color: inherit; border-radius: 8px;
-  padding: 5px 6px; font: inherit; cursor: pointer; white-space: nowrap; }
+  padding: 5px 6px; font: inherit; cursor: pointer; white-space: nowrap;
+  min-height: 30px; }
 .pk-debug-row > button:hover { background: rgba(232, 240, 228, 0.18); }
 .pk-debug-row > button:disabled { opacity: 0.4; cursor: default; }
 .pk-debug-danger { border-color: rgba(255, 138, 92, 0.5) !important;
   color: #ffb08a !important; }
+.pk-debug-slider { border: 1px solid rgba(232, 240, 228, 0.18); border-radius: 10px;
+  padding: 8px; display: flex; flex-direction: column; gap: 8px; }
+.pk-debug-unit-row > button { min-height: 34px; }
+.pk-debug-unit-row > button[aria-pressed="true"] {
+  background: rgba(151, 196, 132, 0.35); border-color: rgba(151, 196, 132, 0.6); }
+.pk-debug-range-row { display: flex; align-items: center; gap: 8px; }
+.pk-debug-range-row input[type="range"] { flex: 1 1 auto; height: 32px;
+  touch-action: pan-y; accent-color: #97c484; }
+.pk-debug-range-row input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none; width: 26px; height: 26px;
+  border-radius: 50%; background: #97c484; border: 1.5px solid #e8f0e4; cursor: pointer; }
+.pk-debug-range-row input[type="range"]::-moz-range-thumb {
+  width: 26px; height: 26px; border-radius: 50%; background: #97c484;
+  border: 1.5px solid #e8f0e4; cursor: pointer; }
+.pk-debug-readout { min-width: 48px; text-align: right; font-weight: 700; }
+.pk-debug-skip-btn { min-height: 38px; font-weight: 700; }
+.pk-debug-toggle-row { display: flex; align-items: center; gap: 8px;
+  padding: 4px 2px; cursor: pointer; }
+.pk-debug-toggle-row input[type="checkbox"] { width: 18px; height: 18px; margin: 0; }
 `;
 
 function isTextEntry(target: EventTarget | null): boolean {
@@ -328,16 +483,100 @@ export function initDebugMenu(deps: DebugMenuDeps): DebugMenu {
     return el;
   };
 
-  const skewRow = document.createElement("div");
-  skewRow.className = "pk-debug-row";
-  for (const hours of [1, 6, 24]) {
-    skewRow.appendChild(
-      button(`+${hours}h`, () => {
-        controller.skewBy(hours * HOUR_MS);
-        syncOffset();
-      }),
-    );
+  // Live-decay toggle: off (default) → skips dispatch CATCHUP (simulates
+  // a real absence, finding #4); on → raw uncapped TICK, for QA that
+  // wants to watch live-tick decay instead. Labelled honestly, per spec.
+  let rawMode = false;
+  const applySkew = (ms: number): void => {
+    controller.skewBy(ms, rawMode ? "raw" : "catchup");
+    syncOffset();
+  };
+
+  const quickJumpRow = document.createElement("div");
+  quickJumpRow.className = "pk-debug-row";
+  const quickJumps: readonly { readonly label: string; readonly ms: number }[] = [
+    { label: "+5m", ms: 5 * MINUTE_MS },
+    { label: "+15m", ms: 15 * MINUTE_MS },
+    { label: "+1h", ms: HOUR_MS },
+    { label: "+6h", ms: 6 * HOUR_MS },
+    { label: "+24h", ms: 24 * HOUR_MS },
+  ];
+  for (const jump of quickJumps) {
+    quickJumpRow.appendChild(button(jump.label, () => applySkew(jump.ms)));
   }
+
+  // --- Time slider (item #2): unit toggle → dynamic-max range → Skip ---
+  const sliderController = createSkewSliderController({ unit: "hours", value: 1 });
+  const UNIT_LABEL: Readonly<Record<SkewUnit, string>> = {
+    minutes: "Min",
+    hours: "Hrs",
+    days: "Days",
+  };
+  const UNIT_SUFFIX: Readonly<Record<SkewUnit, string>> = {
+    minutes: "m",
+    hours: "h",
+    days: "d",
+  };
+
+  const unitRow = document.createElement("div");
+  unitRow.className = "pk-debug-row pk-debug-unit-row";
+  const unitButtons = new Map<SkewUnit, HTMLButtonElement>();
+
+  const rangeInput = document.createElement("input");
+  rangeInput.type = "range";
+  rangeInput.min = "1";
+  rangeInput.setAttribute("aria-label", "Time to skip");
+
+  const readout = document.createElement("span");
+  readout.className = "pk-debug-readout";
+
+  const syncSlider = (): void => {
+    const state = sliderController.getState();
+    rangeInput.max = String(sliderController.getMax());
+    rangeInput.value = String(state.value);
+    readout.textContent = `${state.value}${UNIT_SUFFIX[state.unit]}`;
+    for (const [unit, el] of unitButtons) {
+      el.setAttribute("aria-pressed", String(unit === state.unit));
+    }
+  };
+
+  for (const unit of SKEW_UNITS) {
+    const el = button(UNIT_LABEL[unit], () => {
+      sliderController.setUnit(unit);
+      syncSlider();
+    });
+    el.setAttribute("aria-pressed", "false");
+    unitButtons.set(unit, el);
+    unitRow.appendChild(el);
+  }
+
+  rangeInput.addEventListener("input", () => {
+    sliderController.setValue(Number(rangeInput.value));
+    syncSlider();
+  });
+
+  const rangeRow = document.createElement("div");
+  rangeRow.className = "pk-debug-range-row";
+  rangeRow.append(rangeInput, readout);
+
+  const skipBtn = button("Skip", () => applySkew(sliderController.toMs()), "pk-debug-skip-btn");
+
+  const sliderBox = document.createElement("div");
+  sliderBox.className = "pk-debug-slider";
+  sliderBox.append(unitRow, rangeRow, skipBtn);
+
+  syncSlider();
+
+  const rawModeToggle = document.createElement("label");
+  rawModeToggle.className = "pk-debug-toggle-row";
+  const rawModeInput = document.createElement("input");
+  rawModeInput.type = "checkbox";
+  rawModeInput.addEventListener("change", () => {
+    rawMode = rawModeInput.checked;
+  });
+  const rawModeText = document.createElement("span");
+  rawModeText.textContent = "live decay (no cap)";
+  rawModeToggle.append(rawModeInput, rawModeText);
 
   const grantRow = document.createElement("div");
   grantRow.className = "pk-debug-row";
@@ -412,7 +651,15 @@ export function initDebugMenu(deps: DebugMenuDeps): DebugMenu {
   );
   dangerRow.appendChild(corruptBtn);
 
-  panel.append(title, skewRow, grantRow, saveRow, dangerRow);
+  panel.append(
+    title,
+    sliderBox,
+    quickJumpRow,
+    rawModeToggle,
+    grantRow,
+    saveRow,
+    dangerRow,
+  );
   root.append(style, panel, toggleBtn, fileInput);
   deps.mount.appendChild(root);
 

@@ -37,15 +37,17 @@ describe("buildUpgradeCardModel — next level (spec §9/§6.3)", () => {
     const model = buildUpgradeCardModel(stateAt(1));
     expect(model.currentLevel).toBe(1);
     expect(model.next?.level).toBe(2);
-    // Content is the single source: 15 Wood + 10 Fiber (tuning).
-    expect(keepLevels.find((l) => l.level === 2)?.cost).toEqual(
-      tuning.keepLevelCosts[2],
+    // Content is the single source — the label is rendered FROM tuning,
+    // never from a parallel constant, so a rebalance flows through.
+    const cost = tuning.keepLevelCosts[2];
+    expect(keepLevels.find((l) => l.level === 2)?.cost).toEqual(cost);
+    expect(model.next?.costLabel).toBe(
+      `${cost.wood} Wood + ${cost.fiber} Fiber`,
     );
-    expect(model.next?.costLabel).toBe("15 Wood + 10 Fiber");
     expect(model.next?.unlockCopy).toContain("Forest");
     expect(model.next?.affordable).toBe(false);
     expect(model.next?.missingLabel).toBe(
-      "Needs 15 more Wood and 10 more Fiber",
+      `Needs ${cost.wood} more Wood and ${cost.fiber} more Fiber`,
     );
   });
 

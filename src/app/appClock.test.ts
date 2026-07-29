@@ -1,8 +1,17 @@
 /**
  * OffsetClock tests: the offset math itself, and the skew → TICK
- * integration the debug menu relies on — skewing the shared clock and
- * dispatching TICK must produce EXACTLY the decay the skipped time
- * would have produced (Phase 1 exactness, driven through the app clock).
+ * composition pattern the debug menu's SECONDARY "raw" / "live decay (no
+ * cap)" mode uses (src/ui/debugMenu.ts) — skewing the shared clock and
+ * dispatching TICK must produce EXACTLY the decay the skipped time would
+ * have produced (Phase 1 exactness, driven through the app clock).
+ *
+ * Round 2A (finding #4): the debug menu's DEFAULT skip no longer uses
+ * this TICK composition — it dispatches CATCHUP over the skewed window
+ * instead, so a debug skip exercises the §4.5 offline rate cap exactly
+ * like a real absence (see debugMenu.test.ts's catchup-equivalence
+ * tests). The raw skew+TICK composition tested here remains correct and
+ * is still reachable through the debug menu's opt-in toggle.
+ *
  * Composed over FakeClock throughout, as production composes over
  * SystemClock.
  */
@@ -66,7 +75,7 @@ const CURIOUS_ONLY: StarterContent = {
   startingInventory: { berry: 3 },
 };
 
-describe("skew → TICK integration (the debug menu's fast-forward)", () => {
+describe("skew → TICK integration (the debug menu's secondary raw/no-cap mode)", () => {
   it("skewing +6h then TICKing at clock.now() applies exactly 6h of decay", () => {
     const inner = new FakeClock(10_000);
     const clock = new OffsetClock(inner);
@@ -115,7 +124,11 @@ describe("skew → TICK integration (the debug menu's fast-forward)", () => {
     for (const need of ["hunger", "cleanliness", "happiness", "energy"] as const) {
       expect(a?.needs[need]).toBeCloseTo(b?.needs[need] ?? Number.NaN, 10);
     }
-    expect(a?.needs.hunger).toBe(24); // 60 − 6h × 6/h, above the floor
+    // 60 − 6h of base hunger decay, still comfortably above the floor.
+    expect(a?.needs.hunger).toBeCloseTo(
+      60 + tuning.needDecayPerHour.hunger * 6,
+      10,
+    );
     expect(piecewise.getState().lastTickAt).toBe(6 * HOUR_MS);
   });
 });

@@ -7,9 +7,14 @@
  * - Feed: consumes one inventory item; +hunger plus the food's side
  *   effects (happiness/energy), clamped 0–100.
  * - Clean: Cleanliness → 100, 60s cooldown (deliberately trivial, §5).
- * - Play: +20 Happiness, −10 Energy, refusal rules below.
- * - Pet: +8 Happiness (+14 for Clingy), 30s cooldown.
- * - Rest: toggles Resting via the state machine (beginRest/wake).
+ * - Play: +Happiness, −Energy, refusal rules below. Round 2B sized the
+ *   Happiness restore to out-cover a full absence (tuning.care.play).
+ * - Pet: +Happiness (more for Clingy), 30s cooldown.
+ * - Rest: toggles Resting via the state machine (beginRest/wake). Legal
+ *   from Sulking too (round 2A fix — see machine.ts module doc): a
+ *   Sulking Pip's Rest now actually begins Resting instead of being
+ *   refused, since Rest is the only source of Energy and a Sulk that hit
+ *   0 Energy could otherwise never recover.
  * - Give Item: consumes one inventory item, sets `lastGiftItemId`
  *   (drives evolution variants, §4.6) and applies the item's
  *   content-defined effects. Decision (spec §5 "content-defined special
@@ -63,6 +68,7 @@ import {
   canReceiveCare,
   evaluateRestAutoWake,
   evaluateSulk,
+  isSulking,
   wake,
 } from "./machine";
 import type { MachineTuning, TransitionResult } from "./machine";
@@ -114,6 +120,13 @@ export type CareRequest =
  * Structural blocks (no line — the pip isn't declining, the world is):
  * `unknownPip`, `busy` (not Idle/Resting/Sulking — the UI shouldn't have
  * offered), `cooldown`, `outOfStock`, `unknownItem`.
+ *
+ * `machine` is round 2A's retired case: it used to fire whenever Rest was
+ * offered to a Sulking pip (`beginRest` required Idle). That was the
+ * soft-lock bug — Rest is now legal from Sulking too (see machine.ts),
+ * so `restToggle` can no longer actually produce it; kept in the type
+ * (and in `render/keepScene.ts`'s voiced-refusal set) as a harmless
+ * defensive fallback rather than ripped out.
  */
 export type CareRefusalReason =
   | "unknownPip"
@@ -221,7 +234,14 @@ function onCooldown(
   cooldownMs: number,
 ): boolean {
   const lastUsed = state.cooldowns[pipId]?.[action];
-  return lastUsed !== undefined && at - lastUsed < cooldownMs;
+  if (lastUsed === undefined) return false;
+  const elapsed = at - lastUsed;
+  // A stamp in the future means the clock moved backwards (system clock
+  // change, timezone shift, debug skew). §4.5 clamps negative elapsed for
+  // decay; the same applies here — never hold a button hostage for hours
+  // because of a clock the player may not have touched deliberately.
+  if (elapsed < 0) return false;
+  return elapsed < cooldownMs;
 }
 
 interface StepResult<S extends CareStateSlice> {
@@ -396,7 +416,14 @@ export function performCare<S extends CareStateSlice>(
       const result: TransitionResult =
         pip.activity === PipActivity.Resting ? wake(pip) : beginRest(pip);
       if (!result.ok) {
-        // e.g. Rest offered to a Sulking pip — the pip declines, with a line.
+        // Round 2A: this is now UNREACHABLE in practice — canReceiveCare
+        // above only lets Idle/Resting/Sulking pips reach this switch,
+        // and beginRest/wake are legal from exactly that set (beginRest:
+        // Idle | Sulking; wake: Resting). Kept as a defensive fallback
+        // (TypeScript cannot prove the invariant across two functions),
+        // and the "machine" refusal reason stays in the type/dialogue
+        // pools rather than being ripped out — it used to fire here for
+        // a Sulking pip's Rest toggle before this round's fix.
         return refusedWithLine(state, request, "machine", pip, rng, pools);
       }
       return applySuccess(state, request, result.pip, rng, tuning, pools, {
@@ -448,10 +475,12 @@ function applySuccess<S extends CareStateSlice>(
 
   // Success context (spec §3/§4.3): Sulking pips speak from the Sulking
   // pool; everyone else from the DISPLAYED mood (Chaotic quirk applies).
-  const context: DialogueContext =
-    pip.activity === PipActivity.Sulking
-      ? "sulking"
-      : displayedMood(pip, rng.stream(MOOD_DISPLAY_STREAM), tuning);
+  // `isSulking` (not a bare activity check) so a Pip Resting its way
+  // through a Sulk — round 2A, machine.ts — still gets the guilt-trip
+  // line instead of a mood line while it naps.
+  const context: DialogueContext = isSulking(pip)
+    ? "sulking"
+    : displayedMood(pip, rng.stream(MOOD_DISPLAY_STREAM), tuning);
 
   const line = pickLineFromPools(
     pip.personalityId,

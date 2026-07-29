@@ -10,11 +10,19 @@
  * spec §6.1). Close returns to the Keep view.
  *
  * Refusals: Send always dispatches — legality lives in core (spec §4.7).
- * When the pip itself says no (Sulking / Pipling) the core draws a
- * personality-appropriate Refusal line; `sync` diffs `lastAssignOutcome`
- * and surfaces that line in-panel. Structural blocks (locked, occupied,
- * busy) never reach dispatch: the rows disable themselves with warm copy
- * instead — the world said no, not the pip.
+ * When the pip itself says no (Sulking) the core draws a personality-
+ * appropriate Refusal line; `sync` diffs `lastAssignOutcome` and surfaces
+ * that line in-panel. Structural blocks (locked, occupied, busy) never
+ * reach dispatch: the rows disable themselves with warm copy instead —
+ * the world said no, not the pip.
+ *
+ * Piplings (spec §4.6, amended round 2A after playtest finding #3 — a
+ * Pipling used to be silently useless): trails on
+ * `tuning.pipling.allowedExpeditionIds` stay sendable and are labelled a
+ * supervised trip; every other trail explains itself with a LIVE
+ * countdown to the Pip's exact grow-up moment ("Still a Pipling — ready
+ * to explore in 5h 20m") rather than a bare no. The timestamp mirrors
+ * `lifecycle.adultAt`, the same value core puts on its `pipling` refusal.
  *
  * Architecture: `buildFocusModel` + friends are PURE (state in, view
  * model out — node-testable, no DOM); `createFocusView` is the dumb DOM
@@ -29,9 +37,11 @@ import {
   effectiveExpeditionDurationMs,
 } from "../core/expeditions";
 import type { AssignExpeditionOutcome } from "../core/expeditions";
+import { adultAt } from "../core/pips/lifecycle";
 import type { JobOutcome } from "../core/keep/jobs";
 import type { PlacementId } from "../core/keep";
 import { EXPEDITION_IDS, expeditions } from "../content/expeditions";
+import { tuning } from "../content/tuning";
 import { jobs as contentJobs } from "../content/jobs";
 import { placeables } from "../content/placeables";
 import { personalities } from "../content/personalities";
@@ -102,6 +112,23 @@ export function formatCountdown(remainingMs: number): string {
   return `${m}:${ss}`;
 }
 
+/**
+ * Coarse, warm countdown for the grow-up timer (round 2A finding #3): an
+ * 8-hour wait does not want a ticking seconds column, but the last
+ * minute very much does. Hours+minutes above an hour, minutes+seconds
+ * below, bare seconds in the last minute.
+ */
+export function formatGrowUpCountdown(remainingMs: number): string {
+  const totalSeconds = Math.max(0, Math.ceil(remainingMs / 1000));
+  if (totalSeconds === 0) return "a moment";
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor(totalSeconds / 60) % 60;
+  const s = totalSeconds % 60;
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${String(s).padStart(2, "0")}s`;
+  return `${s}s`;
+}
+
 /** Why a row is not sendable right now (drives copy, not core legality —
  * core re-checks everything on dispatch, spec §4.7). */
 export type ExpeditionRowStatus =
@@ -110,7 +137,8 @@ export type ExpeditionRowStatus =
   | "locked" // Keep level too low
   | "occupied" // another pip is on this expedition
   | "away" // this pip is out on a DIFFERENT expedition
-  | "resting"; // structural: asleep pips are not offered trips
+  | "resting" // structural: asleep pips are not offered trips
+  | "pipling"; // too small for THIS trail — show the grow-up countdown
 
 export interface ExpeditionRowModel {
   readonly id: string;
@@ -121,8 +149,18 @@ export interface ExpeditionRowModel {
   readonly status: ExpeditionRowStatus;
   /** Warm one-liner under the row; null when the row speaks for itself. */
   readonly note: string | null;
-  /** Countdown text, only while status === "active" and still trotting. */
+  /** Countdown text: expedition return (`active`) or the Pipling's
+   * grow-up moment (`pipling`). Null when nothing is counting down. */
   readonly countdown: string | null;
+  /**
+   * Absolute timestamp `countdown` counts toward, so the DOM shell can
+   * re-render it every frame without rebuilding the model. Null exactly
+   * when `countdown` is null.
+   */
+  readonly countdownUntil: number | null;
+  /** Small chip in the row's top-right ("Keep level 2", "Pipling",
+   * "Supervised"); null when the row needs no chip. */
+  readonly badge: string | null;
   readonly sendable: boolean;
 }
 
@@ -324,6 +362,8 @@ export function buildExpeditionRow(
       ...base,
       status: "active",
       countdown: stillOut ? formatCountdown(returnAt - now) : null,
+      countdownUntil: stillOut ? returnAt : null,
+      badge: null,
       note: stillOut
         ? `${pip.name} is out there right now — back in`
         : `${pip.name} is back! Go see what the satchel is hiding.`,
@@ -336,6 +376,8 @@ export function buildExpeditionRow(
       ...base,
       status: "away",
       countdown: null,
+      countdownUntil: null,
+      badge: null,
       note: null, // the active row already tells the story
       sendable: false,
     };
@@ -346,6 +388,8 @@ export function buildExpeditionRow(
       ...base,
       status: "locked",
       countdown: null,
+      countdownUntil: null,
+      badge: `Keep level ${def.unlockKeepLevel}`,
       note: `Opens at Keep level ${def.unlockKeepLevel} — something to grow toward.`,
       sendable: false,
     };
@@ -357,7 +401,30 @@ export function buildExpeditionRow(
       ...base,
       status: "occupied",
       countdown: null,
+      countdownUntil: null,
+      badge: null,
       note: `${occupant.name} is already out there — one Pip per trail.`,
+      sendable: false,
+    };
+  }
+
+  // Piplings (spec §4.6, round 2A): no longer blanket-barred. Trails on
+  // the supervised-trip allowlist stay sendable and say so; the rest
+  // explain themselves with a live countdown to the exact moment this
+  // Pip grows up, mirroring the `growsUpAt` core hands back on refusal.
+  const isPipling = pip.lifeStage === LifeStage.Pipling;
+  const supervised =
+    isPipling && tuning.pipling.allowedExpeditionIds.includes(def.id);
+
+  if (isPipling && !supervised) {
+    const growsUpAt = adultAt(pip);
+    return {
+      ...base,
+      status: "pipling",
+      countdown: formatGrowUpCountdown(growsUpAt - now),
+      countdownUntil: growsUpAt,
+      badge: "Pipling",
+      note: `Still a Pipling — ready to explore in`,
       sendable: false,
     };
   }
@@ -367,19 +434,25 @@ export function buildExpeditionRow(
       ...base,
       status: "resting",
       countdown: null,
+      countdownUntil: null,
+      badge: null,
       note: "Fast asleep. The trail can wait; the dream cannot.",
       sendable: false,
     };
   }
 
-  // Available. Sulking and Pipling pips still get a live Send button —
-  // the refusal (with its personality line) is the pip's to deliver,
-  // not the UI's to pre-empt (spec §4.7).
+  // Available. Sulking pips still get a live Send button — the refusal
+  // (with its personality line) is the pip's to deliver, not the UI's to
+  // pre-empt (spec §4.7).
   return {
     ...base,
     status: "available",
     countdown: null,
-    note: null,
+    countdownUntil: null,
+    badge: supervised ? "Supervised" : null,
+    note: supervised
+      ? "A little supervised trip — just right for small paws."
+      : null,
     sendable: true,
   };
 }
@@ -458,8 +531,18 @@ export function createFocusView(deps: FocusViewDeps): FocusView {
   let lastState: GameState | null = null;
   let lastSeenOutcome: AssignExpeditionOutcome | null = null;
   let lastSeenJobOutcome: JobOutcome | null = null;
-  /** Countdown text node per expedition id, refreshed by tick(). */
-  let countdownEls = new Map<string, HTMLElement>();
+  /** Live countdown text nodes per expedition id, refreshed by tick().
+   * Each carries the absolute moment it counts toward plus its own
+   * formatter, so an expedition return ("4:32") and a Pipling's grow-up
+   * timer ("5h 20m") tick through the exact same loop. */
+  let countdownEls = new Map<
+    string,
+    {
+      readonly el: HTMLElement;
+      readonly until: number;
+      readonly format: (remainingMs: number) => string;
+    }
+  >();
   let refusalEl: HTMLElement | null = null;
   let refusalTimer: number | null = null;
   /** Survives the per-TICK rebuilds — reapplied until the timer clears it. */
@@ -629,21 +712,26 @@ export function createFocusView(deps: FocusViewDeps): FocusView {
         const note = document.createElement("div");
         note.className = "pk-exp-note";
         note.textContent = row.note;
-        if (row.countdown !== null) {
+        if (row.countdown !== null && row.countdownUntil !== null) {
           const cd = document.createElement("span");
           cd.className = "pk-exp-countdown";
           cd.textContent = ` ${row.countdown}`;
           note.appendChild(cd);
-          countdownEls.set(row.id, cd);
+          countdownEls.set(row.id, {
+            el: cd,
+            until: row.countdownUntil,
+            format:
+              row.status === "pipling" ? formatGrowUpCountdown : formatCountdown,
+          });
         }
         card.appendChild(note);
       }
 
-      if (row.status === "locked") {
-        const lock = document.createElement("span");
-        lock.className = "pk-exp-lock";
-        lock.textContent = `Keep level ${expeditions[row.id as keyof typeof expeditions]?.unlockKeepLevel ?? "?"}`;
-        top.appendChild(lock);
+      if (row.badge !== null) {
+        const badge = document.createElement("span");
+        badge.className = `pk-exp-badge pk-exp-badge--${row.status}`;
+        badge.textContent = row.badge;
+        top.appendChild(badge);
       }
 
       if (row.sendable) {
@@ -828,12 +916,11 @@ export function createFocusView(deps: FocusViewDeps): FocusView {
     },
 
     tick(now: number): void {
-      if (!isOpen || lastState === null || viewedPipId === null) return;
-      for (const [expeditionId, cdEl] of countdownEls) {
-        const pip = lastState.pips[viewedPipId];
-        if (pip?.expedition?.expeditionId !== expeditionId) continue;
-        const returnAt = pip.expedition.departedAt + pip.expedition.durationMs;
-        cdEl.textContent = ` ${formatCountdown(returnAt - now)}`;
+      if (!isOpen) return;
+      // Every entry knows its own target and formatter; rebuild() re-seeds
+      // the map whenever state changes, so `until` is never stale.
+      for (const { el: cdEl, until, format } of countdownEls.values()) {
+        cdEl.textContent = ` ${format(until - now)}`;
       }
     },
   };

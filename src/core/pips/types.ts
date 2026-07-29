@@ -35,7 +35,15 @@ export const LifeStage = {
 } as const;
 export type LifeStage = (typeof LifeStage)[keyof typeof LifeStage];
 
-/** Pip state-machine activities (spec §4.7). */
+/**
+ * Pip state-machine activities (spec §4.7).
+ *
+ * `Sulking` is still a member — it remains the activity value for the
+ * common case (any need floors while Idle/AssignedJob) — but it is no
+ * longer the ONLY encoding of "is this Pip sulking": see `PipState.sulking`
+ * and `isSulking()` in machine.ts for the one case `activity` cannot
+ * represent on its own (sulking while Resting, round 2A).
+ */
 export const PipActivity = {
   Idle: "idle",
   Resting: "resting",
@@ -127,6 +135,32 @@ export interface PipState {
    * deferred until the Pip lands back in Idle (spec §4.4).
    */
   pendingSulk: boolean;
+  /**
+   * True while the Sulking guilt-trip penalty (spec §4.4) is active,
+   * INDEPENDENT of `activity` (round 2A fix for "a Pip that Sulks at 0
+   * Energy could never Rest, because Rest required Idle" — the state
+   * machine's `beginRest`/`wake` used to be the only way out of Sulking,
+   * and both refused unless `activity === Idle`).
+   *
+   * `activity` alone cannot represent "napping AND still sulking": a Pip
+   * beginning Rest FROM Sulking needs `activity` to read `Resting` (so
+   * the Rest regen/auto-wake machinery applies) while the guilt-trip
+   * persists until its needs actually clear the §4.4 exit bar. This
+   * field is that missing orthogonal bit. See `machine.ts`'s module doc
+   * ("Sulking: activity vs. flag") for the full decision, and read it via
+   * `isSulking(pip)` (machine.ts) rather than directly — that helper also
+   * recognizes the pre-existing `activity === PipActivity.Sulking`
+   * encoding, which is KEPT and still set for the common (non-Resting)
+   * case so every existing consumer of that check (dialogue, UI,
+   * rendering, job eviction) keeps working unchanged.
+   *
+   * Optional rather than required: `undefined` ≡ `false`. Every
+   * core-owned constructor and transition (genome.ts, machine.ts,
+   * catchup.ts) that can produce a Sulking-while-Resting Pip sets it
+   * explicitly; it stays optional so every existing fixture elsewhere
+   * that never exercises the Resting+Sulking overlap needs no changes.
+   */
+  sulking?: boolean;
   /** Spec §4.6: glows and waits for the player's tap. A flag, not a state. */
   readyToEvolve: boolean;
   /** Completed-evolution record; null until evolved (spec §4.6). The

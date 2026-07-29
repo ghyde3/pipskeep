@@ -43,6 +43,10 @@ import {
 const T0 = 10_000_000;
 const SEED = 42;
 const INTERVAL = tuning.gathering.intervalMs;
+/** Production is a RATE, so an absence yields at most this many ticks
+ * however long the player was away (spec §4.5 rule 3 / §6.2). */
+const CAPPED_TICKS = tuning.offlineRateCapMs / INTERVAL;
+const CAP_HOURS = tuning.offlineRateCapMs / HOUR_MS;
 
 function needs(overrides: Partial<PipNeeds> = {}): PipNeeds {
   return { hunger: 100, cleanliness: 100, happiness: 100, energy: 100, ...overrides };
@@ -308,28 +312,31 @@ describe("live production (spec §6.2: 1 per 10 min from the weighted table)", (
     // The cursor persisted — a reload never re-rolls (spec §2 rule 3).
     expect(hour.rngState[JOB_STREAM]).toBe(ref.getState());
 
-    // And the table really is 70/30 from tuning.
-    expect(tuning.gathering.table).toEqual({ berry: 0.7, fiber: 0.3 });
+    // And the table really is the tuning one (round 2A: Wood added, so
+    // the station is an economy rather than a Berry faucet).
+    expect(tuning.gathering.table).toEqual({ berry: 0.5, fiber: 0.3, wood: 0.2 });
   });
 
-  it("the weighted table converges near 70/30 over a long seeded run", () => {
-    // The longest uninterrupted shift a full-needs Curious pip can pull:
-    // hunger (−6/h from 100) is the first need to bottom out, just past
-    // 16h — so 16 hourly ticks stay in AssignedJob for 96 deterministic
-    // rolls on seed 42. (Care is Idle/Resting/Sulking-only, §4.7 — a
-    // working pip cannot be topped up mid-shift.)
+  it("the weighted table converges on the tuning weights over a long seeded run", () => {
+    // 16 hourly ticks is a shift a full-needs Curious pip comfortably
+    // survives at any sane tuning, giving 96 deterministic rolls on
+    // seed 42. (Care is Idle/Resting/Sulking-only, §4.7 — a working pip
+    // cannot be topped up mid-shift.)
     let state = working();
     for (let h = 1; h <= 16; h++) {
       state = rootReducer(state, { type: "TICK", at: T0 + h * HOUR_MS });
     }
     expect(state.pips["pip-1"]?.activity).toBe(PipActivity.AssignedJob);
-    // Berries route to the inventory (food), fiber stays a resource.
-    const produced =
-      (state.inventory["berry"] ?? 0) + (state.resources["fiber"] ?? 0);
+    // Berries route to the inventory (food), Fiber and Wood stay
+    // resources — totalResources sums both pools (spec §6.3 routing).
+    const produced = totalResources(state);
     expect(produced).toBe(96);
     const berries = state.inventory["berry"] ?? 0;
-    expect(berries / produced).toBeGreaterThan(0.6);
-    expect(berries / produced).toBeLessThan(0.8);
+    const weights = Object.values(tuning.gathering.table);
+    const berryShare =
+      tuning.gathering.table.berry / weights.reduce((a, b) => a + b, 0);
+    expect(berries / produced).toBeGreaterThan(berryShare - 0.12);
+    expect(berries / produced).toBeLessThan(berryShare + 0.12);
   });
 
   it("a pip pulled off AssignedJob produces nothing while its jobs entry lingers", () => {
@@ -398,30 +405,33 @@ describe("offline production (spec §4.5/§6.2: the 12h rate cap)", () => {
       type: "ASSIGN_JOB", pipId: "pip-1", stationPlacementId: "place-1", at: T0,
     });
 
-  it("72h of absence yields EXACTLY 12h × 6 = 72 resources", () => {
+  it("72h of absence yields EXACTLY one capped window of ticks", () => {
     const away = rootReducer(working(), {
       type: "CATCHUP", savedAt: T0, now: T0 + 72 * HOUR_MS,
     });
-    expect(totalResources(away)).toBe(72);
-    // Needs froze at the cap too (rates are capped): curious hunger
-    // decays −6/h for exactly 12h of the 72.
-    expect(away.pips["pip-1"]?.needs.hunger).toBeCloseTo(100 - 6 * 12, 6);
+    expect(totalResources(away)).toBe(CAPPED_TICKS);
+    // Needs froze at the cap too (rates are capped): a Curious pip's
+    // hunger decays for exactly the capped window out of the 72h.
+    expect(away.pips["pip-1"]?.needs.hunger).toBeCloseTo(
+      100 + tuning.needDecayPerHour.hunger * CAP_HOURS,
+      6,
+    );
     // The pip is still working; the away summary carries the ticks.
     expect(away.pips["pip-1"]?.activity).toBe(PipActivity.AssignedJob);
     expect(
       away.lastCatchup?.events.filter((e) => e.kind === "custom" && e.tag === "jobTick"),
-    ).toHaveLength(72);
+    ).toHaveLength(CAPPED_TICKS);
   });
 
   it("the frozen tail is never backfilled: production resumes from load time", () => {
     const now = T0 + 72 * HOUR_MS;
     const away = rootReducer(working(), { type: "CATCHUP", savedAt: T0, now });
-    // lastProducedAt slid past the 60h frozen stretch to land at `now`.
+    // lastProducedAt slid past the frozen stretch to land at `now`.
     expect(away.jobs["pip-1"]?.lastProducedAt).toBe(now);
     const soon = rootReducer(away, { type: "TICK", at: now + INTERVAL - 1 });
-    expect(totalResources(soon)).toBe(72); // nothing yet
+    expect(totalResources(soon)).toBe(CAPPED_TICKS); // nothing yet
     const next = rootReducer(soon, { type: "TICK", at: now + INTERVAL });
-    expect(totalResources(next)).toBe(73); // one fresh interval, one roll
+    expect(totalResources(next)).toBe(CAPPED_TICKS + 1); // one fresh interval
   });
 
   it("a short absence produces exactly elapsed/interval and matches the live path roll-for-roll", () => {
@@ -438,12 +448,15 @@ describe("offline production (spec §4.5/§6.2: the 12h rate cap)", () => {
   });
 
   it("a pip that bottoms out mid-absence sulks at the boundary and stops producing", () => {
-    // Curious hunger decays −6/h: starting at 2.9 it pins to 0 inside
+    // Seeded with 27 minutes' worth of Hunger (Curious's hunger
+    // multiplier is ×1.0, so the base rate applies): it pins to 0 inside
     // the 20–30min segment, so the 30min boundary evaluation enters
     // Sulking BEFORE the 30min tick fires (§4.4/§4.5 rule 5). Only the
-    // 10min and 20min ticks produce.
+    // 10min and 20min ticks produce. Derived from tuning so a retune
+    // moves the seed rather than breaking the claim.
+    const startingHunger = -tuning.needDecayPerHour.hunger * (27 / 60);
     const fragile = makeState({
-      pips: { "pip-1": makePip("pip-1", { needs: needs({ hunger: 2.9 }) }) },
+      pips: { "pip-1": makePip("pip-1", { needs: needs({ hunger: startingHunger }) }) },
     });
     const working = rootReducer(fragile, {
       type: "ASSIGN_JOB", pipId: "pip-1", stationPlacementId: "place-1", at: T0,

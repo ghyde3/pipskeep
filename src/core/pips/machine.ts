@@ -25,9 +25,57 @@
  * ZERO tuning literals: thresholds come from the tuning object (defaults to
  * `content/tuning.ts`, injectable for tests). The Sulking entry floor is
  * NEED_MIN (0) — spec-structural (§4.4 is a hard tone rule), not a tunable.
+ *
+ * ---
+ *
+ * ## Sulking: activity vs. flag (round 2A finding #2)
+ *
+ * Before this round, Sulking was purely a `PipActivity` enum value: any
+ * floored need while Idle/Resting/AssignedJob REPLACED `activity` with
+ * `Sulking`, and `beginRest` required `activity === Idle` to start a nap.
+ * That made a Pip that Sulked at 0 Energy unable to Rest at all — Rest is
+ * the ONLY source of Energy (spec §4.1), so it was a soft-lock: the
+ * player's one good care session (§4.4's whole promise) had no path in.
+ *
+ * Simply letting `beginRest` accept `activity === Sulking` is not enough:
+ * the instant Rest begins, Energy is still 0 (no time has passed), so the
+ * very next `evaluateSulk` re-evaluation would see a floored need on a
+ * `Resting` Pip and — under the old all-or-nothing model — immediately
+ * flip `activity` back to `Sulking`, undoing the nap before it started.
+ * The enum cannot represent "napping AND still sulking" on its own.
+ *
+ * DECISION: `PipState.sulking` is now the orthogonal, authoritative flag
+ * for "is the §4.4 penalty active", decoupled from `activity`. Read it via
+ * `isSulking(pip)` below, never by comparing `activity` directly:
+ *
+ * - The COMMON case (any need floors while Idle or AssignedJob) is
+ *   UNCHANGED: `activity` still flips to `PipActivity.Sulking` (so every
+ *   existing consumer of that comparison — dialogue context, rendering,
+ *   job eviction in keep/jobs.ts — keeps working with zero changes), and
+ *   `sulking` is set true alongside it (the two always agree here).
+ * - The NEW case is Resting: a Pip that begins Rest FROM Sulking (or one
+ *   that was already napping when an unrelated need floored) keeps
+ *   `activity === Resting` — a Rest in progress is never interrupted, an
+ *   explicit design choice: ending a nap early because a different need
+ *   floored would be exactly the kind of punishment §4.4 rules out, and
+ *   Energy climbing is itself progress toward the exit bar — while
+ *   `sulking` alone carries the still-guilt-tripping truth. `wake()` and
+ *   `evaluateRestAutoWake` both resolve a Resting Pip back to
+ *   `PipActivity.Sulking` (not Idle) if it is still sulking when the nap
+ *   ends, so the enum re-manifests the instant the Pip stops napping.
+ * - Exit (`evaluateSulk`, all four needs ≥ threshold) clears the flag and,
+ *   ONLY if `activity` was the `Sulking` display value, restores it to
+ *   Idle; a Resting Pip that recovers mid-nap keeps napping.
+ *
+ * Net effect: `activity` stays exactly as informative as before for every
+ * existing reader, `sulking` is additive, and the one previously
+ * unrepresentable state (Resting + still sulking) is now real instead of
+ * being silently discarded by re-entering Sulking every evaluation.
  */
 
 import { HOUR_MS, tuning as contentTuning } from "../../content/tuning";
+import { adultAt } from "./lifecycle";
+import type { LifecycleTuning } from "./lifecycle";
 import { LifeStage, NEED_IDS, NEED_MIN, PipActivity } from "./types";
 import type { ActiveExpedition, PipState } from "./types";
 
@@ -46,6 +94,33 @@ export interface MachineTuning {
       readonly autoWakeAtEnergy: number;
     };
   };
+  readonly pipling: {
+    /** Pipling → Adult boundary (spec §4.6); read here only to stamp
+     * `growsUpAt` on a Pipling's expedition refusal (superset of
+     * `LifecycleTuning`, which `adultAt` actually reads). */
+    readonly durationMs: number;
+    /**
+     * Expedition ids a Pipling may be sent on despite the §4.6 age gate —
+     * the round 2A "supervised short trip" amendment (designer-approved;
+     * see content/tuning.ts `pipling.allowedExpeditionIds`). Empty means
+     * the spec default: no expeditions at all.
+     */
+    readonly allowedExpeditionIds: readonly string[];
+  };
+}
+
+/**
+ * The one true "is this Pip currently under the §4.4 Sulking penalty"
+ * check — use this everywhere instead of comparing `activity` directly.
+ * Recognizes BOTH encodings: the common `activity === Sulking` display
+ * value, and the `sulking` flag that also covers "sulking while Resting"
+ * (see the module doc above). `pip.sulking` is optional (`undefined` ≡
+ * `false`) purely so fixtures that never touch the Resting overlap don't
+ * need updating; every core-owned constructor sets it explicitly wherever
+ * it matters.
+ */
+export function isSulking(pip: PipState): boolean {
+  return pip.activity === PipActivity.Sulking || pip.sulking === true;
 }
 
 /** Requested transitions (also used as the `attempted` tag in refusals). */
@@ -62,18 +137,37 @@ export type TransitionName =
  * Why a transition was refused:
  * - `"sulking"` — a Sulking Pip declining Job/Expedition assignment
  *   (spec §4.4/§4.7); draw a line from the Refusal dialogue context.
- * - `"pipling"` — Piplings cannot go on expeditions (spec §4.6).
+ * - `"pipling"` — the Pip is a Pipling and this expedition is not in its
+ *   `tuning.pipling.allowedExpeditionIds` supervised-trip allowlist (spec
+ *   §4.6, round 2A amendment — Piplings are no longer blanket-barred).
  * - `"illegal"` — not a legal edge from the current activity; the UI
  *   should not have offered it.
  */
 export type RefusalKind = "sulking" | "pipling" | "illegal";
 
-export interface TransitionRefusal {
-  readonly kind: RefusalKind;
-  readonly attempted: TransitionName;
-  /** The Pip's activity at the moment of refusal. */
-  readonly activity: PipActivity;
-}
+/**
+ * Refusal detail, keyed by `kind` so callers get exactly the data needed
+ * to write a helpful sentence (spec: refusals should draw a line, not
+ * just block). `"pipling"` carries `growsUpAt` — the exact Pipling→Adult
+ * timestamp (`lifecycle.ts` `adultAt`) — so the UI can render a live
+ * countdown ("ready for real expeditions in 3h12m") instead of a bare no.
+ */
+export type TransitionRefusal =
+  | {
+      readonly kind: "sulking" | "illegal";
+      readonly attempted: TransitionName;
+      /** The Pip's activity at the moment of refusal. */
+      readonly activity: PipActivity;
+    }
+  | {
+      readonly kind: "pipling";
+      readonly attempted: TransitionName;
+      readonly activity: PipActivity;
+      /** Absolute timestamp the Pip becomes an Adult (`hatchedAt +
+       * pipling.durationMs`) — after which this same request would
+       * succeed regardless of the expedition. */
+      readonly growsUpAt: number;
+    };
 
 /**
  * Outcome of a requested transition. Refusals cost nothing: the caller's
@@ -86,34 +180,70 @@ export type TransitionResult =
 
 const allow = (pip: PipState): TransitionResult => ({ ok: true, pip });
 
-const refuse = (
-  kind: RefusalKind,
+function refuse(
+  kind: "sulking" | "illegal",
   attempted: TransitionName,
   pip: PipState,
-): TransitionResult => ({
-  ok: false,
-  refusal: { kind, attempted, activity: pip.activity },
-});
-
-/** Idle → Resting (spec §4.7; the Rest care action's "on" toggle). */
-export function beginRest(pip: PipState): TransitionResult {
-  if (pip.activity !== PipActivity.Idle) {
-    return refuse("illegal", "beginRest", pip);
-  }
-  return allow({ ...pip, activity: PipActivity.Resting });
+): TransitionResult {
+  return { ok: false, refusal: { kind, attempted, activity: pip.activity } };
 }
 
-/** Resting → Idle (manual wake; auto-wake is evaluateRestAutoWake). */
+function refusePipling(
+  attempted: TransitionName,
+  pip: PipState,
+  tuning: LifecycleTuning,
+): TransitionResult {
+  return {
+    ok: false,
+    refusal: {
+      kind: "pipling",
+      attempted,
+      activity: pip.activity,
+      growsUpAt: adultAt(pip, tuning),
+    },
+  };
+}
+
+/**
+ * Idle | Sulking → Resting (spec §4.7; the Rest care action's "on"
+ * toggle). Legal from Sulking (round 2A fix, see module doc): the
+ * resulting Pip keeps `sulking: true` — `activity` moves to `Resting` but
+ * the guilt-trip persists until needs actually clear the exit bar
+ * (`evaluateSulk`), and re-manifests as `PipActivity.Sulking` when the
+ * nap ends if it still hasn't (`wake`/`evaluateRestAutoWake`).
+ */
+export function beginRest(pip: PipState): TransitionResult {
+  const wasSulking = pip.activity === PipActivity.Sulking;
+  if (pip.activity !== PipActivity.Idle && !wasSulking) {
+    return refuse("illegal", "beginRest", pip);
+  }
+  return allow({
+    ...pip,
+    activity: PipActivity.Resting,
+    ...(wasSulking ? { sulking: true } : {}),
+  });
+}
+
+/**
+ * Resting → Idle | Sulking (manual wake; auto-wake is
+ * evaluateRestAutoWake, which shares this same target logic). Resolves to
+ * `Sulking`, not `Idle`, if the Pip is STILL sulking when the nap ends
+ * (round 2A: Rest cures Energy, nothing else — a Pip that woke with
+ * another need still floored should visibly say so again).
+ */
 export function wake(pip: PipState): TransitionResult {
   if (pip.activity !== PipActivity.Resting) {
     return refuse("illegal", "wake", pip);
   }
-  return allow({ ...pip, activity: PipActivity.Idle });
+  return allow({
+    ...pip,
+    activity: isSulking(pip) ? PipActivity.Sulking : PipActivity.Idle,
+  });
 }
 
 /** Idle → AssignedJob. Sulking Pips refuse with dialogue (spec §4.7). */
 export function assignJob(pip: PipState): TransitionResult {
-  if (pip.activity === PipActivity.Sulking) {
+  if (isSulking(pip)) {
     return refuse("sulking", "assignJob", pip);
   }
   if (pip.activity !== PipActivity.Idle) {
@@ -133,21 +263,27 @@ export function unassignJob(pip: PipState): TransitionResult {
 /**
  * Idle → OnExpedition. The machine owns the `expedition` field so the
  * invariant "non-null exactly while OnExpedition/Returning" holds by
- * construction. Sulking Pips refuse (spec §4.7); Piplings cannot go on
- * expeditions (spec §4.6).
+ * construction. Sulking Pips refuse (spec §4.7); a Pipling refuses unless
+ * this expedition id is in `tuning.pipling.allowedExpeditionIds` (spec
+ * §4.6, round 2A "supervised short trip" amendment) — the refusal carries
+ * `growsUpAt` so the UI can explain exactly when it resolves.
  */
 export function departExpedition(
   pip: PipState,
   expedition: ActiveExpedition,
+  tuning: MachineTuning = contentTuning,
 ): TransitionResult {
-  if (pip.activity === PipActivity.Sulking) {
+  if (isSulking(pip)) {
     return refuse("sulking", "departExpedition", pip);
   }
   if (pip.activity !== PipActivity.Idle) {
     return refuse("illegal", "departExpedition", pip);
   }
-  if (pip.lifeStage === LifeStage.Pipling) {
-    return refuse("pipling", "departExpedition", pip);
+  if (
+    pip.lifeStage === LifeStage.Pipling &&
+    !tuning.pipling.allowedExpeditionIds.includes(expedition.expeditionId)
+  ) {
+    return refusePipling("departExpedition", pip, tuning);
   }
   return allow({ ...pip, activity: PipActivity.OnExpedition, expedition });
 }
@@ -174,6 +310,7 @@ export function arriveHome(pip: PipState): TransitionResult {
   return allow({
     ...pip,
     activity: pip.pendingSulk ? PipActivity.Sulking : PipActivity.Idle,
+    sulking: pip.pendingSulk,
     pendingSulk: false,
     expedition: null,
   });
@@ -183,21 +320,35 @@ export function arriveHome(pip: PipState): TransitionResult {
  * Automatic Sulking entry/exit (spec §4.4). Run after every needs
  * recompute and at every catch-up segment boundary (spec §4.5 rule 5).
  *
- * - Exit: Sulking and ALL four needs ≥ sulkExitThreshold (inclusive) → Idle.
- * - Enter: any need at the floor (0) while Idle/Resting/AssignedJob →
- *   Sulking. While OnExpedition/Returning the entry is deferred: set
- *   `pendingSulk` and leave the activity alone (never punish the trip);
- *   arriveHome converts it to Sulking on landing.
+ * - Exit: sulking (either encoding, `isSulking`) and ALL four needs ≥
+ *   sulkExitThreshold (inclusive) → clear the flag; a Pip DISPLAYED as
+ *   Sulking returns to Idle, a Pip Resting-through-it just keeps napping
+ *   (round 2A: Rest is never something recovery should cut short).
+ * - Enter: any need at the floor (0) while Idle/AssignedJob → the classic
+ *   `activity = Sulking` display (unchanged from before this round).
+ *   While Resting (a nap already in progress, or one just begun FROM
+ *   Sulking via `beginRest`) → set the `sulking` FLAG only, activity
+ *   stays Resting (round 2A: this is the case the old enum-only model
+ *   could not represent — see module doc). While OnExpedition/Returning
+ *   the entry is deferred: set `pendingSulk` and leave the activity alone
+ *   (never punish the trip); `arriveHome` converts it to Sulking on
+ *   landing.
  */
 export function evaluateSulk(
   pip: PipState,
   tuning: MachineTuning = contentTuning,
 ): PipState {
-  if (pip.activity === PipActivity.Sulking) {
+  if (isSulking(pip)) {
     const recovered = NEED_IDS.every(
       (need) => pip.needs[need] >= tuning.sulkExitThreshold,
     );
-    return recovered ? { ...pip, activity: PipActivity.Idle } : pip;
+    if (!recovered) return pip;
+    return {
+      ...pip,
+      sulking: false,
+      activity:
+        pip.activity === PipActivity.Sulking ? PipActivity.Idle : pip.activity,
+    };
   }
 
   const anyAtFloor = NEED_IDS.some((need) => pip.needs[need] <= NEED_MIN);
@@ -210,15 +361,23 @@ export function evaluateSulk(
     return pip.pendingSulk ? pip : { ...pip, pendingSulk: true };
   }
 
-  // Idle / Resting / AssignedJob — enter Sulking now (spec §4.4).
-  return { ...pip, activity: PipActivity.Sulking };
+  if (pip.activity === PipActivity.Resting) {
+    // NEW (round 2A): never yank a Pip out of a Rest in progress just
+    // because a DIFFERENT need floored — see module doc.
+    return { ...pip, sulking: true };
+  }
+
+  // Idle / AssignedJob — enter Sulking now (spec §4.4), unchanged.
+  return { ...pip, sulking: true, activity: PipActivity.Sulking };
 }
 
 /**
  * Automatic Rest wake (spec §5: "Pip auto-wakes at 100"): a Resting Pip
- * whose Energy has reached `autoWakeAtEnergy` → Idle. Run after every
- * needs recompute; catch-up passes split segments at restAutoWakeAt() so
- * Energy is at exactly the threshold (never beyond) at the wake moment.
+ * whose Energy has reached `autoWakeAtEnergy` wakes via `wake()` — which
+ * resolves to Sulking rather than Idle if the Pip is still sulking (round
+ * 2A). Run after every needs recompute; catch-up passes split segments at
+ * restAutoWakeAt() so Energy is at exactly the threshold (never beyond)
+ * at the wake moment.
  */
 export function evaluateRestAutoWake(
   pip: PipState,
@@ -226,7 +385,11 @@ export function evaluateRestAutoWake(
 ): PipState {
   if (pip.activity !== PipActivity.Resting) return pip;
   if (pip.needs.energy < tuning.care.rest.autoWakeAtEnergy) return pip;
-  return { ...pip, activity: PipActivity.Idle };
+  const woken = wake(pip);
+  // wake() only refuses when activity !== Resting, which the guard above
+  // already excludes — this branch is unreachable but keeps the function
+  // total without an unsafe cast.
+  return woken.ok ? woken.pip : pip;
 }
 
 /**
@@ -252,8 +415,12 @@ export function restAutoWakeAt(
  * Care actions (Feed/Clean/Play/Pet/Rest/Give Item) are legal only in
  * Idle, Resting, Sulking — not while away (spec §4.7). Sulking is
  * deliberately included: recovery is always one good care session away
- * (spec §4.4). Note the Rest toggle additionally needs the beginRest/wake
- * edges, which only exist between Idle and Resting.
+ * (spec §4.4) — round 2A made this true for Rest too: `beginRest` now
+ * accepts `Idle | Sulking` (previously Idle-only, which soft-locked a Pip
+ * that Sulked at 0 Energy, since Rest is the only source of Energy). Every
+ * OTHER care action already gated on this list alone with no extra
+ * activity check, so this was the one actual bug — audited exhaustively
+ * in machine.test.ts / care.test.ts.
  */
 export const CARE_LEGAL_ACTIVITIES: readonly PipActivity[] = [
   PipActivity.Idle,

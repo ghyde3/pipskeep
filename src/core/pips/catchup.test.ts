@@ -25,13 +25,46 @@ import type {
 } from "./catchup";
 
 const SAVED_AT = 1_000 * HOUR_MS;
-const CAP_MS = tuning.offlineRateCapMs; // 12h by default
 
-/** Content tuning + an all-×1.0 "neutral" personality for exact-rate math. */
-const neutralTuning = {
+/**
+ * FIXTURE tuning, deliberately PINNED rather than read from
+ * `content/tuning.ts`.
+ *
+ * Everything below asserts the catch-up ENGINE — segmentation, the rate
+ * cap, event ordering, integral accrual — against arithmetic a reader can
+ * check in their head (100 − 6×12, a wake at (100−40)/15 = 4h). Reading
+ * the live balance numbers instead would make every one of those
+ * assertions re-derive itself and quietly stop pinning anything, and a
+ * retune would blow up 11 engine tests that have no opinion about
+ * balance. The shipped curve is owned by `core/pips/balance.test.ts`.
+ *
+ * These are the Phase 1 numbers the gate tests were written against.
+ */
+const fixture = {
   ...tuning,
+  needDecayPerHour: { hunger: -6, cleanliness: -4, happiness: -5, energy: -3 },
   personalityDecayMultipliers: {
-    ...tuning.personalityDecayMultipliers,
+    lazy: { hunger: 0.8, cleanliness: 1.0, happiness: 1.0, energy: 1.4 },
+    curious: { hunger: 1.0, cleanliness: 1.2, happiness: 0.8, energy: 1.1 },
+    hardworking: { hunger: 1.2, cleanliness: 1.0, happiness: 1.1, energy: 1.2 },
+    chaotic: { hunger: 1.1, cleanliness: 1.5, happiness: 0.7, energy: 1.0 },
+    clingy: { hunger: 1.0, cleanliness: 1.0, happiness: 1.3, energy: 0.9 },
+  },
+  offlineRateCapMs: 12 * HOUR_MS,
+  care: {
+    ...tuning.care,
+    rest: { energyPerHour: 15, autoWakeAtEnergy: 100 },
+  },
+  pipling: { ...tuning.pipling, durationMs: 24 * HOUR_MS, decayMultiplier: 1.2 },
+} satisfies CatchupTuning;
+
+const CAP_MS = fixture.offlineRateCapMs; // 12h in the fixture
+
+/** Fixture tuning + an all-×1.0 "neutral" personality for exact-rate math. */
+const neutralTuning = {
+  ...fixture,
+  personalityDecayMultipliers: {
+    ...fixture.personalityDecayMultipliers,
     neutral: { hunger: 1, cleanliness: 1, happiness: 1, energy: 1 },
   },
 } satisfies CatchupTuning;
@@ -236,24 +269,24 @@ describe("chronological segmentation (spec §4.5 rule 2, gate test c)", () => {
       makeState(pip),
       SAVED_AT,
       clock.now(),
-      tuning,
+      fixture,
     );
     const after = onlyPip(state);
 
     // 2h at (−5 × 1.3 × 2.0) away + 4h at (−5 × 1.3) home, exactly.
-    const clingy = tuning.personalityDecayMultipliers.clingy;
+    const clingy = fixture.personalityDecayMultipliers.clingy;
     const awayRate =
-      tuning.needDecayPerHour.happiness *
+      fixture.needDecayPerHour.happiness *
       clingy.happiness *
-      tuning.quirks.clingyExpeditionHappinessMultiplier;
-    const homeRate = tuning.needDecayPerHour.happiness * clingy.happiness;
+      fixture.quirks.clingyExpeditionHappinessMultiplier;
+    const homeRate = fixture.needDecayPerHour.happiness * clingy.happiness;
     expect(after.needs.happiness).toBe(100 + awayRate * 2 + homeRate * 4);
 
     // Needs without a situational modifier decay uniformly across both
     // segments (same split arithmetic, so still bit-exact).
-    const energyRate = tuning.needDecayPerHour.energy * clingy.energy;
+    const energyRate = fixture.needDecayPerHour.energy * clingy.energy;
     expect(after.needs.energy).toBe(100 + energyRate * 2 + energyRate * 4);
-    expect(after.needs.hunger).toBe(100 + tuning.needDecayPerHour.hunger * 6);
+    expect(after.needs.hunger).toBe(100 + fixture.needDecayPerHour.hunger * 6);
 
     // Activity ends Idle via Returning; the trip is over and unpunished.
     expect(after.activity).toBe(PipActivity.Idle);
@@ -286,8 +319,8 @@ describe("chronological segmentation (spec §4.5 rule 2, gate test c)", () => {
     );
     const after = onlyPip(state);
 
-    const base = tuning.needDecayPerHour.hunger;
-    const piplingRate = base * 1 * tuning.pipling.decayMultiplier;
+    const base = fixture.needDecayPerHour.hunger;
+    const piplingRate = base * 1 * fixture.pipling.decayMultiplier;
     expect(after.needs.hunger).toBe(100 + piplingRate * 4 + base * 6);
     expect(after.lifeStage).toBe(LifeStage.Adult);
     expect(summary.events).toEqual([
@@ -300,11 +333,11 @@ describe("cap × segments (spec §4.5 rules 2+3, gate test d)", () => {
   // Rates chosen so nothing clamps: base happiness −3/h, Clingy personality
   // multiplier flattened to ×1.0, quirk ×2.0 kept → away −6/h, home −3/h.
   const capSegTuning = {
-    ...tuning,
-    needDecayPerHour: { ...tuning.needDecayPerHour, happiness: -3 },
+    ...fixture,
+    needDecayPerHour: { ...fixture.needDecayPerHour, happiness: -3 },
     personalityDecayMultipliers: {
-      ...tuning.personalityDecayMultipliers,
-      clingy: { ...tuning.personalityDecayMultipliers.clingy, happiness: 1.0 },
+      ...fixture.personalityDecayMultipliers,
+      clingy: { ...fixture.personalityDecayMultipliers.clingy, happiness: 1.0 },
     },
   } satisfies CatchupTuning;
 
@@ -371,12 +404,12 @@ describe("Rest auto-wake during catch-up (spec §4.5 rule 1, gate test e)", () =
     expect(summary.events).toEqual([
       { kind: "restAutoWake", at: SAVED_AT + 4 * HOUR_MS, pipId: "pip-1" },
     ]);
-    expect(after.needs.energy).toBe(100 + tuning.needDecayPerHour.energy * 4);
+    expect(after.needs.energy).toBe(100 + fixture.needDecayPerHour.energy * 4);
     expect(after.needs.energy).toBe(88);
     expect(after.activity).toBe(PipActivity.Idle);
     // Other needs decayed through BOTH segments (Resting still decays them).
     expect(after.needs.hunger).toBe(
-      100 + tuning.needDecayPerHour.hunger * 4 + tuning.needDecayPerHour.hunger * 4,
+      100 + fixture.needDecayPerHour.hunger * 4 + fixture.needDecayPerHour.hunger * 4,
     );
   });
 
@@ -469,7 +502,7 @@ describe("Rest auto-wake during catch-up (spec §4.5 rule 1, gate test e)", () =
     ]);
     const hoursAwakeAfter = (SAVED_AT + 4 * HOUR_MS - wakeAt) / HOUR_MS;
     expect(after.needs.energy).toBe(
-      100 + tuning.needDecayPerHour.energy * hoursAwakeAfter,
+      100 + fixture.needDecayPerHour.energy * hoursAwakeAfter,
     );
     expect(after.activity).toBe(PipActivity.Idle);
   });
@@ -561,9 +594,9 @@ describe("Sulking at segment boundaries (spec §4.4 + §4.5 rule 5, gate test f)
 
     // Exited Sulking at +1h (all needs ≥ 25), then decayed 2h as Idle.
     expect(after.activity).toBe(PipActivity.Idle);
-    expect(after.needs.hunger).toBe(80 + tuning.needDecayPerHour.hunger * 2);
+    expect(after.needs.hunger).toBe(80 + fixture.needDecayPerHour.hunger * 2);
     expect(after.needs.happiness).toBe(
-      80 + tuning.needDecayPerHour.happiness * 2,
+      80 + fixture.needDecayPerHour.happiness * 2,
     );
   });
 });
@@ -602,7 +635,7 @@ describe("events beyond the cap still fire (spec §4.5 rule 4, gate test g)", ()
       },
     ]);
     // Rates contributed zero past the cap.
-    expect(after.needs.hunger).toBe(100 + tuning.needDecayPerHour.hunger * 12);
+    expect(after.needs.hunger).toBe(100 + fixture.needDecayPerHour.hunger * 12);
     expect(after.needs.hunger).toBe(28);
     // happinessIntegral: 12h trapezoid (100→40) + 36h frozen at 40,
     // straddling the event boundary without losing a millisecond.
@@ -706,7 +739,7 @@ describe("the event seam (design: collectEvents function or event list)", () => 
       ["custom", SAVED_AT + 7 * HOUR_MS],
     ]);
     expect(pipDelta(summary, "a").needsDelta.hunger).toBe(
-      tuning.needDecayPerHour.hunger * 8,
+      fixture.needDecayPerHour.hunger * 8,
     );
     expect(pipDelta(summary, "b").activityAfter).toBe(PipActivity.Idle);
   });
@@ -762,8 +795,8 @@ describe("summary + hygiene", () => {
     expect(delta.activityBefore).toBe(PipActivity.Idle);
     expect(delta.activityAfter).toBe(PipActivity.Idle);
     expect(delta.needsBefore.hunger).toBe(100);
-    expect(delta.needsAfter.hunger).toBe(100 + tuning.needDecayPerHour.hunger * 2);
-    expect(delta.needsDelta.hunger).toBe(tuning.needDecayPerHour.hunger * 2);
+    expect(delta.needsAfter.hunger).toBe(100 + fixture.needDecayPerHour.hunger * 2);
+    expect(delta.needsDelta.hunger).toBe(fixture.needDecayPerHour.hunger * 2);
     expect(summary.elapsedMs).toBe(2 * HOUR_MS);
   });
 
@@ -783,7 +816,7 @@ describe("summary + hygiene", () => {
     const clock = new FakeClock(SAVED_AT);
     clock.advance(6 * HOUR_MS);
 
-    runCatchup(input, SAVED_AT, clock.now(), tuning);
+    runCatchup(input, SAVED_AT, clock.now(), fixture);
 
     expect(input).toEqual(snapshot);
   });
@@ -835,7 +868,7 @@ describe("summary + hygiene", () => {
       makeState(pip),
       SAVED_AT,
       clock.now(),
-      tuning,
+      fixture,
     );
     const after = onlyPip(state);
 
@@ -844,9 +877,9 @@ describe("summary + hygiene", () => {
     expect(summary.events).toEqual([]);
     // Clingy's away penalty keeps applying while Returning (spec §4.2).
     const rate =
-      tuning.needDecayPerHour.happiness *
-      tuning.personalityDecayMultipliers.clingy.happiness *
-      tuning.quirks.clingyExpeditionHappinessMultiplier;
+      fixture.needDecayPerHour.happiness *
+      fixture.personalityDecayMultipliers.clingy.happiness *
+      fixture.quirks.clingyExpeditionHappinessMultiplier;
     expect(after.needs.happiness).toBe(100 + rate * 4);
   });
 });

@@ -175,19 +175,26 @@ describe("rootReducer TICK — spec §4.1 needs advance + automatic evaluators",
     });
     const state = makeState({ pip: p });
     const next = rootReducer(state, { type: "TICK", at: 2 * HOUR_MS });
-    expect(pip(next).needs.energy).toBe(100); // 70 + 15/h × 2h, clamped exact
+    expect(pip(next).needs.energy).toBe(100); // regen for 2h, clamped exact
     expect(pip(next).activity).toBe(PipActivity.Idle); // auto-wake (spec §5)
   });
 
   it("a need hitting the floor enters Sulking (spec §4.4)", () => {
-    const p = makePip({ needs: needs({ hunger: 5 }) });
+    // Half an hour's worth of Hunger, then a full hour of decay: the
+    // need crosses the floor and clamps. Derived from tuning so a
+    // rebalance moves the seed rather than breaking the claim.
+    const p = makePip({
+      needs: needs({ hunger: -tuning.needDecayPerHour.hunger / 2 }),
+    });
     const state = makeState({ pip: p });
     const next = rootReducer(state, { type: "TICK", at: HOUR_MS });
-    expect(pip(next).needs.hunger).toBe(0); // 5 − 6, clamped
+    expect(pip(next).needs.hunger).toBe(0); // clamped at the floor
     expect(pip(next).activity).toBe(PipActivity.Sulking);
   });
 
-  it("a Pipling past 24h becomes an Adult during TICK (spec §4.6)", () => {
+  it("a Pipling past pipling.durationMs becomes an Adult during TICK (spec §4.6)", () => {
+    // 25h clears the boundary regardless of the current tuned duration
+    // (round 2A: 8h, was 24h) — comfortably past either.
     const p = makePip({ lifeStage: LifeStage.Pipling, hatchedAt: 0 });
     const state = makeState({ pip: p });
     const next = rootReducer(state, { type: "TICK", at: 25 * HOUR_MS });
@@ -448,5 +455,68 @@ describe("store integration — one-way flow end to end", () => {
     );
     expect(afterFeed.lastCareOutcome?.applied).toBe(true);
     expect(afterFeed.lastCareOutcome?.line).toBeTypeOf("string");
+  });
+
+  it("a Sulking Pip at 0 Energy naps its way out of the Sulk — store.dispatch to recovery", () => {
+    // The round 2A soft-lock, pinned end to end at the outermost seam.
+    // `beginRest` used to require Idle, so a Pip that Sulked at 0 Energy
+    // could never Rest, and Rest is the ONLY source of Energy — §4.4's
+    // "recovery is always one good care session away" was unreachable.
+    // Every layer of that path is covered elsewhere (machine.test.ts under
+    // fixture rates, care.test.ts through performCare, the TICK auto-wake
+    // above); this one drives the WHOLE thing — store → reducer → care →
+    // machine → tick — with the shipped tuning and a real clock.
+    const clock = new FakeClock(1_000);
+    const store = createStore(rootReducer, createNewGame(4, clock.now()));
+    const starterId = store.getState().rosterOrder[0] as string;
+
+    // Bottom out Energy: the pip sulks the moment a need hits the floor.
+    store.dispatch({
+      type: "LOAD_SAVE",
+      state: {
+        ...store.getState(),
+        pips: {
+          ...store.getState().pips,
+          [starterId]: {
+            ...(store.getState().pips[starterId] as PipState),
+            activity: PipActivity.Sulking,
+            sulking: true,
+            needs: { hunger: 60, cleanliness: 60, happiness: 60, energy: 0 },
+          },
+        },
+      },
+    });
+    expect(pip(store.getState(), starterId).activity).toBe(PipActivity.Sulking);
+
+    // One tap: the Sulking Pip lies down instead of refusing.
+    store.dispatch({ type: "REST_TOGGLE", pipId: starterId, at: clock.now() });
+    expect(store.getState().lastCareOutcome?.applied).toBe(true);
+    expect(pip(store.getState(), starterId).activity).toBe(PipActivity.Resting);
+    // Still sulking WHILE it naps — the nap is progress, not absolution.
+    expect(pip(store.getState(), starterId).sulking).toBe(true);
+
+    // Energy crosses the §4.4 exit threshold partway through the nap.
+    const toExitMs =
+      (tuning.sulkExitThreshold / tuning.care.rest.energyPerHour) * HOUR_MS;
+    clock.advance(toExitMs);
+    store.dispatch({ type: "TICK", at: clock.now() });
+    const midNap = pip(store.getState(), starterId);
+    expect(midNap.needs.energy).toBeGreaterThanOrEqual(
+      tuning.sulkExitThreshold,
+    );
+    expect(midNap.sulking).toBe(false);
+    // A recovered Pip keeps napping — nothing interrupts a rest.
+    expect(midNap.activity).toBe(PipActivity.Resting);
+
+    // ...and wakes on its own at full Energy.
+    clock.advance(
+      (tuning.care.rest.autoWakeAtEnergy / tuning.care.rest.energyPerHour) *
+        HOUR_MS,
+    );
+    store.dispatch({ type: "TICK", at: clock.now() });
+    const awake = pip(store.getState(), starterId);
+    expect(awake.needs.energy).toBe(tuning.care.rest.autoWakeAtEnergy);
+    expect(awake.activity).toBe(PipActivity.Idle);
+    expect(awake.sulking).toBe(false);
   });
 });

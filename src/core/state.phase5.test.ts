@@ -115,20 +115,33 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
 }
 
 describe("PURCHASE_KEEP_LEVEL (spec §6.3/§9)", () => {
-  it("deducts the level-2 bundle EXACTLY (15 Wood + 10 Fiber)", () => {
-    const state = makeState({ resources: { wood: 20, fiber: 15, berry: 2 } });
+  it("deducts the level-2 bundle EXACTLY, leaving the surplus alone", () => {
+    const cost = tuning.keepLevelCosts[2];
+    const surplus = 5;
+    const state = makeState({
+      resources: {
+        wood: (cost.wood ?? 0) + surplus,
+        fiber: (cost.fiber ?? 0) + surplus,
+        berry: 2,
+      },
+    });
     const next = rootReducer(state, { type: "PURCHASE_KEEP_LEVEL" });
     expect(next.keep.level).toBe(2);
-    expect(next.resources).toEqual({ wood: 5, fiber: 5, berry: 2 });
-    // The cost came from content/keep.ts, not a parallel constant.
-    expect(keepLevels.find((l) => l.level === 2)?.cost).toEqual({
-      wood: 15,
-      fiber: 10,
+    expect(next.resources).toEqual({
+      wood: surplus,
+      fiber: surplus,
+      berry: 2, // untouched — Berries are food, never currency (§6.3)
     });
+    // The cost came from content/keep.ts, not a parallel constant.
+    expect(keepLevels.find((l) => l.level === 2)?.cost).toEqual(cost);
   });
 
   it("refuses when short — state unchanged by reference, nothing deducted", () => {
-    const state = makeState({ resources: { wood: 14, fiber: 10 } });
+    const cost = tuning.keepLevelCosts[2];
+    // One Wood short of the bundle: all-or-nothing, so nothing moves.
+    const state = makeState({
+      resources: { wood: (cost.wood ?? 0) - 1, fiber: (cost.fiber ?? 0) + 5 },
+    });
     expect(rootReducer(state, { type: "PURCHASE_KEEP_LEVEL" })).toBe(state);
   });
 
@@ -140,14 +153,17 @@ describe("PURCHASE_KEEP_LEVEL (spec §6.3/§9)", () => {
     expect(rootReducer(state, { type: "PURCHASE_KEEP_LEVEL" })).toBe(state);
   });
 
-  it("level 2 → 3 costs the Shore-tier bundle (20 Wood + 12 Shells + 6 Driftwood)", () => {
+  it("level 2 → 3 costs the level-3 bundle, to the last unit", () => {
+    const cost = tuning.keepLevelCosts[3];
     const state = makeState({
       keep: { level: 2, placements: {} },
-      resources: { wood: 20, shell: 12, driftwood: 6 },
+      resources: { ...cost } as Record<string, number>,
     });
     const next = rootReducer(state, { type: "PURCHASE_KEEP_LEVEL" });
     expect(next.keep.level).toBe(3);
-    expect(next.resources).toEqual({ wood: 0, shell: 0, driftwood: 0 });
+    for (const amount of Object.values(next.resources)) {
+      expect(amount).toBe(0);
+    }
   });
 
   it("buying level 2 flips Forest assignment from locked to legal (spec §6.1/§9)", () => {

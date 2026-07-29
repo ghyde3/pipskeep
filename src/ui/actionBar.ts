@@ -131,7 +131,11 @@ export function createActionBar(deps: ActionBarDeps): ActionBar {
     if (lastUsed === undefined) return 0;
     const total =
       action === "clean" ? tuning.care.clean.cooldownMs : tuning.care.pet.cooldownMs;
-    return Math.max(0, total - (now - lastUsed));
+    const elapsed = now - lastUsed;
+    // Clock moved backwards — mirror core's onCooldown and show it as ready
+    // rather than rendering an hours-long countdown.
+    if (elapsed < 0) return 0;
+    return Math.max(0, total - elapsed);
   };
 
   const syncCooldownButton = (

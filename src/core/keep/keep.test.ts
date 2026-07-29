@@ -268,16 +268,16 @@ describe("reducer wiring + reload survival (Phase 5 gate)", () => {
       x: 2,
       y: 2,
     });
-    // Exactly the content cost (8 Wood + 4 Fiber), all-or-nothing.
+    // Exactly the content cost (round 2B: 3 Wood + 2 Fiber), all-or-nothing.
     expect(placed.keep.placements["place-1"]).toEqual({
       itemId: "gathering-station",
       x: 2,
       y: 2,
     });
-    expect(placed.resources).toEqual({ wood: 2, fiber: 0 });
+    expect(placed.resources).toEqual({ wood: 7, fiber: 2 });
     expect(
       placeables.find((p) => p.id === "gathering-station")?.cost,
-    ).toEqual({ wood: 8, fiber: 4 });
+    ).toEqual({ wood: 3, fiber: 2 });
 
     // Moving is free.
     const moved = rootReducer(placed, {

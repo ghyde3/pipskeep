@@ -388,6 +388,18 @@ Onboarding flow, first-90-seconds sequence tuned, in-app notifications, PWA mani
 
 ## 16. Changelog
 
+**v1.2 (2026-07-29)** — playtest amendments. v1.0 shipped, was played, and the feedback overrode several spec decisions. Where this section conflicts with earlier sections, **this section wins**; tuning values live in `content/tuning.ts` as always.
+
+- **§6.3 economy was unwinnable and is corrected.** The costs I set in v1.1 created a circular dependency (level 2 needs wood; wood needs Forest; Forest needs level 2) and a second one at level 3 (shell/driftwood need the Shore, which unlocks at level 3). Meadow now drops wood; level costs are rebalanced; shell/driftwood moved to the roster upgrade. **New standing rule: every gated cost must be obtainable from activities unlocked at the previous tier, enforced by `economy/reachability.test.ts`.**
+- **§4.7 Sulking is a flag, not an activity.** Modelling it as an activity made "Sulking while Resting" unrepresentable and soft-locked any pip that hit 0 Energy. `PipState.sulking` is now orthogonal to `activity`. Rest is legal from Sulking, as §4.7 always intended.
+- **§4.1/§4.2 decay retuned** to −3.8/−3.7/−3.6/−3.5 with the offline cap at **16h** and personality multipliers compressed to [0.8, 1.3]. Rationale: any multiplier ≥1.5 mathematically drives its need to 0 on every absence at a tuning that targets ~25%.
+- **§5 restore values raised** so one care session out-restores one full capped absence for every personality — otherwise each day/care cycle ratchets downward and day 2 is worse than day 1.
+- **§4.6 Pipling stage: 24h → 8h, decay ×1.2 → ×0.9**, and Piplings may take the Meadow (shortest expedition) as a supervised trip. A stage that could do nothing *and* cost more upkeep was pure tax on the game's most exciting moment.
+- **§12 sound seam retired**: sound is implemented, procedurally via WebAudio, with no new dependencies (the §1 allowlist is intact).
+- **§14 debug menu** gains a time slider (Min/Hrs/Days, dynamic maxes 60/24/30) and its skip now routes through the catch-up path so it honestly simulates a real absence.
+- Cooldowns now clamp negative elapsed time exactly as §4.5 requires for decay.
+
+
 **v1.1 (2026-07-29)** — coherence pass. All numeric choices below are `[DEFAULT — review]`-grade and tunable in content; the structural decisions are the point.
 
 - **RNG reproducibility** (§2, §8): dropped the unimplemented "event log" claim. RNG stream cursors now serialize inside `GameState`, so a save file deterministically produces all future rolls and reload never re-rolls.

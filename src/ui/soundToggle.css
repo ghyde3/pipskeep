@@ -1,0 +1,80 @@
+/**
+ * The sound toggle — one small round button, bottom-right, above the
+ * action bar and clear of the (dev-only) debug toggle at bottom 132px.
+ *
+ * Its own stylesheet, its own class prefix: this module owns every pixel
+ * it draws and edits nothing in ui.css.
+ *
+ * z-index 5 is deliberate — the button sits over the world but UNDER the
+ * Build sheet (6), the item sheets (20), coach marks (30) and every modal
+ * (44+), so an open surface covers it instead of floating on top of it.
+ */
+
+.pk-sound-toggle {
+  pointer-events: auto;
+  position: absolute;
+  right: 12px;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 178px);
+  z-index: 5;
+
+  appearance: none;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px solid rgba(95, 138, 94, 0.25);
+  border-radius: 50%;
+  background: rgba(255, 253, 246, 0.94);
+  color: #3d6b44;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  box-shadow: 0 3px 10px rgba(61, 74, 61, 0.18);
+  transition:
+    transform 90ms ease,
+    opacity 140ms ease,
+    color 140ms ease;
+}
+
+.pk-sound-toggle:active {
+  transform: scale(0.92);
+}
+
+/* Muted reads as "off": drained of colour, slightly faded — obvious at a
+   glance without needing to parse the icon. */
+.pk-sound-toggle[aria-pressed="true"] {
+  color: #8e9a8e;
+  opacity: 0.75;
+}
+
+/* Keyboard users get a real, visible ring (the button is reachable in
+   normal tab order — no tabindex games). */
+.pk-sound-toggle:focus-visible {
+  outline: 3px solid #7cc283;
+  outline-offset: 2px;
+}
+
+.pk-sound-toggle svg {
+  width: 21px;
+  height: 21px;
+  display: block;
+}
+
+.pk-sound-toggle .pk-sound-wave {
+  transition: opacity 120ms ease;
+}
+
+.pk-sound-toggle[aria-pressed="true"] .pk-sound-wave {
+  opacity: 0;
+}
+
+.pk-sound-toggle .pk-sound-cross {
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.pk-sound-toggle[aria-pressed="true"] .pk-sound-cross {
+  opacity: 1;
+}

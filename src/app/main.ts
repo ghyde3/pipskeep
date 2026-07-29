@@ -63,6 +63,11 @@ import { initPhase5Ui } from "../ui/phase5";
 // loudly if the module goes missing.
 import { initOnboarding, runStarterPick } from "../ui/onboarding";
 import { showRecoveryModal } from "../ui/recovery";
+// Round 2A sound (amends spec §12): the `sound(slotId)` seam is no longer
+// a no-op — app/audio/ synthesizes every cue procedurally. initSound is
+// the only wiring the app needs; every call site was already in place.
+import { initSound } from "./sound";
+import { mountSoundToggle } from "../ui/soundToggle";
 import { OffsetClock } from "./appClock";
 import { routeBoot } from "./bootRoute";
 import { initPersistence, loadPipskeep, openSaveStore } from "./persistence";
@@ -219,6 +224,26 @@ async function startGame(
   loaded: LoadResult,
 ): Promise<void> {
   const freshGame = loaded.save === null;
+
+  // --- Sound (Round 2A: the §12 seam is real now) ---
+  // FIRST, deliberately: browsers only allow an AudioContext to start
+  // inside a user gesture, and the onboarding ceremony's taps are the
+  // first gestures a new player makes. Init here and the very first tap
+  // both unlocks audio and is itself audible; init after the ceremony and
+  // the whole of onboarding plays in silence. Nothing is scheduled by
+  // this call — it restores the mute preference (from the SAME IndexedDB
+  // store as the save, under its own key: no save-version bump) and arms
+  // the unlock listener. The toggle button mounts later, once #ui exists.
+  // Failures are swallowed: a browser without Web Audio plays the game
+  // silently rather than not at all.
+  const soundController = await initSound({
+    prefs: saveStore,
+    seed: loaded.save?.state.seed ?? 0,
+  }).catch((error: unknown) => {
+    console.warn("PipsKeep sound unavailable", error);
+    return null;
+  });
+
   let initial: GameState;
   if (loaded.save !== null) {
     initial = loaded.save.state;
@@ -284,6 +309,12 @@ async function startGame(
     getBubbleAnchor: () => scene.getBubbleAnchor(),
     openReveal: () => phase4.openLootReveal(),
   });
+
+  // The mute button — one small speaker, mounted into the UI root now
+  // that it exists (the module owns all of its own DOM and CSS).
+  if (soundController !== null) {
+    mountSoundToggle({ mount: document.body, controller: soundController });
+  }
 
   // --- Phase 6 onboarding (guided beats, spec §10.1.3–.5) ---
   // Mounts nothing when onboarding is already completed (every migrated

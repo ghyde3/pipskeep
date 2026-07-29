@@ -170,6 +170,35 @@ export const MIGRATIONS: Readonly<Record<number, MigrationStep>> = {
     }
     return out;
   },
+
+  /**
+   * v4 → v5 (round 2A finding #2): per-pip `sulking: boolean` — the
+   * Sulking penalty becomes an orthogonal flag alongside `activity`
+   * instead of solely the `activity === "sulking"` value, so "Resting
+   * AND still sulking" is representable (see `core/pips/machine.ts`
+   * module doc). A pre-v5 save's ENTIRE Sulking state lived in
+   * `activity`, so that is the one faithful source to derive from: a pip
+   * saved mid-Sulk gets `sulking: true`; every other pip (including one
+   * napping for unrelated reasons — the pre-v5 model could not have
+   * recorded "sulking while Resting" in the first place) gets `false`.
+   */
+  4: (blob) => {
+    const out: Record<string, unknown> = { ...blob, schemaVersion: 5 };
+    const state = blob["state"];
+    if (isPlainRecord(state)) {
+      const pips = state["pips"];
+      const migratedPips = isPlainRecord(pips)
+        ? Object.fromEntries(
+            Object.entries(pips).map(([pipId, pip]) => {
+              if (!isPlainRecord(pip)) return [pipId, pip];
+              return [pipId, { ...pip, sulking: pip["activity"] === "sulking" }];
+            }),
+          )
+        : pips;
+      out["state"] = { ...state, pips: migratedPips };
+    }
+    return out;
+  },
 };
 
 export type MigrateResult =

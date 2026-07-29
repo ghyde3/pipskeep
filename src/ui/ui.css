@@ -1098,7 +1098,7 @@
   opacity: 0.85;
 }
 
-.pk-exp-lock {
+.pk-exp-badge {
   margin-left: auto;
   font-size: 10.5px;
   font-weight: 800;
@@ -1106,6 +1106,29 @@
   border-radius: 8px;
   background: rgba(232, 147, 90, 0.18);
   color: #a8622f;
+}
+
+/* A Pipling's "not yet" chip and its supervised-trip counterpart: the
+   stage reads as a phase to look forward to, not a punishment. */
+.pk-exp-badge--pipling {
+  background: rgba(126, 148, 214, 0.2);
+  color: #4a5da8;
+}
+
+.pk-exp-badge--available {
+  background: rgba(124, 194, 131, 0.25);
+  color: #3d6b44;
+}
+
+/* Pipling rows stay legible and hopeful — dimmed less than `locked`,
+   because the countdown under them is the whole point. */
+.pk-exp--pipling {
+  background: rgba(255, 255, 255, 0.82);
+  border-color: rgba(126, 148, 214, 0.35);
+}
+
+.pk-exp--pipling .pk-exp-note {
+  color: #4a5da8;
 }
 
 .pk-exp-flavor {

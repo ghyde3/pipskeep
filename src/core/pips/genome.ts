@@ -261,6 +261,12 @@ export function createPipFromGenome(
     },
     activity: PipActivity.Idle,
     pendingSulk: false,
+    // A freshly built Pip (starter or hatchling) is never sulking — set
+    // explicitly (not left `undefined`) so a save round-trip through
+    // serialize.ts's validator, which always writes a concrete boolean,
+    // stays byte-for-byte equal to the in-memory state (round 2A finding
+    // #2 — see `PipState.sulking` / `machine.ts`'s `isSulking`).
+    sulking: false,
     readyToEvolve: false,
     evolved: null,
     lastGiftItemId: null,

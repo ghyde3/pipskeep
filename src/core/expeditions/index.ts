@@ -51,6 +51,7 @@ import type { Rng, RngStream } from "../rng";
 import { PipActivity } from "../pips/types";
 import type { ActiveExpedition, PipId, PipState } from "../pips/types";
 import { beginReturn, departExpedition } from "../pips/machine";
+import type { MachineTuning } from "../pips/machine";
 import { DIALOGUE_STREAM, pickLineFromPools } from "../pips/dialogue";
 import type { DialoguePoolsView, DialogueStateSlice } from "../pips/dialogue";
 import { createEgg } from "../eggs";
@@ -84,13 +85,17 @@ export interface ExpeditionView {
 export type ExpeditionRegistryView = Readonly<Record<string, ExpeditionView>>;
 
 /** The slice of tuning expeditions read; content/tuning satisfies it
- * (EggTuning intersected because settling a return may create an egg). */
-export type ExpeditionTuning = EggTuning & {
-  readonly quirks: {
-    readonly hardworkingExpeditionDurationMultiplier: number;
-    readonly curiousLootBonus: number;
+ * (EggTuning intersected because settling a return may create an egg;
+ * MachineTuning intersected because `assignExpedition` delegates the
+ * Pipling supervised-trip check to `departExpedition`, which needs
+ * `pipling.allowedExpeditionIds`/`durationMs`). */
+export type ExpeditionTuning = EggTuning &
+  MachineTuning & {
+    readonly quirks: {
+      readonly hardworkingExpeditionDurationMultiplier: number;
+      readonly curiousLootBonus: number;
+    };
   };
-};
 
 /** Injectable content, defaulting to the real registries. */
 export interface ExpeditionContent {
@@ -165,8 +170,18 @@ export type AssignRefusalReason =
   | "sulking"
   | "pipling";
 
-/** What one ASSIGN_EXPEDITION request did — the UI's animation/dialogue
- * source (parked in `state.lastAssignOutcome`). */
+/**
+ * What one ASSIGN_EXPEDITION request did — the UI's animation/dialogue
+ * source (parked in `state.lastAssignOutcome`). Every refusal reason
+ * carries enough to write a full sentence (why + when it resolves, where
+ * "when" is knowable) rather than a bare no:
+ * - `pipling`: `growsUpAt` — the exact Adult-conversion timestamp.
+ * - `locked`: `requiredKeepLevel`/`currentKeepLevel` — how far off it is.
+ * - `occupied`: `occupiedUntil` — when the other Pip currently out there
+ *   is due back, so a retry has a concrete moment to aim for.
+ * - `sulking`: no natural "when" — recovery depends on care, not a clock
+ *   (the Refusal dialogue line carries the "why" instead).
+ */
 export type AssignExpeditionOutcome =
   | {
       readonly ok: true;
@@ -186,6 +201,14 @@ export type AssignExpeditionOutcome =
       /** Refusal dialogue, when the pip itself declined. */
       readonly lineId?: string;
       readonly line?: string;
+      /** Present iff `reason === "pipling"` (spec §4.6 / round 2A). */
+      readonly growsUpAt?: number;
+      /** Present iff `reason === "locked"`. */
+      readonly requiredKeepLevel?: number;
+      readonly currentKeepLevel?: number;
+      /** Present iff `reason === "occupied"` — the occupying Pip's
+       * derived return moment (`departedAt + durationMs`). */
+      readonly occupiedUntil?: number;
     };
 
 export interface AssignResult<S extends ExpeditionStateSlice> {
@@ -193,15 +216,15 @@ export interface AssignResult<S extends ExpeditionStateSlice> {
   readonly outcome: AssignExpeditionOutcome;
 }
 
-/** True when some OTHER pip is currently out (or Returning, its loot
- * still uncollected) on this expedition — spec §6.1: one pip per
- * expedition. */
-function expeditionOccupied(
+/** The OTHER pip currently out (or Returning, its loot still uncollected)
+ * on this expedition, if any — spec §6.1: one pip per expedition. Shared
+ * by the occupied check and its refusal's `occupiedUntil`. */
+function occupyingPip(
   state: ExpeditionStateSlice,
   expeditionId: string,
   exceptPipId: PipId,
-): boolean {
-  return Object.values(state.pips).some(
+): PipState | undefined {
+  return Object.values(state.pips).find(
     (pip) =>
       pip.id !== exceptPipId &&
       (pip.activity === PipActivity.OnExpedition ||
@@ -248,9 +271,17 @@ export function assignExpedition<S extends ExpeditionStateSlice>(
   const tuning = content.tuning ?? contentTuning;
   const pools = content.pools ?? contentDialogue;
 
-  const refuse = (reason: AssignRefusalReason): AssignResult<S> => ({
+  const refuse = (
+    reason: AssignRefusalReason,
+    extra: {
+      readonly growsUpAt?: number;
+      readonly requiredKeepLevel?: number;
+      readonly currentKeepLevel?: number;
+      readonly occupiedUntil?: number;
+    } = {},
+  ): AssignResult<S> => ({
     state,
-    outcome: { ok: false, pipId, expeditionId, at, reason },
+    outcome: { ok: false, pipId, expeditionId, at, reason, ...extra },
   });
 
   const pip = state.pips[pipId];
@@ -258,19 +289,34 @@ export function assignExpedition<S extends ExpeditionStateSlice>(
 
   const expedition = registry[expeditionId];
   if (expedition === undefined) return refuse("unknownExpedition");
-  if (expedition.unlockKeepLevel > state.keep.level) return refuse("locked");
-  if (expeditionOccupied(state, expeditionId, pipId)) return refuse("occupied");
+  if (expedition.unlockKeepLevel > state.keep.level) {
+    return refuse("locked", {
+      requiredKeepLevel: expedition.unlockKeepLevel,
+      currentKeepLevel: state.keep.level,
+    });
+  }
+  const occupant = occupyingPip(state, expeditionId, pipId);
+  if (occupant !== undefined) {
+    // occupant.expedition is non-null by construction (OnExpedition/
+    // Returning invariant, types.ts), but stay defensive rather than `!`.
+    return refuse("occupied", {
+      occupiedUntil:
+        occupant.expedition !== null
+          ? occupant.expedition.departedAt + occupant.expedition.durationMs
+          : undefined,
+    });
+  }
 
   const durationMs = effectiveExpeditionDurationMs(
     expedition,
     pip.personalityId,
     tuning,
   );
-  const result = departExpedition(pip, {
-    expeditionId,
-    departedAt: at,
-    durationMs,
-  });
+  const result = departExpedition(
+    pip,
+    { expeditionId, departedAt: at, durationMs },
+    tuning,
+  );
 
   if (!result.ok) {
     if (result.refusal.kind === "illegal") return refuse("busy");
@@ -291,6 +337,9 @@ export function assignExpedition<S extends ExpeditionStateSlice>(
         expeditionId,
         at,
         reason: result.refusal.kind,
+        ...(result.refusal.kind === "pipling"
+          ? { growsUpAt: result.refusal.growsUpAt }
+          : {}),
         ...(line !== null ? { lineId: line.lineId, line: line.text } : {}),
       },
     };

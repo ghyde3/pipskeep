@@ -1,8 +1,9 @@
 /**
  * Life stages & evolution (spec §4.6).
  *
- * - Pipling → Adult at exactly `hatchedAt + pipling.durationMs` (24h
- *   default), inclusive at the boundary.
+ * - Pipling → Adult at exactly `hatchedAt + pipling.durationMs` (8h
+ *   default as of round 2A — was 24h; see content/tuning.ts `pipling` for
+ *   the retune rationale), inclusive at the boundary.
  * - Evolution readiness: `ageMs ≥ minAgeMs` AND lifetime average Happiness
  *   (`happinessIntegral / ageMs`) `≥ minLifetimeAvgHappiness` sets the
  *   `readyToEvolve` FLAG. Nothing here ever changes `speciesId` — evolution
@@ -23,7 +24,8 @@ import type { PipState } from "./types";
 /** The slice of tuning the life-stage math reads (injectable for tests). */
 export interface LifecycleTuning {
   readonly pipling: {
-    /** Pipling lasts hatch → this many ms (spec §4.6: 24h default). */
+    /** Pipling lasts hatch → this many ms (spec §4.6; round 2A: 8h
+     * default, was 24h). */
     readonly durationMs: number;
   };
 }
@@ -31,7 +33,8 @@ export interface LifecycleTuning {
 /**
  * The computable moment a Pipling becomes an Adult: `hatchedAt +
  * pipling.durationMs`. Exposed so catch-up passes can split segments at
- * the boundary (the Pipling ×1.2 decay multiplier ends here, §4.5/§4.6).
+ * the boundary (the Pipling decay multiplier — round 2A: ×0.9, was ×1.2
+ * — ends here, §4.5/§4.6).
  */
 export function adultAt(
   pip: PipState,
@@ -42,7 +45,8 @@ export function adultAt(
 
 /**
  * Promote a Pipling to Adult once `now ≥ adultAt(pip)` — inclusive: at
- * exactly hatchedAt + 24h the Pip is an Adult. Adults never regress.
+ * exactly `hatchedAt + pipling.durationMs` the Pip is an Adult. Adults
+ * never regress.
  */
 export function updateLifeStage(
   pip: PipState,

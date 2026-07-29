@@ -13,12 +13,14 @@ import { PERSONALITY_IDS } from "../content/personalities";
 import { LifeStage, PipActivity } from "../core/pips/types";
 import type { PipNeeds, PipState } from "../core/pips/types";
 import type { GameState } from "../core/state";
+import { adultAt } from "../core/pips/lifecycle";
 import {
   PERSONALITY_BLURBS,
   buildExpeditionRow,
   buildFocusModel,
   formatCountdown,
   formatDurationShort,
+  formatGrowUpCountdown,
   lifeStageLabel,
   personalityBlurb,
 } from "./focusView";
@@ -255,9 +257,81 @@ describe("buildExpeditionRow — who gets a Send button (spec §4.7)", () => {
     expect(row(state, "meadow").sendable).toBe(true);
   });
 
-  it("Piplings keep the Send button too — core refuses with dialogue (spec §4.6)", () => {
+  it("Piplings keep the Send button on their supervised trail (spec §4.6, round 2A)", () => {
     const state = makeState({ pip: makePip({ lifeStage: LifeStage.Pipling }) });
     expect(row(state, "meadow").sendable).toBe(true);
+  });
+});
+
+describe("buildExpeditionRow — Piplings explain themselves (finding #3)", () => {
+  const piplingState = (overrides: Partial<PipState> = {}) =>
+    makeState({
+      pip: makePip({ lifeStage: LifeStage.Pipling, hatchedAt: 0, ...overrides }),
+      keep: { level: 3, placements: {} }, // unlock forest/shore so the
+      // Pipling reason is what's actually being asserted, not the level
+    });
+
+  it("labels an allowed trail as a little supervised trip, still sendable", () => {
+    const meadow = row(piplingState(), "meadow");
+    expect(tuning.pipling.allowedExpeditionIds).toContain("meadow");
+    expect(meadow.status).toBe("available");
+    expect(meadow.sendable).toBe(true);
+    expect(meadow.badge).toBe("Supervised");
+    expect(meadow.note).toContain("supervised");
+  });
+
+  it("an adult-only trail shows the grow-up countdown, not a bare refusal", () => {
+    // 5h20m before this Pipling turns Adult.
+    const now = tuning.pipling.durationMs - (5 * 60 + 20) * MINUTE_MS;
+    const forest = row(piplingState(), "forest", now);
+
+    expect(forest.status).toBe("pipling");
+    expect(forest.sendable).toBe(false);
+    expect(forest.badge).toBe("Pipling");
+    expect(forest.note).toContain("Still a Pipling");
+    expect(forest.countdown).toBe("5h 20m");
+    // The DOM shell ticks this every frame off the absolute timestamp.
+    expect(forest.countdownUntil).toBe(tuning.pipling.durationMs);
+  });
+
+  it("the countdown target is exactly core's adultAt (no drift between layers)", () => {
+    const state = piplingState({ hatchedAt: 1_234_567 });
+    const pip = state.pips["pip-1"];
+    if (pip === undefined) throw new Error("pip missing");
+    expect(row(state, "shore").countdownUntil).toBe(adultAt(pip));
+  });
+
+  it("still-locked trails keep the Keep-level reason (the actionable one)", () => {
+    const state = makeState({
+      pip: makePip({ lifeStage: LifeStage.Pipling }),
+      keep: { level: 1, placements: {} },
+    });
+    const forest = row(state, "forest");
+    expect(forest.status).toBe("locked");
+    expect(forest.note).toContain("Keep level 2");
+  });
+
+  it("Adults never get a pipling row", () => {
+    const state = makeState({ keep: { level: 3, placements: {} } });
+    for (const id of ["meadow", "forest", "shore"]) {
+      expect(row(state, id).status, id).not.toBe("pipling");
+      expect(row(state, id).badge, id).toBeNull();
+    }
+  });
+});
+
+describe("formatGrowUpCountdown — coarse above an hour, live below", () => {
+  it("renders hours+minutes, minutes+seconds, then bare seconds", () => {
+    expect(formatGrowUpCountdown(5 * 3_600_000 + 20 * 60_000)).toBe("5h 20m");
+    expect(formatGrowUpCountdown(8 * 3_600_000)).toBe("8h 0m");
+    expect(formatGrowUpCountdown(12 * 60_000 + 30_000)).toBe("12m 30s");
+    expect(formatGrowUpCountdown(90_000)).toBe("1m 30s");
+    expect(formatGrowUpCountdown(8_000)).toBe("8s");
+  });
+
+  it("never renders a negative or a bare zero", () => {
+    expect(formatGrowUpCountdown(0)).toBe("a moment");
+    expect(formatGrowUpCountdown(-60_000)).toBe("a moment");
   });
 });
 

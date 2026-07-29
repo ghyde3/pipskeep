@@ -18,23 +18,51 @@ import {
 } from "./needs";
 
 /**
- * Neutral test personality: all ×1.0 multipliers, passed as direct rate
- * params so content/ stays free of test data. Everything else mirrors the
- * real tuning slices.
+ * FIXTURE numbers, deliberately PINNED rather than read from
+ * `content/tuning.ts`.
+ *
+ * This file tests the needs ENGINE — multiplicative stacking order,
+ * clamping, the clamped-trapezoid integral, frozen-time accrual — and it
+ * does so with hand-checkable arithmetic (−6 × 1.2 × 1.2, 100 − 36, …).
+ * Pinning the inputs is what lets those assertions stay readable and
+ * bit-exact. Balance passes must NOT ripple through here: the shipped
+ * decay curve is owned and asserted by `core/pips/balance.test.ts`, which
+ * is the file that should light up when someone retunes the game.
  */
-const NEUTRAL_MULTIPLIERS = {
-  hunger: 1,
-  cleanliness: 1,
-  happiness: 1,
-  energy: 1,
+const FIXTURE_RATES = {
+  hunger: -6,
+  cleanliness: -4,
+  happiness: -5,
+  energy: -3,
 } as const;
 
-const neutralTuning: NeedsTuning = {
-  needDecayPerHour: tuning.needDecayPerHour,
-  personalityDecayMultipliers: { neutral: NEUTRAL_MULTIPLIERS },
+const FIXTURE_PERSONALITIES = {
+  lazy: { hunger: 0.8, cleanliness: 1.0, happiness: 1.0, energy: 1.4 },
+  curious: { hunger: 1.0, cleanliness: 1.2, happiness: 0.8, energy: 1.1 },
+  hardworking: { hunger: 1.2, cleanliness: 1.0, happiness: 1.1, energy: 1.2 },
+  chaotic: { hunger: 1.1, cleanliness: 1.5, happiness: 0.7, energy: 1.0 },
+  clingy: { hunger: 1.0, cleanliness: 1.0, happiness: 1.3, energy: 0.9 },
+  neutral: { hunger: 1, cleanliness: 1, happiness: 1, energy: 1 },
+} as const;
+
+const FIXTURE_PIPLING = { decayMultiplier: 1.2 } as const;
+const FIXTURE_CARE = {
+  rest: { energyPerHour: 15, autoWakeAtEnergy: 100 },
+} as const;
+
+/** The full fixture, used wherever a test exercises the personality table. */
+const fixtureTuning: NeedsTuning = {
+  needDecayPerHour: FIXTURE_RATES,
+  personalityDecayMultipliers: FIXTURE_PERSONALITIES,
   quirks: tuning.quirks,
-  pipling: tuning.pipling,
-  care: tuning.care,
+  pipling: FIXTURE_PIPLING,
+  care: FIXTURE_CARE,
+};
+
+/** Neutral-only view of the same fixture (all ×1.0 multipliers). */
+const neutralTuning: NeedsTuning = {
+  ...fixtureTuning,
+  personalityDecayMultipliers: { neutral: FIXTURE_PERSONALITIES.neutral },
 };
 
 const fullNeeds = (): PipNeeds => ({
@@ -165,7 +193,7 @@ describe("effectiveRates — personality table (spec §4.2, asserted numerically
   ] as const;
 
   it.each(rows)("%s adult idle rates match the spec table", (personalityId, expected) => {
-    const rates = effectiveRates(makePip({ personalityId }));
+    const rates = effectiveRates(makePip({ personalityId }), fixtureTuning);
     expect(rates.hunger).toBe(expected.hunger);
     expect(rates.cleanliness).toBe(expected.cleanliness);
     expect(rates.happiness).toBe(expected.happiness);
@@ -173,7 +201,7 @@ describe("effectiveRates — personality table (spec §4.2, asserted numerically
   });
 
   it("throws on a personality id missing from tuning", () => {
-    expect(() => effectiveRates(makePip({ personalityId: "mysterious" }))).toThrow(
+    expect(() => effectiveRates(makePip({ personalityId: "mysterious" }), fixtureTuning)).toThrow(
       /unknown personalityId "mysterious"/,
     );
   });
@@ -183,6 +211,7 @@ describe("effectiveRates — pipling ×1.2 stacks multiplicatively (spec §4.1/�
   it("Hardworking pipling hunger = −6 × 1.2 × 1.2", () => {
     const rates = effectiveRates(
       makePip({ personalityId: "hardworking", lifeStage: LifeStage.Pipling }),
+      fixtureTuning,
     );
     expect(rates.hunger).toBe(-6 * 1.2 * 1.2); // multiplicative, NOT −6 × 1.4
     expect(rates.hunger).not.toBe(-6 * (1.2 + 0.2)); // guard against additive stacking
@@ -191,6 +220,7 @@ describe("effectiveRates — pipling ×1.2 stacks multiplicatively (spec §4.1/�
   it("Lazy pipling energy = −3 × 1.4 × 1.2", () => {
     const rates = effectiveRates(
       makePip({ personalityId: "lazy", lifeStage: LifeStage.Pipling }),
+      fixtureTuning,
     );
     expect(rates.energy).toBe(-3 * 1.4 * 1.2);
   });
@@ -211,6 +241,7 @@ describe("effectiveRates — situational modifiers", () => {
   it("Clingy happiness decays ×2.0 while OnExpedition", () => {
     const rates = effectiveRates(
       makePip({ personalityId: "clingy", activity: PipActivity.OnExpedition }),
+      fixtureTuning,
     );
     expect(rates.happiness).toBe(-5 * 1.3 * 1 * 2.0);
   });
@@ -218,18 +249,20 @@ describe("effectiveRates — situational modifiers", () => {
   it("Clingy happiness decays ×2.0 while Returning too (the whole time away)", () => {
     const rates = effectiveRates(
       makePip({ personalityId: "clingy", activity: PipActivity.Returning }),
+      fixtureTuning,
     );
     expect(rates.happiness).toBe(-5 * 1.3 * 1 * 2.0);
   });
 
   it("Clingy at home has no expedition penalty", () => {
-    const rates = effectiveRates(makePip({ personalityId: "clingy" }));
+    const rates = effectiveRates(makePip({ personalityId: "clingy" }), fixtureTuning);
     expect(rates.happiness).toBe(-5 * 1.3);
   });
 
   it("non-Clingy Pips get no ×2.0 while away", () => {
     const rates = effectiveRates(
       makePip({ personalityId: "curious", activity: PipActivity.OnExpedition }),
+      fixtureTuning,
     );
     expect(rates.happiness).toBe(-5 * 0.8);
   });
@@ -241,6 +274,7 @@ describe("effectiveRates — situational modifiers", () => {
         lifeStage: LifeStage.Pipling,
         activity: PipActivity.OnExpedition,
       }),
+      fixtureTuning,
     );
     expect(rates.happiness).toBe(-5 * 1.3 * 1.2 * 2.0);
   });
@@ -250,7 +284,7 @@ describe("effectiveRates — situational modifiers", () => {
     expect(effectiveRates(makePip(resting), neutralTuning).energy).toBe(15);
     // Lazy's ×1.4 and pipling's ×1.2 apply to decay only (spec §4.2
     // "multipliers on base decay") — regen is the flat tuning value.
-    expect(effectiveRates(makePip({ ...resting, personalityId: "lazy" })).energy).toBe(15);
+    expect(effectiveRates(makePip({ ...resting, personalityId: "lazy" }), fixtureTuning).energy).toBe(15);
     expect(
       effectiveRates(makePip({ ...resting, lifeStage: LifeStage.Pipling }), neutralTuning)
         .energy,
@@ -327,7 +361,7 @@ describe("applyNeedsDelta — happinessIntegral accrual (spec §4.6)", () => {
   it("accrues a flat rectangle when the happiness rate is zero", () => {
     const flatHappiness: NeedsTuning = {
       ...neutralTuning,
-      needDecayPerHour: { ...tuning.needDecayPerHour, happiness: 0 },
+      needDecayPerHour: { ...FIXTURE_RATES, happiness: 0 },
     };
     const pip = makePip({ needs: { ...fullNeeds(), happiness: 50 } });
     const after = applyNeedsDelta(pip, 3, flatHappiness);

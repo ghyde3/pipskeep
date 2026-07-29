@@ -52,7 +52,18 @@ import type { AssignExpeditionOutcome, PendingReveal } from "../expeditions";
 import type { KeepState, Placement, PlacementId } from "../keep";
 import type { JobAssignment, JobOutcome, JobsByPip } from "../keep/jobs";
 
-/** v4 (Phase 6): `onboarding: { completed, step }` — guided-onboarding
+/**
+ * v5 (round 2A finding #2): per-pip `sulking: boolean` — the Sulking
+ * penalty (spec §4.4) is now an orthogonal flag alongside `activity`, not
+ * solely the `activity === "sulking"` enum value, so "Resting AND still
+ * sulking" is representable (a Sulking Pip's Rest toggle used to be
+ * refused outright — see `core/pips/machine.ts` module doc). Migrated
+ * saves derive it from the pre-v5 encoding: `sulking: activity ===
+ * "sulking"`. Absent on a v5 blob defaults to `false` (same
+ * belt-and-suspenders as `genome.shiny`, in case of a partial write) —
+ * every pip this build produces sets it explicitly.
+ *
+ * v4 (Phase 6): `onboarding: { completed, step }` — guided-onboarding
  * progress (spec §10.1); migrated saves arrive completed so only fresh
  * games see the tutorial.
  * (v3, Phase 5: `keepLevel` restructured into `keep: {level,
@@ -60,7 +71,7 @@ import type { JobAssignment, JobOutcome, JobsByPip } from "../keep/jobs";
  * `nextPlacementNumber`, per-pip `evolved` records, and the two new
  * transient outcome echoes (job, evolve). v2, Phase 4: keepLevel, eggs,
  * pendingReveals, id counters.) */
-export const CURRENT_SCHEMA_VERSION = 4;
+export const CURRENT_SCHEMA_VERSION = 5;
 
 /** The on-disk envelope (spec §8). */
 export interface SaveBlob {
@@ -385,6 +396,14 @@ function validatePipState(
     needs: validateNeeds(rec["needs"], p(path, "needs")),
     activity: expectOneOf(rec["activity"], p(path, "activity"), ACTIVITIES),
     pendingSulk: expectBoolean(rec["pendingSulk"], p(path, "pendingSulk")),
+    // v5 (round 2A finding #2): absent = false rather than a hard failure
+    // — same defensive default as `genome.shiny` — every pip this build
+    // writes sets it explicitly; the v4→v5 migration backfills older
+    // saves from the pre-v5 `activity === "sulking"` encoding.
+    sulking:
+      rec["sulking"] === undefined
+        ? false
+        : expectBoolean(rec["sulking"], p(path, "sulking")),
     readyToEvolve: expectBoolean(rec["readyToEvolve"], p(path, "readyToEvolve")),
     evolved: validateEvolved(rec["evolved"], p(path, "evolved")),
     lastGiftItemId: expectStringOrNull(

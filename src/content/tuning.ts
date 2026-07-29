@@ -18,24 +18,81 @@ export const MINUTE_MS = 60 * SECOND_MS;
 export const HOUR_MS = 60 * MINUTE_MS;
 
 export const tuning = {
-  /** Base need decay per real-time hour (spec §4.1). Negative = decays. */
+  /**
+   * Base need decay per real-time hour (spec §4.1). Negative = decays.
+   *
+   * ROUND 2A RETUNE (playtest — "noticeably grumpy, ~25%"). These four
+   * numbers plus `offlineRateCapMs` are the whole feel of coming back.
+   * The arithmetic they are solving, stated once:
+   *
+   *   drop over one full capped window = rate × (offlineRateCapMs / 1h)
+   *
+   * A save left at ~90 should return at ~25 after a day away, so that
+   * product wants to be ≈65 for EVERY need. At the 16h cap below that
+   * means ≈4.1 points/hour. The old rates (−6/−4/−5/−3) had a 2:1 spread
+   * between the fastest and slowest need, so a returning player found one
+   * bar at 18 next to another at 54 — incoherent rather than "grumpy".
+   * The spread came down to ≈1.17:1 (round 2B tightened it further, to
+   * ≈1.09:1): the bars fall together, and the Keep reads as uniformly
+   * neglected. Ordering is still meaningful — Hunger leads
+   * (its fix, Feed, is the most abundant), Energy trails (so a Pip is
+   * never too tired to be Played with).
+   *
+   * ROUND 2B (playtest review — "day 2 is worse than day 1"). Round 2A
+   * fixed the FIRST absence and never modelled the second, so it missed
+   * the loop: you come home to ~25, you do a care round, you leave
+   * again — and whatever you left is what the NEXT window eats. The
+   * number that actually matters is therefore not the return value but
+   *
+   *   LEAVE-SAFE FLOOR = max over (need × personality) of
+   *                      rate × personalityMultiplier × capHours
+   *
+   * i.e. the bar value you must LEAVE behind for nothing to hit 0 while
+   * you are gone. At round 2A's rates that floor was 78.0, while a care
+   * session could only put Hunger at ~50 and Happiness at ~53 — so day 2
+   * landed the whole Keep Sulking with needs at exactly 0. The repair is
+   * two-sided and both sides live in this file: the restores came UP
+   * (see `care.play`, `care.pet`, `foods`), and the three fastest rates
+   * came down 5–7% so the floor is 74.0 — comfortably inside what one care
+   * session now restores, with the headline "come back to ~25" feel and
+   * the [18, 35] band intact (a neutral Pip now returns at 29/31/32/34).
+   *
+   * Guarded by `core/pips/balance.test.ts` — including the second
+   * absence, which is the case round 2A had no test for.
+   */
   needDecayPerHour: {
-    hunger: -6,
-    cleanliness: -4,
-    happiness: -5,
-    energy: -3, // while awake; Resting regenerates instead (see care.rest)
+    hunger: -3.8,
+    cleanliness: -3.7,
+    happiness: -3.6,
+    energy: -3.5, // while awake; Resting regenerates instead (see care.rest)
   } satisfies Record<NeedId, number>,
 
   /**
    * Personality decay multipliers (spec §4.2). Effective rate =
    * base × personality × life-stage × situational, all multiplicative.
+   *
+   * ROUND 2A: compressed from [0.7, 1.5] to [0.8, 1.3]. These multipliers
+   * do not colour a moment — they multiply a WHOLE capped window, so at
+   * any tuning that lands a 24h absence near 25, a ×1.5 necessarily drives
+   * that need to 0 and hands the player a guaranteed Sulking Pip every
+   * time they leave. Personality should flavour the curve, not decide
+   * whether the Keep survives the night. Every quirk keeps its direction
+   * and stays clearly visible (Chaotic is still the dirtiest Pip in the
+   * Keep, Clingy still the loneliest) — the extremes just no longer reach
+   * the floor. Guarded by `core/pips/balance.test.ts`.
+   *
+   * ROUND 2B: unchanged, but note what the top of this range now DOES.
+   * The largest multiplier here sets the leave-safe floor documented on
+   * `needDecayPerHour` (today: Chaotic's ×1.25 Cleanliness → 74.0), and
+   * therefore how much a single care session has to be able to restore.
+   * Raising any multiplier raises that bar for every care action at once.
    */
   personalityDecayMultipliers: {
-    lazy: { hunger: 0.8, cleanliness: 1.0, happiness: 1.0, energy: 1.4 },
-    curious: { hunger: 1.0, cleanliness: 1.2, happiness: 0.8, energy: 1.1 },
-    hardworking: { hunger: 1.2, cleanliness: 1.0, happiness: 1.1, energy: 1.2 },
-    chaotic: { hunger: 1.1, cleanliness: 1.5, happiness: 0.7, energy: 1.0 },
-    clingy: { hunger: 1.0, cleanliness: 1.0, happiness: 1.3, energy: 0.9 },
+    lazy: { hunger: 0.85, cleanliness: 1.0, happiness: 1.0, energy: 1.3 },
+    curious: { hunger: 1.0, cleanliness: 1.15, happiness: 0.85, energy: 1.1 },
+    hardworking: { hunger: 1.15, cleanliness: 1.0, happiness: 1.1, energy: 1.15 },
+    chaotic: { hunger: 1.1, cleanliness: 1.25, happiness: 0.8, energy: 1.0 },
+    clingy: { hunger: 1.0, cleanliness: 1.0, happiness: 1.25, energy: 0.9 },
   } satisfies Record<PersonalityId, Record<NeedId, number>>,
 
   /** Personality quirk numbers (spec §4.2 table, right column). */
@@ -70,8 +127,23 @@ export const tuning = {
    * Offline catch-up rate cap (spec §4.5): needs change and Gathering
    * production accrue only during the FIRST this-many ms of absence.
    * Rates are capped; timers (expeditions, eggs) are not.
+   *
+   * ROUND 2A: 12h → 16h. This is the dominant lever for long absences —
+   * everything past it is free — so it and `needDecayPerHour` are chosen
+   * together (see the arithmetic there). 16h specifically because:
+   *
+   * - It is LONGER than a night's sleep, so an 8h overnight absence is
+   *   fully rated and honest — the cap never quietly eats a night, and
+   *   the "8h is mild" promise comes from the rates, not from a freeze.
+   * - It is SHORTER than a day, so the cap is already binding at the 24h
+   *   mark the retune targets: the "come back to ~25" number is the
+   *   capped value and cannot drift with how long the player was away.
+   *   24h, 3 days and a fortnight all land in exactly the same place.
+   * - Raising the cap let the per-hour rates come DOWN by a third, which
+   *   is what makes short absences cheap: the same 65-point day costs
+   *   only ~32 points overnight and ~8 points over a coffee break.
    */
-  offlineRateCapMs: 12 * HOUR_MS,
+  offlineRateCapMs: 16 * HOUR_MS,
 
   /** Care action effects and cooldowns (spec §5). */
   care: {
@@ -80,19 +152,48 @@ export const tuning = {
       setsCleanlinessTo: 100,
       cooldownMs: 60 * SECOND_MS,
     },
+    /**
+     * ROUND 2B: +20 → +45 Happiness. Play and Pet are the ONLY cures for
+     * Happiness, and between them they used to return 28 points against
+     * a bar that a day's absence took 76 off — so the one need with the
+     * most expressive care actions was also the one you could never
+     * actually fix. Play is now the big one (a real event, and the only
+     * care action that costs something: −10 Energy, which is why it
+     * cannot simply be spammed — nine plays empty a full Energy bar and
+     * the §5 refusal floor stops the tenth).
+     */
     play: {
-      happiness: 20,
+      happiness: 45,
       energy: -10,
     },
+    /**
+     * ROUND 2B: +8 → +25 (Clingy +14 → +35). Pet is the 30-second-
+     * cooldown affection tap; at +8 it was decorative. The sizing rule is
+     * exact: ONE Play plus ONE Pet must out-restore a full capped window
+     * of Happiness decay for EVERY personality, or the bar ratchets down
+     * a little further every day (Clingy lost 2 points per cycle at
+     * 40 + 30 — a slow-motion version of the same day-2 failure). Worst
+     * case is Clingy: 72.0 decayed vs 45 + 35 = 80 restored.
+     */
     pet: {
-      happiness: 8,
-      /** Clingy gets this instead of the base +8. */
-      clingyHappiness: 14,
+      happiness: 25,
+      /** Clingy gets this instead of the base +25. */
+      clingyHappiness: 35,
       cooldownMs: 30 * SECOND_MS,
     },
     rest: {
-      /** Energy regen per hour while Resting (spec §4.1). */
-      energyPerHour: 15,
+      /**
+       * Energy regen per hour while Resting (spec §4.1).
+       *
+       * ROUND 2A: 15 → 600, i.e. 10 Energy per real MINUTE. Decay is
+       * measured in hours; recovery must be measured in minutes or the
+       * only cure for the one need Feed/Clean/Play cannot touch is to put
+       * the game down for four hours. At 600/h a full 0 → 100 nap takes
+       * 10 minutes — two Meadow trips — so "put one Pip down for a nap
+       * and send another out" is a single, legible loop. Still slow
+       * enough to be a thing the player WATCHES rather than a button.
+       */
+      energyPerHour: 600,
       /** Pip auto-wakes when Energy reaches this. */
       autoWakeAtEnergy: 100,
     },
@@ -118,19 +219,47 @@ export const tuning = {
       durationMs: 5 * MINUTE_MS,
       eggChance: 0.08,
       unlockKeepLevel: 1,
-      lootRolls: 2,
+      /** ROUND 2A: 2 → 3. The Meadow is the ONLY expedition at level 1
+       * and only one Pip can be on it at a time (spec §6.1), so its
+       * per-trip yield is the hard ceiling on early progression — and a
+       * 2-item reveal after five minutes was a thin dopamine moment. */
+      lootRolls: 3,
     },
+    /**
+     * ROUND 2A: Forest 3 → 4 rolls, Shore 4 → 6. Rolls did not scale with
+     * duration at all, so a 30-minute Shore trip paid four items while six
+     * Meadow trips over the same half hour paid eighteen — the "bigger"
+     * expeditions were a throughput DOWNGRADE dressed as progression.
+     * Short trips still win on raw items per minute (that is their whole
+     * identity: active play beats idle play), but the gap is no longer
+     * absurd, and the Shore now actually supplies the Shell/Driftwood the
+     * roster upgrade is priced in. A fuller pass on this belongs with the
+     * content expansion; this is the minimum that makes level 3 work.
+     */
+    /**
+     * ROUND 2B: Forest 4 → 6 rolls. At 4 rolls the Forest paid 0.12 Wood
+     * per minute against the Meadow's 0.15 — so the newly unlocked
+     * expedition was a Wood DOWNGRADE, and the fastest route to the
+     * level-3 Wood cost it gates was to ignore it and keep spamming the
+     * Meadow. An unlock the optimal player declines is not an unlock. At
+     * 6 rolls it pays 0.18 Wood/minute (+20% on the Meadow) and lands a
+     * six-item haul, which is what a fifteen-minute wait should look
+     * like. Short trips still win on RAW items per minute (Meadow 0.60 vs
+     * Forest 0.40) — active play beating idle play is the intended
+     * shape; the tier below just no longer wins at the tier above's own
+     * headline resource. Guarded by `core/economy/reachability.test.ts`.
+     */
     forest: {
       durationMs: 15 * MINUTE_MS,
       eggChance: 0.12,
       unlockKeepLevel: 2,
-      lootRolls: 3,
+      lootRolls: 6,
     },
     shore: {
       durationMs: 30 * MINUTE_MS,
       eggChance: 0.18,
       unlockKeepLevel: 3,
-      lootRolls: 4,
+      lootRolls: 6,
     },
   } satisfies Record<
     string,
@@ -142,10 +271,22 @@ export const tuning = {
     }
   >,
 
-  /** Gathering job (spec §6.2): 1 resource per interval from a weighted table. */
+  /**
+   * Gathering job (spec §6.2): 1 resource per interval from a weighted
+   * table.
+   *
+   * ROUND 2A: Wood added at 20%. Wood is what every placeable and the
+   * Keep itself is priced in, so a station that could not produce any was
+   * a Berry faucet rather than an economy. With the §4.5 cap this is also
+   * the CASUAL player's route to Keep level 2: one absence yields at most
+   * `offlineRateCapMs / intervalMs` ticks, ~19 of them Wood.
+   *
+   * ROUND 2B: unchanged here — the reason that route did not work was the
+   * station's PRICE, not its output. See `placeableCosts`.
+   */
   gathering: {
     intervalMs: 10 * MINUTE_MS,
-    table: { berry: 0.7, fiber: 0.3 },
+    table: { berry: 0.5, fiber: 0.3, wood: 0.2 },
   },
 
   /** Eggs (spec §7). Incubation timers are never capped by offline rules. */
@@ -188,10 +329,39 @@ export const tuning = {
   rosterCap: 3,
   rosterCapUpgraded: 5,
 
-  /** Pipling life stage (spec §4.6): hatch → 24h; needs decay ×1.2. */
+  /**
+   * Pipling life stage (spec §4.6).
+   *
+   * ROUND 2A REWORK (playtest: "the eggs hatched and the babies were
+   * useless and I had no idea why"). The old shape was a life stage that
+   * could do NOTHING for 24 hours and cost 20% MORE upkeep meanwhile —
+   * pure tax on the single most exciting moment in the game.
+   *
+   * - `durationMs` 24h → 8h: one overnight absence. Hatch it before bed
+   *   and it is an adult in the morning; hatch it in the morning and it
+   *   is an adult after work. 8h is also ≤ `offlineRateCapMs`, so a
+   *   babyhood always finishes inside the rated part of an absence and
+   *   the growth stage never freezes half-done.
+   * - `decayMultiplier` 1.2 → 0.9: "everyone helps look after the baby."
+   *   A Pipling is now the LOWEST-maintenance Pip in the Keep, which
+   *   gives the stage a mechanical identity (low upkeep, low output)
+   *   instead of a lockout, and makes hatching read as a gift.
+   */
   pipling: {
-    durationMs: 24 * HOUR_MS,
-    decayMultiplier: 1.2,
+    durationMs: 8 * HOUR_MS,
+    decayMultiplier: 0.9,
+    /**
+     * Expeditions a Pipling may be sent on — the "supervised short trip"
+     * (round 2A amendment to spec §4.6, which blanket-barred Piplings).
+     * Meadow only: 5 minutes is too short for a trip to hurt anyone, and
+     * Forest/Shore stay adult-only so the stage still means "not ready
+     * for the real world" and the mid-game economy stays adult-gated.
+     *
+     * READ BY: `core/pips/machine.ts` `departExpedition` (the `"pipling"`
+     * refusal must consult this list instead of refusing outright) — the
+     * expedition id is already on the `ActiveExpedition` it receives.
+     */
+    allowedExpeditionIds: ["meadow"] as readonly string[],
   },
 
   /**
@@ -203,11 +373,73 @@ export const tuning = {
     minLifetimeAvgHappiness: 70,
   },
 
-  /** Keep level costs (spec §6.3); referenced by content/keep.ts. */
+  /**
+   * Keep level costs (spec §6.3); referenced by content/keep.ts.
+   *
+   * ROUND 2A — PROGRESSION DEADLOCK REPAIR. Both of these were priced in
+   * resources that ONLY the level they unlock could supply:
+   *   - Level 2 cost Wood; Wood dropped only in the Forest; the Forest
+   *     unlocked AT level 2. (The reported deadlock.)
+   *   - Level 3 cost Shell + Driftwood; both dropped only at the Shore;
+   *     the Shore unlocks AT level 3. (The same bug, one tier up, not yet
+   *     reached by any playtester.)
+   *
+   * The invariant now enforced by `core/economy/reachability.test.ts`:
+   * every level is priced ONLY in resources the PREVIOUS level's
+   * expeditions already drop.
+   *
+   * - Level 2 `{ wood: 5, fiber: 6 }`, payable from the Meadow alone
+   *   (which now drops fallen twigs). BOTH resources have to land, and
+   *   the binding one is stochastic, so the honest figure measured over
+   *   300 fresh saves driven through the real reducer is a MEDIAN of 8
+   *   trips / 35 minutes (mean 7.8 / 37.9, p90 50, worst seed 75) — not
+   *   the 6.7 trips a wood-only division suggests. Median hits the
+   *   owner's 30–45 minute target; the tail runs past it, which is what
+   *   the Gathering Station on-ramp below exists to absorb. It came DOWN
+   *   from 15/10 because level 1 has exactly one expedition and one Pip
+   *   may be on it at a time, so early income is hard-capped no matter
+   *   how many Pips the player has.
+   * - Level 3 `{ wood: 22, fiber: 14 }`, payable from Meadow + Forest run
+   *   in parallel ≈ 1 hour with two adult Pips (and the Forest is now
+   *   genuinely the better Wood-per-minute source — see
+   *   `expeditions.forest.lootRolls`). Shell/Driftwood move OFF the level
+   *   ladder and onto the roster upgrade, which is purchasable at level 3
+   *   — the moment the Shore that supplies them opens.
+   */
   keepLevelCosts: {
-    2: { wood: 15, fiber: 10 },
-    3: { wood: 20, shell: 12, driftwood: 6 },
+    2: { wood: 5, fiber: 6 },
+    3: { wood: 22, fiber: 14 },
   } satisfies Partial<Record<KeepLevel, ResourceBundle>>,
+
+  /**
+   * Placeable station costs (spec §9); referenced by content/placeables.ts.
+   *
+   * ROUND 2B — THE CASUAL ON-RAMP, MADE REAL. These live here, next to
+   * `keepLevelCosts`, precisely because of the bug that put them here:
+   * the Gathering Station cost `{ wood: 8, fiber: 4 }` while the Keep
+   * level 2 it is supposed to FUND cost `{ wood: 5, fiber: 6 }`. The
+   * station was more expensive in Wood than the thing it was the cheap
+   * route to, so the advertised casual path ("build it, leave, come back
+   * to a level-2 fund") was strictly dominated by just buying level 2 —
+   * i.e. it did not exist. Two prices that must stay in a relationship
+   * cannot live in two files where nobody can see them together.
+   *
+   * The invariant, now enforced by `core/economy/reachability.test.ts`:
+   * the Gathering Station is cheaper — in every resource AND in expected
+   * minutes of play — than the Keep level it funds. At `{ wood: 3,
+   * fiber: 2 }` it is ~4 Meadow trips (~20 minutes), so the casual
+   * player's first session ends with a station placed and a Pip on it,
+   * and ONE absence then pays for level 2 outright (a capped 16h window
+   * is 96 gathering ticks ≈ 19 Wood, 29 Fiber, 48 Berries).
+   *
+   * The Bed and Food Bowl are cosmetic-functional and stay cheap; they
+   * are not on the progression path.
+   */
+  placeableCosts: {
+    "food-bowl": { wood: 2 },
+    bed: { wood: 4, fiber: 3 },
+    "gathering-station": { wood: 3, fiber: 2 },
+  } satisfies Readonly<Record<string, ResourceBundle>>,
 
   /**
    * Keep grid (spec §9): 8×8 starting area; Level 2 adds a +4×8 plot,
@@ -228,10 +460,28 @@ export const tuning = {
    * purchasable at Keep level 3). Referenced by content/keep.ts. */
   rosterUpgradeCost: { wood: 10, shell: 8, driftwood: 4 } satisfies ResourceBundle,
 
-  /** Food effects (spec §5/§6.3); referenced by content/foods.ts. */
+  /**
+   * Food effects (spec §5/§6.3); referenced by content/foods.ts.
+   *
+   * ROUND 2B: Berry +25 → +45, Stew +50 → +75 (and +5 → +15 Happiness).
+   * Feed is the only cure for Hunger, and Hunger is the fastest-decaying
+   * need: a day away costs up to 69.9 points, so a +25 snack could not
+   * put a returning Pip back above the leave-safe floor at any sane
+   * number of taps. The two foods now say different things —
+   *
+   *   Berry — a snack. Two of them cover a full day's Hunger from any
+   *           starting point, and Berries are the most common drop in
+   *           the game (Meadow 40%, Gathering 50%), so the everyday loop
+   *           is "come home, hand out two berries each".
+   *   Stew  — a meal. ONE covers a whole day, plus a Happiness kicker.
+   *           It drops only in the Forest and at the Shore, which is the
+   *           point: unlocking Keep level 2 visibly makes feeding easier.
+   *
+   * Guarded by `core/pips/balance.test.ts` (the second-absence loop).
+   */
   foods: {
-    berry: { hunger: 25 },
-    stew: { hunger: 50, happiness: 5 },
+    berry: { hunger: 45 },
+    stew: { hunger: 75, happiness: 15 },
   },
 
   /** New saves are seeded with 3 Berries so the guided first Feed works

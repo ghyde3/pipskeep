@@ -58,7 +58,9 @@ const CLINGY_PERSONALITY_ID = "clingy";
  * - Clingy: happiness decay × quirks.clingyExpeditionHappinessMultiplier
  *   while OnExpedition or Returning (spec §4.2 — the whole time away).
  * - Resting: the energy rate is REPLACED by the flat
- *   `care.rest.energyPerHour` regen (spec §4.1 "+15 while Resting").
+ *   `care.rest.energyPerHour` regen (spec §4.1's "+15 while Resting",
+ *   amended in round 2A — the rate is whatever tuning says, today 600/h
+ *   so a nap is measured in minutes).
  *   Decision: personality/life-stage multipliers do NOT apply to regen —
  *   spec §4.2 says modifiers are "multipliers on base decay", and §4.5
  *   needs Rest auto-wake to be a simply computable moment. Other needs

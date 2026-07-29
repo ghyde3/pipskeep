@@ -1,6 +1,10 @@
 /**
  * Life stage & evolution tests (spec §4.6, Phase 1 gate):
- * Pipling → Adult at exactly hatchedAt + 24h (inclusive boundary),
+ * Pipling → Adult at exactly hatchedAt + pipling.durationMs (inclusive
+ * boundary; round 2A retuned this 24h → 8h in content/tuning.ts, but the
+ * duration itself is read from tuning here, never hardcoded, so this
+ * suite pins the MECHANISM's boundary behavior, not the shipped number —
+ * a future retune moves nothing in this file),
  * readyToEvolve boundaries (avg 69.99 no / 70 yes; age 71h59m no / 72h yes),
  * flag-only semantics (never auto-evolves), and checkEvolution variant
  * selection via lastGiftItemId against the real species registry.
@@ -23,7 +27,7 @@ import {
   type SpeciesEvolutionRegistry,
 } from "./lifecycle";
 
-const PIPLING_MS = tuning.pipling.durationMs; // 24h
+const PIPLING_MS = tuning.pipling.durationMs; // round 2A: 8h (was 24h)
 const EVO_MIN_AGE_MS = tuning.evolution.minAgeMs; // 72h
 const EVO_MIN_AVG = tuning.evolution.minLifetimeAvgHappiness; // 70
 
@@ -64,7 +68,7 @@ function makePip(overrides: Partial<PipState> = {}): PipState {
   };
 }
 
-describe("updateLifeStage — Pipling → Adult at exactly hatchedAt + 24h", () => {
+describe("updateLifeStage — Pipling → Adult at exactly hatchedAt + pipling.durationMs", () => {
   it("stays a Pipling 1ms before the boundary", () => {
     const clock = new FakeClock(5_000_000_000);
     const pip = makePip({ hatchedAt: clock.now(), needsUpdatedAt: clock.now() });
@@ -72,7 +76,7 @@ describe("updateLifeStage — Pipling → Adult at exactly hatchedAt + 24h", () 
     expect(updateLifeStage(pip, clock.now()).lifeStage).toBe(LifeStage.Pipling);
   });
 
-  it("becomes an Adult at EXACTLY hatchedAt + 24h (inclusive)", () => {
+  it("becomes an Adult at EXACTLY hatchedAt + pipling.durationMs (inclusive)", () => {
     const clock = new FakeClock(5_000_000_000);
     const pip = makePip({ hatchedAt: clock.now(), needsUpdatedAt: clock.now() });
     clock.advance(PIPLING_MS);
@@ -89,7 +93,7 @@ describe("updateLifeStage — Pipling → Adult at exactly hatchedAt + 24h", () 
 
   it("Adults never regress, and re-running is a no-op", () => {
     const adult = makePip({ lifeStage: LifeStage.Adult, hatchedAt: 0 });
-    expect(updateLifeStage(adult, 1)).toEqual(adult); // long before 24h — stays Adult
+    expect(updateLifeStage(adult, 1)).toEqual(adult); // long before the boundary — stays Adult
     const promoted = updateLifeStage(makePip(), PIPLING_MS);
     expect(updateLifeStage(promoted, PIPLING_MS)).toEqual(promoted);
   });

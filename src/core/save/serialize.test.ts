@@ -54,6 +54,7 @@ function makePip(id: string, overrides: Partial<PipState> = {}): PipState {
     needs: needs(),
     activity: PipActivity.Idle,
     pendingSulk: false,
+    sulking: false,
     readyToEvolve: false,
     evolved: null,
     lastGiftItemId: null,
@@ -104,6 +105,7 @@ function richState(seed = SEED): GameState {
     name: "Grump",
     personalityId: "lazy",
     activity: PipActivity.Sulking,
+    sulking: true,
     needs: needs({ happiness: 0, hunger: 12.25 }),
   });
 

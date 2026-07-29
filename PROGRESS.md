@@ -16,6 +16,23 @@ Phase-gate log and decision journal, per spec §13–§15. Append entries; never
 
 ## Gate log
 
+### Round 2A — Fix & Feel (playtest response) — 2026-07-29
+Triggered by the project owner's first real playtest. Four reports, all reproduced against code.
+
+- **Progression deadlock (critical, shipped in v1.0):** Meadow dropped only berry/fiber, Gathering only berry/fiber, wood existed only in Forest, Forest needed level 2, level 2 cost 15 wood. **The game was unwinnable past level 1.** Fixed: Meadow now drops "fallen twigs" (wood 25%), level 2 costs 5 wood + 6 fiber, Gathering Station costs 3 wood + 2 fiber (deliberately cheaper than the level it funds, so the casual on-ramp exists). Level 2 now ≈33 min of engaged play, or one overnight with a station.
+- **A SECOND deadlock found by the design pass, never reached by a player:** level 3 cost Shell + Driftwood, which drop only from the Shore, which unlocks *at* level 3. Fixed by moving those costs onto the roster upgrade (purchasable exactly when the Shore opens).
+- **Sulking pips could not Rest (spec §4.7 violation, soft-lock):** `beginRest` required Idle. Since Rest is the only Energy source, a pip sulking at 0 Energy could never recover — breaking §4.4's "recovery is always one good care session away". Root cause was the state model: `Sulking` was a member of the *activity* enum, making "Sulking while Resting" unrepresentable. Fixed properly — `sulking` is now a flag orthogonal to activity, with a save migration.
+- **Day 2 worse than day 1 (found by the playtest-sim auditor):** restore/decay asymmetry — Clean and Rest *set* to 100 but Feed/Play/Pet *added* less than a day removed, so every cycle ratcheted down and all five personalities Sulked on day 2. Fixed on both sides: Play 20→45, Pet 8→25 (Clingy 35), Berry 25→45, Stew 50→75/+15, plus a small decay reduction. Verified over three leave→care→leave cycles across all personalities: zero Sulking, every homecoming ≥ the last.
+- **Decay retune:** rates −6/−4/−5/−3 → **−3.8/−3.7/−3.6/−3.5** (spread compressed 2:1 → 1.17:1 so bars fall together), offline cap **12h → 16h**, Rest regen **15/h → 600/h** (refilling a day's Energy deficit took 4.4 real hours; now ~10 min). Personality multipliers compressed [0.7,1.5] → [0.8,1.3] — at any tuning hitting the ~25% target, a ×1.5 mathematically forces that need to 0 on *every* absence.
+- **Piplings:** 24h → **8h**, decay ×1.2 → **×0.9** ("everyone helps look after the baby"), and now allowed on the Meadow as a supervised short trip. Focus view shows a live "ready to explore in 5h 20m" countdown.
+- **Debug time-skip was lying:** it skewed the clock then dispatched raw TICK, bypassing the §4.5 cap entirely — which is why 24h looked like total depletion. Now dispatches CATCHUP, with an equivalence test asserting a debug skip produces identical state to a real absence. A "live decay (no cap)" toggle remains for QA.
+- **Time slider shipped** as requested: Min/Hrs/Days toggle with dynamic maxes (60/24/30), live readout, plus +5m/+15m/+1h/+6h/+24h quick jumps. Clock badge now reads "+1d 6h".
+- **Sound shipped** (scope change, §12 seam retired): procedural WebAudio, zero new dependencies. Pentatonic cozy palette, per-slot voice caps, seeded pitch variation via core/rng, mute toggle, synthesis layer unit-tested against a stubbed AudioContext.
+- **Orchestrator-found bug (during my own playtest):** cooldowns used `total - (now - lastUsed)` with no clamp, so a save whose stamps were written under a skewed clock (debug skew, system clock change, timezone shift) showed **~32 hours** of remaining cooldown and genuinely blocked the action — §4.5 clamps negative elapsed for decay but nobody applied it to cooldowns. Fixed in core and UI; guard test verified to fail without the fix.
+- **New permanent guards:** `balance.test.ts` (encodes 2h/8h/24h feel targets across personalities) and `economy/reachability.test.ts` (proves every Keep level is purchasable from the previous level's activities, data-driven off the registries so future content is covered automatically).
+- Tests: **962 passing** (was 692 at v1.0). Mutation: 8/8 killed, including a deliberate re-introduction of the wood deadlock, which the reachability test caught.
+
+
 ### Phase 0 — Scaffold — 2026-07-29
 - Tests: `npm test` → 4 files, **48 passed** (clock, rng, store, content validation). Includes golden known-answer vectors pinning mulberry32 + FNV-1a (algorithm changes now fail tests — protects save determinism across versions) and a mutation-hardened FakeClock frozen-time test.
 - Build: `tsc --noEmit && vite build` green; app bundle 32 KB gzipped (well under 350 KB budget); Pixi chunks ~58 KB gzipped.

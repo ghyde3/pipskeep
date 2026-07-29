@@ -8,6 +8,7 @@ import {
 import { REQUIRED_LINES_PER_CONTEXT } from "./dialogue";
 import type { ExpeditionDef } from "./expeditions";
 import type { SpeciesDef } from "./species";
+import { tuning } from "./tuning";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -178,5 +179,62 @@ describe("validateContent logging", () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     validateContent();
     expect(errorSpy).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Content invariants that are DESIGN decisions rather than schema rules —
+ * things `validateContent` cannot know are wrong, but that a future edit
+ * must not undo silently. Each one names the playtest finding it settles.
+ * (The behavioural guards live in `core/pips/balance.test.ts`; these are
+ * the cheap second signature next to the rest of the content checks.)
+ */
+describe("tuned content decisions that must not be quietly reverted", () => {
+  it("a Pipling is the LOWEST-upkeep Pip in the Keep (round 2A amendment to spec §4.6)", () => {
+    // The pre-2A shape — a life stage that could do nothing for 24h AND
+    // cost 20% more upkeep — was pure tax on the most exciting moment in
+    // the game. Also asserted behaviourally in balance.test.ts; this is
+    // the second, independent signature so renaming that one `it` cannot
+    // drop the decision's only guard.
+    expect(tuning.pipling.decayMultiplier).toBeLessThanOrEqual(1);
+    expect(tuning.pipling.durationMs).toBeLessThanOrEqual(
+      tuning.offlineRateCapMs,
+    );
+    expect(tuning.pipling.allowedExpeditionIds).toContain("meadow");
+  });
+
+  it("the Gathering Station stays cheaper than the Keep level it funds (round 2B)", () => {
+    // Full reachability arithmetic lives in
+    // core/economy/reachability.test.ts; this is the flat data claim, kept
+    // beside the other content invariants because the two prices now live
+    // in the same object and can be compared by eye.
+    const station = tuning.placeableCosts["gathering-station"];
+    const level2 = tuning.keepLevelCosts[2];
+    expect(station.wood ?? 0).toBeLessThanOrEqual(level2.wood ?? 0);
+    expect(station.fiber ?? 0).toBeLessThanOrEqual(level2.fiber ?? 0);
+  });
+
+  it("every care action can out-restore what a day away takes (round 2B)", () => {
+    // The leave-safe floor, stated once here as a content-shape claim:
+    // the fastest-decaying need over a full capped window must be inside
+    // reach of the actions that cure it. balance.test.ts proves it per
+    // personality and through the reducer.
+    const capHours = tuning.offlineRateCapMs / (60 * 60 * 1000);
+    /** Worst case over a full capped window: the need's own rate times
+     * the largest personality multiplier THAT need can draw. */
+    const worstDrop = (need: "hunger" | "happiness"): number =>
+      -tuning.needDecayPerHour[need] *
+      Math.max(
+        ...Object.values(tuning.personalityDecayMultipliers).map(
+          (row) => row[need],
+        ),
+      ) *
+      capHours;
+
+    expect(2 * tuning.foods.berry.hunger).toBeGreaterThan(worstDrop("hunger"));
+    expect(tuning.foods.stew.hunger).toBeGreaterThan(worstDrop("hunger"));
+    expect(
+      tuning.care.play.happiness + tuning.care.pet.clingyHappiness,
+    ).toBeGreaterThan(worstDrop("happiness"));
   });
 });

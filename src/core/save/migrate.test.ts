@@ -138,6 +138,30 @@ describe("migrate fixtures", () => {
       }
     }
   });
+
+  it("v4 → v5 derives sulking from the pre-v5 activity encoding (round 2A finding #2)", () => {
+    // The v4 fixture's pips are onExpedition / assignedJob — neither was
+    // ever the pre-v5 "sulking" encoding, so both migrate to false.
+    const result = migrate(loadFixture(4));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    for (const pip of Object.values(result.save.state.pips)) {
+      expect(pip.sulking).toBe(false);
+    }
+
+    // A pip actually SAVED mid-Sulk (the only pre-v5 encoding) migrates
+    // to sulking: true — the one case the flag must recover exactly.
+    const raw = loadFixture(4) as {
+      state: { pips: Record<string, Record<string, unknown>> };
+    };
+    raw.state.pips["pip-1"]!["activity"] = "sulking";
+    const withSulker = migrate(raw);
+    expect(withSulker.ok).toBe(true);
+    if (!withSulker.ok) return;
+    expect(withSulker.save.state.pips["pip-1"]?.sulking).toBe(true);
+    expect(withSulker.save.state.pips["pip-1"]?.activity).toBe("sulking");
+    expect(withSulker.save.state.pips["pip-2"]?.sulking).toBe(false);
+  });
 });
 
 describe("migrate error handling", () => {
