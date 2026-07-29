@@ -38,6 +38,7 @@ function makePip(overrides: Partial<PipState> = {}): PipState {
       pattern: "plain",
       accessorySlots: 1,
       personalityId: "curious",
+      shiny: false,
     },
     personalityId: "curious",
     lifeStage: LifeStage.Adult,
@@ -84,6 +85,7 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
     lastHatchOutcome: null,
     lastJobOutcome: null,
     lastEvolveOutcome: null,
+    onboarding: { completed: true, step: "done" },
     ...overrides,
   };
 }
@@ -199,14 +201,15 @@ describe("diffJobProduction — batched pops, catch-up stays quiet", () => {
     lastProducedAt,
   });
 
-  it("an advanced lastProducedAt batches the positive resource deltas", () => {
+  it("an advanced lastProducedAt batches gains from BOTH pools (berries are inventory)", () => {
     const prev = makeState({
       jobs: { "pip-1": job(0) },
-      resources: { berry: 1 },
+      inventory: { berry: 1 },
     });
     const next = makeState({
       jobs: { "pip-1": job(20 * MINUTE_MS) },
-      resources: { berry: 2, fiber: 1 },
+      inventory: { berry: 2 },
+      resources: { fiber: 1 },
     });
     expect(diffJobProduction(prev, next)).toEqual({ berry: 1, fiber: 1 });
     const effects = diffPhase5(prev, next);
@@ -226,7 +229,7 @@ describe("diffJobProduction — batched pops, catch-up stays quiet", () => {
     const prev = makeState({ jobs: { "pip-1": job(0) }, resources: {} });
     const next = makeState({
       jobs: { "pip-1": job(60 * MINUTE_MS) },
-      resources: { berry: 6 },
+      inventory: { berry: 6 },
       lastCatchup: noSummary,
     });
     expect(diffJobProduction(prev, next)).toBeNull();

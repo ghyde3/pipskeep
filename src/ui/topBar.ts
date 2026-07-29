@@ -34,9 +34,9 @@ import {
   needWarnColor,
   resolvePipPalette,
 } from "../content/palette";
-import { foods } from "../content/foods";
 import { personalities } from "../content/personalities";
 import type { PersonalityId } from "../content/personalities";
+import { resourceDisplayName } from "./buildMode";
 import { sound } from "../app/sound";
 
 /** Bar color-shift thresholds (task spec: < 40 warn, < 15 danger). */
@@ -92,6 +92,39 @@ export function identitySubtitle(pip: PipState): string {
   return status === null ? personality : `${personality} — ${status.label}`;
 }
 
+/** One satchel chip: display label + count. */
+export interface SatchelChip {
+  readonly id: string;
+  readonly label: string;
+  readonly count: number;
+}
+
+/**
+ * The satchel row, unambiguous by construction: inventory (foods) and
+ * resources merge into ONE chip per item id — the same item can never
+ * render as twin chips again (the Phase 5 "Berry ×7 / Berry ×20" bug;
+ * legacy saves that still carry a resource-berry residue collapse into
+ * the single Berry chip too). Foods keep registry order first, then
+ * resources in state order; zero/negative counts are dropped. Pure —
+ * unit-testable.
+ */
+export function satchelChips(
+  state: Pick<GameState, "inventory" | "resources">,
+): readonly SatchelChip[] {
+  const merged = new Map<string, number>();
+  for (const source of [state.inventory, state.resources]) {
+    for (const [id, count] of Object.entries(source)) {
+      merged.set(id, (merged.get(id) ?? 0) + count);
+    }
+  }
+  const chips: SatchelChip[] = [];
+  for (const [id, count] of merged) {
+    if (count <= 0) continue;
+    chips.push({ id, label: resourceDisplayName(id), count });
+  }
+  return chips;
+}
+
 interface NeedBarEls {
   fill: HTMLElement;
   value: HTMLElement;
@@ -122,6 +155,7 @@ export function createTopBar(deps: TopBarDeps): TopBar {
   revealChip.type = "button";
   revealChip.className = "pk-reveal-chip";
   revealChip.title = "Someone brought something home!";
+  revealChip.setAttribute("aria-label", "Someone brought something home — open the reveal");
   revealChip.textContent = "!";
   revealChip.addEventListener("click", () => {
     sound("ui.tap");
@@ -142,6 +176,8 @@ export function createTopBar(deps: TopBarDeps): TopBar {
   const infoBadge = document.createElement("span");
   infoBadge.className = "pk-info-badge";
   infoBadge.textContent = "i";
+  // Decorative glyph — the button's name is the pip's name + subtitle.
+  infoBadge.setAttribute("aria-hidden", "true");
   identity.append(who, infoBadge);
   identity.addEventListener("click", () => {
     sound("ui.tap");
@@ -185,6 +221,16 @@ export function createTopBar(deps: TopBarDeps): TopBar {
     button.className = isActive ? "pk-chipbtn pk-chipbtn--active" : "pk-chipbtn";
     button.title = pip.name;
     button.setAttribute("aria-pressed", String(isActive));
+    // The chip is pure drawing (blob + dots) — name it fully for
+    // assistive tech: who, how they feel, what they're up to.
+    const chipMood = peekDisplayedMood(state, pip);
+    const chipStatus = statusGlyph(pip.activity);
+    button.setAttribute(
+      "aria-label",
+      `${pip.name} — ${chipMood}${chipStatus !== null ? `, ${chipStatus.label}` : ""}${
+        isActive ? "" : ". Select"
+      }`,
+    );
 
     const chip = document.createElement("div");
     chip.className = "pk-chip";
@@ -201,17 +247,16 @@ export function createTopBar(deps: TopBarDeps): TopBar {
 
     const moodDot = document.createElement("div");
     moodDot.className = "pk-mood-dot";
-    const mood = peekDisplayedMood(state, pip);
-    moodDot.style.background = moodColors[mood] ?? "#999";
-    moodDot.title = mood;
+    moodDot.style.background = moodColors[chipMood] ?? "#999";
+    moodDot.title = chipMood;
     chip.append(blob, moodDot);
 
-    const status = statusGlyph(pip.activity);
-    if (status !== null) {
+    if (chipStatus !== null) {
       const badge = document.createElement("span");
       badge.className = `pk-chip-status pk-chip-status--${pip.activity}`;
-      badge.textContent = status.glyph;
-      badge.title = `${pip.name} is ${status.label}`;
+      badge.textContent = chipStatus.glyph;
+      badge.title = `${pip.name} is ${chipStatus.label}`;
+      badge.setAttribute("aria-hidden", "true"); // named on the button
       chip.appendChild(badge);
     }
 
@@ -269,6 +314,10 @@ export function createTopBar(deps: TopBarDeps): TopBar {
 
       nameEl.textContent = pip.name;
       subEl.textContent = identitySubtitle(pip);
+      identity.setAttribute(
+        "aria-label",
+        `${pip.name}, ${identitySubtitle(pip)} — open details`,
+      );
 
       for (const need of NEED_IDS) {
         const els = barEls[need];
@@ -283,18 +332,12 @@ export function createTopBar(deps: TopBarDeps): TopBar {
         els.value.textContent = `${Math.round(value)}`;
       }
 
-      // Satchel chips: foods in inventory first, then loot resources.
+      // Satchel chips: one merged chip per item id (see satchelChips).
       resources.replaceChildren();
-      const entries: [string, number][] = [
-        ...Object.entries(state.inventory),
-        ...Object.entries(state.resources),
-      ];
-      for (const [id, count] of entries) {
-        if (count <= 0) continue;
+      for (const chip of satchelChips(state)) {
         const chipEl = document.createElement("span");
         chipEl.className = "pk-resource";
-        const name = foods[id as keyof typeof foods]?.name ?? id;
-        chipEl.textContent = `${name} ×${count}`;
+        chipEl.textContent = `${chip.label} ×${chip.count}`;
         resources.appendChild(chipEl);
       }
     },

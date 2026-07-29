@@ -85,7 +85,8 @@
       "moss": 5,
       "pebble": 12,
       "wood": 9,
-      "fiber": 4
+      "fiber": 4,
+      "berry": 7
     },
     "rngState": {
       "genesis": 305419896,

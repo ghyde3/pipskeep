@@ -167,6 +167,13 @@ export const tuning = {
     } satisfies Record<Rarity, number>,
   },
 
+  /** Fresh-genome extras rolled at hatch (core/pips/genome rollGenome). */
+  genome: {
+    /** Chance a hatched genome is the rare iridescent variant — rare
+     * enough to feel special, common enough to actually meet one. */
+    shinyChance: 0.025,
+  },
+
   /**
    * Breeding seam numbers (spec §7.3/§12 — `combineGenomes` only; nothing
    * in gameplay reads these until the breeding UI phase).
@@ -227,8 +234,10 @@ export const tuning = {
     stew: { hunger: 50, happiness: 5 },
   },
 
-  /** New saves are seeded with 3 Berries so the guided first Feed works (§6.3). */
-  startingInventory: { berry: 3 } satisfies ResourceBundle,
+  /** New saves are seeded with 3 Berries so the guided first Feed works
+   * (§6.3). Item counts, not a cost bundle — Berries are food (inventory),
+   * not a resource, so ResourceBundle deliberately does not apply here. */
+  startingInventory: { berry: 3 } satisfies Readonly<Record<string, number>>,
 } as const;
 
 export type Tuning = typeof tuning;

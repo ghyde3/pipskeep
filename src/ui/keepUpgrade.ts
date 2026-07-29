@@ -161,6 +161,7 @@ export function createUpgradeCard(deps: UpgradeCardDeps): UpgradeCard {
     closeBtn.className = "pk-focus-close";
     closeBtn.textContent = "×";
     closeBtn.title = "Back to the Keep";
+    closeBtn.setAttribute("aria-label", "Close — back to the Keep");
     closeBtn.addEventListener("click", () => {
       sound("ui.tap");
       close();

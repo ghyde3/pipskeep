@@ -15,6 +15,7 @@ import type { PipNeeds, PipState } from "./types";
 import { applyNeedsDelta, type NeedsTuning } from "./needs";
 import {
   adultAt,
+  applyEvolution,
   checkEvolution,
   lifetimeAvgHappiness,
   updateEvolutionReadiness,
@@ -44,6 +45,7 @@ function makePip(overrides: Partial<PipState> = {}): PipState {
       pattern: "plain",
       accessorySlots: 1,
       personalityId: "curious",
+      shiny: false,
     },
     personalityId: "curious",
     lifeStage: LifeStage.Pipling,
@@ -279,5 +281,30 @@ describe("checkEvolution — variant via lastGiftItemId (spec §4.6)", () => {
       targetSpeciesId: "grandtestpip",
       variantId: "stony",
     });
+  });
+});
+
+describe("applyEvolution — the birth genome (shiny included) survives", () => {
+  it("keeps the immutable genome untouched, iridescence and all", () => {
+    const pip = makePip({
+      lifeStage: LifeStage.Adult,
+      readyToEvolve: true,
+      genome: {
+        speciesId: "mosspip",
+        palette: "fern",
+        pattern: "plain",
+        accessorySlots: 1,
+        personalityId: "curious",
+        shiny: true,
+      },
+    });
+    const result = applyEvolution(pip, species, 1_000);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // The live species flips; the birth record (and its shiny flag) is
+    // the SAME object — evolution cannot launder the sparkle away.
+    expect(result.pip.speciesId).toBe("grovepip");
+    expect(result.pip.genome).toBe(pip.genome);
+    expect(result.pip.genome.shiny).toBe(true);
   });
 });

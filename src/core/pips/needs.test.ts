@@ -55,6 +55,7 @@ function makePip(overrides: Partial<PipState> = {}): PipState {
       pattern: "plain",
       accessorySlots: 1,
       personalityId: "neutral",
+      shiny: false,
     },
     personalityId: "neutral",
     lifeStage: LifeStage.Adult,

@@ -33,6 +33,7 @@ import { sound } from "../app/sound";
 import { notify } from "./notify";
 import type { NotifyEvent } from "./notify";
 import { burstConfetti } from "./confetti";
+import { createParadeTapCounter } from "./parade";
 import { findBuildItem, resourceDisplayName } from "./buildMode";
 import { createBuildSheet } from "./buildSheet";
 import {
@@ -67,12 +68,14 @@ export interface Phase5Effects {
 }
 
 /**
- * Gathering production carried by this transition, batched: resource id
- * → amount gained. Null when the transition carries no NEW production —
+ * Gathering production carried by this transition, batched: item id →
+ * amount gained. Null when the transition carries no NEW production —
  * or when a fresh CatchupSummary landed in the same transition (the
  * "While you were away…" sheet already tells that story; spec §4.5).
  * Production is recognized by a job's `lastProducedAt` advancing, so
- * unrelated resource changes (loot acknowledge, purchases) never toast.
+ * unrelated count changes (loot acknowledge, purchases, Feed) never
+ * toast. Gains are read from BOTH pools: produced foods (Berries) land
+ * in the inventory, everything else in resources (spec §6.3 routing).
  */
 export function diffJobProduction(
   prev: GameState,
@@ -89,9 +92,14 @@ export function diffJobProduction(
   }
   if (!produced) return null;
   const gains: Record<string, number> = {};
-  for (const [id, count] of Object.entries(next.resources)) {
-    const delta = count - (prev.resources[id] ?? 0);
-    if (delta > 0) gains[id] = delta;
+  for (const [pool, before] of [
+    [next.inventory, prev.inventory],
+    [next.resources, prev.resources],
+  ] as const) {
+    for (const [id, count] of Object.entries(pool)) {
+      const delta = count - (before[id] ?? 0);
+      if (delta > 0) gains[id] = (gains[id] ?? 0) + delta;
+    }
   }
   return Object.keys(gains).length > 0 ? gains : null;
 }
@@ -208,6 +216,9 @@ export interface PlacementScene {
     opts?: { movePlacementId?: string },
   ): void;
   exitPlacementMode(): void;
+  /** Cosmetic-only scene moment (see render/keepScene.ts playParade —
+   * dispatch-free by contract; the Keep-chip tap streak triggers it). */
+  playParade(): void;
 }
 
 export interface Phase5UiDeps {
@@ -364,6 +375,9 @@ export function initPhase5Ui(deps: Phase5UiDeps): Phase5Ui {
   root.appendChild(buildSheet.el);
   buildBtn.addEventListener("click", () => {
     sound("ui.tap");
+    // The keep bar sits above the upgrade card's backdrop (ui.css), so
+    // Build stays reachable while the card is open — hand off cleanly.
+    upgradeCard.close();
     buildSheet.open();
   });
 
@@ -372,8 +386,20 @@ export function initPhase5Ui(deps: Phase5UiDeps): Phase5Ui {
     getState: () => store.getState(),
   });
   root.appendChild(upgradeCard.el);
+  // Rapid-tap streak on the Keep chip → the scene's cosmetic moment.
+  // The counter's deps are now() + start() ONLY (ui/parade.ts — no
+  // dispatch by construction); ui.css keeps the chip above the upgrade
+  // card's backdrop so the streak isn't swallowed after the first tap.
+  const paradeTaps = createParadeTapCounter({
+    now: () => clock.now(),
+    start: () => deps.scene.playParade(),
+  });
   keepChip.addEventListener("click", () => {
     sound("ui.tap");
+    if (paradeTaps.tap()) {
+      upgradeCard.close(); // clear the stage — the roster has plans
+      return;
+    }
     upgradeCard.open();
   });
 
@@ -460,6 +486,10 @@ export function initPhase5Ui(deps: Phase5UiDeps): Phase5Ui {
   // --- Store subscription: sync chrome, execute effect lists ---
   const syncChrome = (state: GameState): void => {
     keepChip.textContent = `Keep Lv ${state.keep.level}`;
+    keepChip.setAttribute(
+      "aria-label",
+      `The Keep, level ${state.keep.level} — open upgrades`,
+    );
     buildSheet.sync(state);
     upgradeCard.sync(state);
   };

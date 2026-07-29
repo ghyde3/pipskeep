@@ -7,8 +7,8 @@
  * consumes a FIXED number of rolls from the stream it is handed, so the
  * cursor advance never depends on outcomes:
  *
- * - `rollGenome`: exactly 4 rolls — species (weighted by registry
- *   rarity), palette, pattern, personality, in that order.
+ * - `rollGenome`: exactly 5 rolls — species (weighted by registry
+ *   rarity), palette, pattern, personality, shiny, in that order.
  * - `combineGenomes`: exactly 6 rolls — species parent (1), palette
  *   mutation check + value (2), pattern mutation check + value (2),
  *   personality parent (1), in that order. The value roll is consumed
@@ -56,6 +56,8 @@ export interface GenomeRollContent {
   /** Relative species-roll weight per rarity id (spec §7.3). */
   readonly rarityWeights?: Readonly<Record<string, number>>;
   readonly personalityIds?: readonly string[];
+  /** Chance the hatched genome is the rare iridescent variant. */
+  readonly shinyChance?: number;
 }
 
 /** Weight for a rarity id missing from the table — ×1 keeps the species
@@ -89,8 +91,10 @@ function pickSpecies(
 /**
  * Roll a complete fresh genome for a hatching egg (spec §7.2/§7.3:
  * "species + traits rolled from the RNG egg stream", species weighted by
- * registry rarity, everything else uniform). Exactly 4 rolls, in the
- * order: species, palette, pattern, personality.
+ * registry rarity, everything else uniform). Exactly 5 rolls, in the
+ * order: species, palette, pattern, personality, shiny — the shiny check
+ * always consumes its roll, so the cursor advance never depends on the
+ * outcome (spec §2 rule 3).
  */
 export function rollGenome(
   stream: RngStream,
@@ -99,12 +103,14 @@ export function rollGenome(
   const registry = content.species ?? contentSpecies;
   const rarityWeights = content.rarityWeights ?? contentTuning.eggs.rarityWeights;
   const personalityIds = content.personalityIds ?? PERSONALITY_IDS;
+  const shinyChance = content.shinyChance ?? contentTuning.genome.shinyChance;
 
   const speciesEntry = pickSpecies(stream, registry, rarityWeights);
   // Sprite variant lists are validated non-empty at boot (content/validate).
   const palette = stream.pick(speciesEntry.sprite.palettes);
   const pattern = stream.pick(speciesEntry.sprite.patterns);
   const personalityId = stream.pick(personalityIds);
+  const shiny = stream.chance(shinyChance);
 
   return {
     speciesId: speciesEntry.id,
@@ -112,6 +118,7 @@ export function rollGenome(
     pattern,
     accessorySlots: speciesEntry.sprite.accessorySlots,
     personalityId,
+    shiny,
   };
 }
 
@@ -209,7 +216,11 @@ export function combineGenomes(
     speciesEntry?.sprite.accessorySlots ??
     (speciesId === a.speciesId ? a.accessorySlots : b.accessorySlots);
 
-  return { speciesId, palette, pattern, accessorySlots, personalityId };
+  // Shininess is NOT inherited (and costs zero rolls — the 6-roll
+  // contract above stays exact): a fresh sparkle is earned at hatch, not
+  // passed down. The breeding phase may revisit this rule; until then
+  // nothing in gameplay calls this function anyway (spec §12).
+  return { speciesId, palette, pattern, accessorySlots, personalityId, shiny: false };
 }
 
 export interface CreatePipOptions {

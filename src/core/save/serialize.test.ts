@@ -44,6 +44,7 @@ function makePip(id: string, overrides: Partial<PipState> = {}): PipState {
       pattern: "plain",
       accessorySlots: 1,
       personalityId: "curious",
+      shiny: false,
     },
     personalityId: "curious",
     lifeStage: LifeStage.Adult,
@@ -201,6 +202,7 @@ function richState(seed = SEED): GameState {
     lastHatchOutcome: null,
     lastJobOutcome: null,
     lastEvolveOutcome: null,
+    onboarding: { completed: true, step: "done" },
   };
 }
 
@@ -414,6 +416,18 @@ describe("fromSaveBlob validation", () => {
     expect(
       mustFail(corrupt((b) => { b["state"]["pips"]["pip-1"]["evolved"] = "verdant"; })).path,
     ).toBe("state.pips.pip-1.evolved");
+  });
+
+  it("rejects malformed onboarding (v4 field, deep — the sim reads it)", () => {
+    expect(
+      mustFail(corrupt((b) => { delete b["state"]["onboarding"]; })).path,
+    ).toBe("state.onboarding");
+    expect(
+      mustFail(corrupt((b) => { b["state"]["onboarding"]["completed"] = "yes"; })).path,
+    ).toBe("state.onboarding.completed");
+    expect(
+      mustFail(corrupt((b) => { b["state"]["onboarding"]["step"] = "dance"; })).path,
+    ).toBe("state.onboarding.step");
   });
 
   it("rejects transients that are neither null nor an object", () => {

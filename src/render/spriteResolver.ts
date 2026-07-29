@@ -161,6 +161,34 @@ export function resolvePipSprite(
     tintable.push(overlay);
   }
 
+  // Rare iridescent variant (genome.shiny): a soft opal sheen — three
+  // translucent pastel bands sweeping the upper flank, masked to the
+  // body, plus a mother-of-pearl highlight. Subtle on purpose: it should
+  // read as "wait… is that shimmer?" on second glance, not a recolor.
+  // The scene layers occasional sparkle particles on top.
+  if (genome.shiny) {
+    const sheen = new Graphics();
+    const bands: readonly (readonly [string, number, number])[] = [
+      ["#ffd9ec", -PIP_BODY_HEIGHT * 0.82, 0.2], // pink
+      ["#d3f4e2", -PIP_BODY_HEIGHT * 0.62, 0.18], // mint
+      ["#dbe4ff", -PIP_BODY_HEIGHT * 0.42, 0.16], // periwinkle
+    ];
+    for (const [color, cy, alpha] of bands) {
+      sheen
+        .ellipse(-PIP_BODY_WIDTH * 0.08, cy, PIP_BODY_WIDTH * 0.56, 13)
+        .fill({ color, alpha });
+    }
+    sheen
+      .ellipse(-PIP_BODY_WIDTH * 0.22, -PIP_BODY_HEIGHT * 0.78, 14, 7)
+      .fill({ color: 0xffffff, alpha: 0.35 });
+    sheen.rotation = -0.16;
+    const sheenMask = drawBlobPath(new Graphics()).fill(0xffffff);
+    sheen.mask = sheenMask;
+    rig.addChild(sheenMask);
+    rig.addChild(sheen);
+    tintable.push(sheen);
+  }
+
   // Cheek blush.
   const blush = new Graphics()
     .circle(-PIP_BODY_WIDTH * 0.3, -PIP_BODY_HEIGHT * 0.42, 6)

@@ -39,7 +39,7 @@ export const hardworking: DialoguePool = {
   grumpy: [
     "Standards are slipping, and I am the standards.",
     "Whoever scheduled this mood is fired.",
-    "Running on fumes. The fumes are also tired.",
+    "Fuel reserves at four percent. All of it earmarked for glaring.",
     "This is a hostile work environment. The hostile is me.",
     "Morale audit came back: bad. Recommend snacks.",
     "I'm not mad. I'm behind schedule. Same thing.",
@@ -55,7 +55,7 @@ export const hardworking: DialoguePool = {
     "My to-do list has one item now: sigh.",
     "I tried working through it. It won.",
     "Today's quota was tears. Met it before lunch.",
-    "Foreman down. Send snacks and a small blanket.",
+    "Foreman down. Requisitioning one (1) blanket, priority rush.",
     "This slump is behind schedule. It should be done.",
     "I filed a request for a better day. No reply yet.",
     "The productivity chart fell off the bottom edge.",
@@ -63,7 +63,7 @@ export const hardworking: DialoguePool = {
     "Even the dust is outworking me right now.",
   ],
   sulking: [
-    "I re-alphabetized the pebbles. Alone. Twice.",
+    "Polished every pebble to a shine. For nobody, it turns out.",
     "Attendance log: me, present. You, a mystery.",
     "Held our morning stand-up solo. Poor turnout.",
     "The schedule said you'd come. I trusted the schedule.",

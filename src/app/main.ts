@@ -7,7 +7,9 @@
  *      valid save → load + CATCHUP; nothing stored → fresh game; corrupt
  *      blob → the §8 recovery modal (Download broken save / Start Fresh)
  *      and boot HALTS until the player decides — never a silent wipe.
- *   2. Store from the loaded state, or createNewGame (seed generation is
+ *   2. Store from the loaded state, or — new install — the onboarding
+ *      ceremony (spec §10.1: title card → starter trio → pick) and THEN
+ *      createNewGame with the chosen candidate (seed generation is
  *      app-layer: crypto, with a clock-bits fallback — core never rolls
  *      its own seed). ALL app-layer time comes from the one shared
  *      OffsetClock (src/app/appClock.ts), so the dev debug menu's time
@@ -27,12 +29,19 @@
  */
 
 import { Application } from "pixi.js";
+// PWA (spec §1): autoUpdate service-worker registration. The virtual
+// module is provided by vite-plugin-pwa; in dev it is a harmless stub.
+import { registerSW } from "virtual:pwa-register";
 import { validateContent } from "../content/validate";
 import { expeditions } from "../content/expeditions";
 import { resolvePipPalette } from "../content/palette";
 import type { Clock } from "../core/clock";
 import { createStore } from "../core/store";
-import { createNewGame, rootReducer } from "../core/state";
+import {
+  createNewGame,
+  rollStarterCandidates,
+  rootReducer,
+} from "../core/state";
 import type { GameState } from "../core/state";
 import { NEED_IDS, PipActivity } from "../core/pips/types";
 import type { PipState } from "../core/pips/types";
@@ -48,6 +57,11 @@ import { initPhase4Ui } from "../ui/phase4";
 // job UX, evolution taps) — same parallel-module pattern as phase4;
 // static import so a missing module fails the build loudly.
 import { initPhase5Ui } from "../ui/phase5";
+// Phase 6 onboarding (spec §10.1): the new-game ceremony (title card →
+// starter trio → pick) and the guided beats. Same parallel-module
+// pattern as phase4/phase5 — a static import that fails the build
+// loudly if the module goes missing.
+import { initOnboarding, runStarterPick } from "../ui/onboarding";
 import { showRecoveryModal } from "../ui/recovery";
 import { OffsetClock } from "./appClock";
 import { routeBoot } from "./bootRoute";
@@ -146,9 +160,24 @@ function consumedItem(prev: GameState, next: GameState): string | undefined {
 }
 
 async function boot(): Promise<void> {
+  // PWA service worker (spec §1): cache-first assets, autoUpdate — a new
+  // deploy refreshes in the background and applies on next launch.
+  registerSW({ immediate: true });
+
   // Content registries are validated loudly at boot in dev mode (spec §3).
   if (import.meta.env.DEV) {
     validateContent();
+
+    // Perf harness (?perf — dev-only, like the debug menu): renders the
+    // spec §1 budget scenario (5 pips + 30 decorations) from a synthetic
+    // state with an fps overlay, INSTEAD of the real game. It never opens
+    // IndexedDB, so the real save cannot be touched. Dynamic import inside
+    // the DEV guard → tree-shaken out of production builds.
+    if (new URLSearchParams(window.location.search).has("perf")) {
+      const { startPerfMode } = await import("./perfMode");
+      await startPerfMode();
+      return;
+    }
   }
 
   // ONE app clock (src/app/appClock.ts): system time plus the debug
@@ -190,10 +219,22 @@ async function startGame(
   loaded: LoadResult,
 ): Promise<void> {
   const freshGame = loaded.save === null;
-  const initial: GameState =
-    loaded.save !== null
-      ? loaded.save.state
-      : createNewGame(generateSeed(clock), clock.now());
+  let initial: GameState;
+  if (loaded.save !== null) {
+    initial = loaded.save.state;
+  } else {
+    // New-game ceremony (spec §10.1.1, replaces the silent createNewGame):
+    // title card → the deterministic starter trio → the player's pick.
+    // The pick is NOT skippable (a save cannot exist without a Pip);
+    // boot waits here, then continues under the goodbye overlay so the
+    // chosen Pip is landing in the Keep as the curtain lifts.
+    const seed = generateSeed(clock);
+    const choice = await runStarterPick({
+      mount: document.body,
+      candidates: rollStarterCandidates(seed),
+    });
+    initial = createNewGame(seed, clock.now(), undefined, choice);
+  }
   const store = createStore(rootReducer, initial);
   if (loaded.save !== null) {
     store.dispatch({
@@ -242,6 +283,16 @@ async function startGame(
     clock,
     getBubbleAnchor: () => scene.getBubbleAnchor(),
     openReveal: () => phase4.openLootReveal(),
+  });
+
+  // --- Phase 6 onboarding (guided beats, spec §10.1.3–.5) ---
+  // Mounts nothing when onboarding is already completed (every migrated
+  // save) — the module's early return is the existing-save bypass.
+  initOnboarding({
+    mount: document.body,
+    store,
+    say: (line) => ui.say(line),
+    freshPick: freshGame,
   });
 
   // --- Phase 5 UI (Build/placement, Keep upgrades, jobs, evolution) ---
@@ -326,13 +377,6 @@ async function startGame(
     ui.update();
   });
   startTicker(store, clock);
-
-  // A gentle first nudge (spec §10.1 step 3; full onboarding is Phase 6).
-  if (freshGame) {
-    window.setTimeout(() => {
-      notify({ kind: "info", message: "Pips get hungry! Try feeding them." });
-    }, 1200);
-  }
 }
 
 void boot();

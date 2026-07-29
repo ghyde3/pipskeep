@@ -73,6 +73,7 @@ import { keepLevels as contentKeepLevels, keepUpgrades, ROSTER_UPGRADE_ID } from
 import { placeables as contentPlaceables } from "../content/placeables";
 import { decorations as contentDecorations } from "../content/decorations";
 import { createRng, createRngFromState } from "./rng";
+import type { RngStream } from "./rng";
 import { LifeStage, PipActivity } from "./pips/types";
 import type { PipId, PipNeeds, PipState, TraitGenome } from "./pips/types";
 import { applyNeedsDelta } from "./pips/needs";
@@ -209,6 +210,9 @@ export interface GameState {
   /** Outcome of the most recent EVOLVE_PIP (the witnessed evolution
    * moment — spec §4.6). Null until the first attempt. */
   readonly lastEvolveOutcome: EvolveOutcome | null;
+  /** Guided-onboarding progress (spec §10/§10.1). Fresh games start at
+   * step "feed"; migrated saves arrive completed. */
+  readonly onboarding: OnboardingState;
 }
 
 /** What one EVOLVE_PIP request did — the UI's evolution-moment data
@@ -308,6 +312,11 @@ export type GameAction =
       readonly items?: Readonly<Record<string, number>>;
       readonly resources?: Readonly<Record<string, number>>;
     }
+  /** Advance the guided onboarding (spec §10.1): forward-only along
+   * ONBOARDING_STEPS — a stale or backwards step is a no-op, so replays
+   * and double-taps can never resurrect a finished tutorial. Skipping is
+   * this same action jumping straight to "done" (spec §10 skippable). */
+  | { readonly type: "ONBOARDING_ADVANCE"; readonly step: OnboardingStep }
   /** Debug-menu egg spawn (spec §14, dev builds only): drops an egg
    * straight into the Keep, already Incubating at `at` — pair with the
    * time-skip buttons to QA the full Pipping → hatch flow. Pure. */
@@ -326,6 +335,24 @@ export type GameAction =
  * work, which is why it lives here and not in content/tuning.ts.
  */
 export const STARTER_HUNGER = 60;
+
+/**
+ * Onboarding progress (spec §10/§10.1): the guided first-90-seconds
+ * beats, persisted so a mid-onboarding reload resumes where it left off.
+ * Steps advance forward only (ONBOARDING_ADVANCE below); "done" is
+ * terminal and `completed` is true iff the step is "done". The starter
+ * PICK is not a step — a save cannot exist without a pip, so state
+ * always starts at "feed" (the pick happens before createNewGame).
+ */
+export const ONBOARDING_STEPS = ["feed", "explore", "done"] as const;
+export type OnboardingStep = (typeof ONBOARDING_STEPS)[number];
+
+export interface OnboardingState {
+  /** True once onboarding finished (guided or skipped). Existing saves
+   * migrate to true — only fresh games ever see the guided beats. */
+  readonly completed: boolean;
+  readonly step: OnboardingStep;
+}
 
 /** Everything createNewGame reads from content, injectable for tests.
  * Defaults: the mosspip species entry + the five personalities. */
@@ -358,13 +385,81 @@ function defaultStarterContent(): StarterContent {
   };
 }
 
+/** How many starter Pips the onboarding offers (spec §7.1: three). */
+export const STARTER_CANDIDATE_COUNT = 3;
+
+/** Draw one entry from `pool` without replacement (splice), refilling
+ * from `all` if the pool ever runs dry (defensive: tiny injected test
+ * content — real content always has ≥ 3 of each). Exactly one roll. */
+function takeDistinct(
+  stream: RngStream,
+  pool: string[],
+  all: readonly string[],
+): string {
+  if (pool.length === 0) pool.push(...all);
+  return pool.splice(stream.int(pool.length), 1)[0] as string;
+}
+
+/** The shared genesis-roll body: exactly 3 rolls per candidate
+ * (personality, palette, pattern — in that order), 9 total, regardless
+ * of content or outcomes (cursor determinism, spec §2 rule 3). */
+function rollCandidatesFromStream(
+  genesis: RngStream,
+  content: StarterContent,
+): TraitGenome[] {
+  const personalityPool = [...content.personalityIds];
+  const palettePool = [...content.palettes];
+  const candidates: TraitGenome[] = [];
+  for (let i = 0; i < STARTER_CANDIDATE_COUNT; i++) {
+    const personalityId = takeDistinct(
+      genesis,
+      personalityPool,
+      content.personalityIds,
+    );
+    const palette = takeDistinct(genesis, palettePool, content.palettes);
+    const pattern = genesis.pick(content.patterns);
+    candidates.push({
+      speciesId: content.speciesId,
+      palette,
+      pattern,
+      accessorySlots: content.accessorySlots,
+      personalityId,
+      // Starters are never shiny (and cost zero extra rolls — the 3-roll
+      // per-candidate genesis contract stays exact): the rare variant is
+      // a hatch-day surprise, not an onboarding option.
+      shiny: false,
+    });
+  }
+  return candidates;
+}
+
 /**
- * A brand-new save (spec §10.1, §6.3): one starter mosspip with a random
- * personality plus 3 Berries for the guided first Feed.
+ * The onboarding starter trio (spec §7.1/§10.1.1): three candidates of
+ * the SAME species with three DISTINCT palettes and DISTINCT
+ * personalities, rolled deterministically from the seed's genesis
+ * stream — the same rolls createNewGame makes, so the trio the player
+ * saw is exactly the trio the save was born from. Pure: same seed, same
+ * three Pips, forever.
+ */
+export function rollStarterCandidates(
+  seed: number,
+  content: StarterContent = defaultStarterContent(),
+): readonly TraitGenome[] {
+  return rollCandidatesFromStream(
+    createRng(seed).stream(GENESIS_STREAM),
+    content,
+  );
+}
+
+/**
+ * A brand-new save (spec §10.1, §6.3): the starter mosspip the player
+ * picked from the trio, plus 3 Berries for the guided first Feed.
  *
  * Genesis rolls, in fixed order (cursor determinism — same seed, same
- * starter): personality, palette, pattern — all from the `"genesis"`
- * stream, whose advanced cursor is captured in `rngState`.
+ * trio): the full three-candidate roll of rollStarterCandidates, whose
+ * advanced cursor is captured in `rngState` — the cursor is identical
+ * whichever candidate wins, so the pick itself never perturbs any
+ * future roll. `starterChoice` indexes the trio (clamped, default 0).
  *
  * The starter is an ADULT: spec §10.1 sends it on the guided first
  * expedition within the first 90 seconds, and Piplings refuse
@@ -375,20 +470,16 @@ export function createNewGame(
   seed: number,
   now: number,
   content: StarterContent = defaultStarterContent(),
+  starterChoice = 0,
 ): GameState {
   const rng = createRng(seed);
   const genesis = rng.stream(GENESIS_STREAM);
-  const personalityId = genesis.pick(content.personalityIds);
-  const palette = genesis.pick(content.palettes);
-  const pattern = genesis.pick(content.patterns);
-
-  const genome: TraitGenome = {
-    speciesId: content.speciesId,
-    palette,
-    pattern,
-    accessorySlots: content.accessorySlots,
-    personalityId,
-  };
+  const candidates = rollCandidatesFromStream(genesis, content);
+  const index = Math.min(
+    Math.max(Math.trunc(starterChoice), 0),
+    candidates.length - 1,
+  );
+  const genome = candidates[index] as TraitGenome;
 
   const needs: PipNeeds = {
     hunger: STARTER_HUNGER,
@@ -434,6 +525,9 @@ export function createNewGame(
     lastHatchOutcome: null,
     lastJobOutcome: null,
     lastEvolveOutcome: null,
+    // The guided beats start at the first prompt (spec §10.1.3) — the
+    // pick already happened, or this state could not exist.
+    onboarding: { completed: false, step: "feed" },
   };
 }
 
@@ -881,6 +975,19 @@ export function rootReducer(state: GameState, action: GameAction): GameState {
           toSpeciesId: evolved.result.targetSpeciesId,
           variantId: evolved.result.variantId,
         },
+      };
+    }
+
+    case "ONBOARDING_ADVANCE": {
+      // Forward-only (module doc on ONBOARDING_STEPS): a backwards or
+      // same-step advance returns the state unchanged by reference, so
+      // completion is sticky and replays are harmless.
+      const from = ONBOARDING_STEPS.indexOf(state.onboarding.step);
+      const to = ONBOARDING_STEPS.indexOf(action.step);
+      if (to <= from) return state;
+      return {
+        ...state,
+        onboarding: { completed: action.step === "done", step: action.step },
       };
     }
 

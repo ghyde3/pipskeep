@@ -9,7 +9,7 @@
 import { describe, expect, it } from "vitest";
 import { LifeStage, PipActivity } from "../core/pips/types";
 import type { PipNeeds, PipState } from "../core/pips/types";
-import { identitySubtitle, statusGlyph } from "./topBar";
+import { identitySubtitle, satchelChips, statusGlyph } from "./topBar";
 
 const needs = (): PipNeeds => ({
   hunger: 80,
@@ -29,6 +29,7 @@ function makePip(overrides: Partial<PipState> = {}): PipState {
       pattern: "plain",
       accessorySlots: 1,
       personalityId: "curious",
+      shiny: false,
     },
     personalityId: "curious",
     lifeStage: LifeStage.Adult,
@@ -78,5 +79,46 @@ describe("identitySubtitle — the active pip's one-line readout", () => {
 
   it("falls back to the raw id for an unknown personality", () => {
     expect(identitySubtitle(makePip({ personalityId: "moody" }))).toBe("moody");
+  });
+});
+
+describe("satchelChips — one unambiguous chip per item id", () => {
+  it("merges inventory and resources so the same id can never twin", () => {
+    // The Phase 5 bug: 'Berry ×7' (inventory food) AND 'Berry ×20'
+    // (resource residue) as twin chips. Merged: one Berry chip, summed.
+    const chips = satchelChips({
+      inventory: { berry: 7, stew: 1 },
+      resources: { berry: 20, wood: 4 },
+    });
+    expect(chips.filter((c) => c.id === "berry")).toHaveLength(1);
+    expect(chips.find((c) => c.id === "berry")).toEqual({
+      id: "berry",
+      label: "Berry",
+      count: 27,
+    });
+  });
+
+  it("names foods from the registry and capitalizes plain resource ids", () => {
+    const chips = satchelChips({
+      inventory: { stew: 2 },
+      resources: { wood: 3, driftwood: 1 },
+    });
+    expect(chips.map((c) => c.label)).toEqual(["Stew", "Wood", "Driftwood"]);
+  });
+
+  it("drops zero and negative counts", () => {
+    const chips = satchelChips({
+      inventory: { berry: 0 },
+      resources: { wood: -2, fiber: 1 },
+    });
+    expect(chips).toEqual([{ id: "fiber", label: "Fiber", count: 1 }]);
+  });
+
+  it("keeps inventory (food) chips ahead of resource chips", () => {
+    const chips = satchelChips({
+      inventory: { berry: 1 },
+      resources: { wood: 1 },
+    });
+    expect(chips.map((c) => c.id)).toEqual(["berry", "wood"]);
   });
 });

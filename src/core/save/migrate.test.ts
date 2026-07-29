@@ -105,6 +105,39 @@ describe("migrate fixtures", () => {
     // The flat v2 field is gone, not left dangling.
     expect("keepLevel" in state).toBe(false);
   });
+
+  it("v3 → v4 marks onboarding completed (existing saves never see the tutorial)", () => {
+    const result = migrate(loadFixture(3));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.save.state.onboarding).toEqual({
+      completed: true,
+      step: "done",
+    });
+  });
+
+  it("v3 → v4 moves resource Berries into the inventory (Berries are food)", () => {
+    const result = migrate(loadFixture(3));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const state = result.save.state;
+    // The v3 fixture holds 7 resource berries + 2 inventory berries.
+    expect(state.resources["berry"]).toBeUndefined();
+    expect(state.inventory["berry"]).toBe(9);
+    // Non-berry resources ride along untouched.
+    expect(state.resources).toEqual({ moss: 5, pebble: 12, wood: 9, fiber: 4 });
+  });
+
+  it("v3 → v4 defaults every genome to shiny: false (nothing pre-v4 rolled it)", () => {
+    for (const version of [1, 2, 3]) {
+      const result = migrate(loadFixture(version));
+      expect(result.ok).toBe(true);
+      if (!result.ok) continue;
+      for (const pip of Object.values(result.save.state.pips)) {
+        expect(pip.genome.shiny).toBe(false);
+      }
+    }
+  });
 });
 
 describe("migrate error handling", () => {

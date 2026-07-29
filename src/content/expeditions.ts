@@ -32,6 +32,10 @@ export interface ExpeditionDef {
   lootRolls: number;
   /** Probability [0, 1] that the expedition also returns an egg. */
   eggChance: number;
+  /** Seasonal-events seam (spec §12): optional availability window.
+   * NOTHING consumes this yet — registries accept it so seasonal content
+   * later is a data change, not a schema change. */
+  availableWindow?: { from: string; to: string };
   flavor: string;
 }
 

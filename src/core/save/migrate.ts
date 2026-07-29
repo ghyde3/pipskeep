@@ -112,6 +112,64 @@ export const MIGRATIONS: Readonly<Record<number, MigrationStep>> = {
     }
     return out;
   },
+
+  /**
+   * v3 → v4 (Phase 6): three changes in ONE step —
+   *
+   * 1. Onboarding: existing saves have long outgrown the tutorial —
+   *    `onboarding` arrives completed, so only genuinely fresh games
+   *    (createNewGame) ever see the guided beats (spec §10.1).
+   * 2. Berry dedupe: Berries are FOOD (the food registry is the routing
+   *    rule, spec §6.3) — any `resources.berry` a pre-v4 Gathering job
+   *    accrued moves into the inventory, merging with what's there.
+   * 3. Genome `shiny`: pre-v4 genomes get the explicit default `false`
+   *    (nothing hatched before v4 could have rolled it).
+   */
+  3: (blob) => {
+    const out: Record<string, unknown> = { ...blob, schemaVersion: 4 };
+    const state = blob["state"];
+    if (isPlainRecord(state)) {
+      const pips = state["pips"];
+      const migratedPips = isPlainRecord(pips)
+        ? Object.fromEntries(
+            Object.entries(pips).map(([pipId, pip]) => {
+              if (!isPlainRecord(pip)) return [pipId, pip];
+              const genome = pip["genome"];
+              return [
+                pipId,
+                isPlainRecord(genome)
+                  ? { ...pip, genome: { shiny: false, ...genome } }
+                  : pip,
+              ];
+            }),
+          )
+        : pips;
+
+      let inventory = state["inventory"];
+      let resources = state["resources"];
+      if (isPlainRecord(resources) && typeof resources["berry"] === "number") {
+        const { berry, ...rest } = resources;
+        resources = rest;
+        const held =
+          isPlainRecord(inventory) && typeof inventory["berry"] === "number"
+            ? inventory["berry"]
+            : 0;
+        inventory = {
+          ...(isPlainRecord(inventory) ? inventory : {}),
+          berry: held + berry,
+        };
+      }
+
+      out["state"] = {
+        ...state,
+        pips: migratedPips,
+        inventory,
+        resources,
+        onboarding: { completed: true, step: "done" },
+      };
+    }
+    return out;
+  },
 };
 
 export type MigrateResult =

@@ -16,8 +16,11 @@
  * Pure data-in/data-out; no clock, no randomness, no content imports.
  */
 
-/** Base resources (spec §6.3). Uncommon/rare items are content-defined on top. */
-export const RESOURCE_IDS = ["berry", "fiber", "wood", "shell", "driftwood"] as const;
+/** Base resources (spec §6.3). Uncommon/rare items are content-defined on
+ * top. Berries are deliberately NOT here: they are FOOD (the food registry
+ * is the routing rule everywhere — reveals, job production, migrations),
+ * so they live in the inventory, never in `state.resources`. */
+export const RESOURCE_IDS = ["fiber", "wood", "shell", "driftwood"] as const;
 export type ResourceId = (typeof RESOURCE_IDS)[number];
 
 /**

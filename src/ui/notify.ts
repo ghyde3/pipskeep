@@ -35,6 +35,9 @@ let stack: HTMLElement | null = null;
 export function initNotify(root: HTMLElement): void {
   stack = document.createElement("div");
   stack.className = "pk-toasts";
+  // Announce toasts to assistive tech without stealing focus.
+  stack.setAttribute("aria-live", "polite");
+  stack.setAttribute("role", "status");
   root.appendChild(stack);
 }
 
@@ -50,9 +53,19 @@ export function notify(event: NotifyEvent): void {
   const onTap = event.onTap;
   if (onTap !== undefined) {
     toast.classList.add("pk-toast--tap");
+    // Tappable toasts are real buttons for keyboard/AT users.
+    toast.setAttribute("role", "button");
+    toast.setAttribute("tabindex", "0");
     toast.addEventListener("click", () => {
       toast.remove();
       onTap();
+    });
+    toast.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" || ev.key === " ") {
+        ev.preventDefault();
+        toast.remove();
+        onTap();
+      }
     });
   }
   stack.appendChild(toast);

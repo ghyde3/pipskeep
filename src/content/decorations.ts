@@ -13,6 +13,10 @@ export interface DecorationDef {
   footprint: Footprint;
   /** Resolved by the SpriteResolver (spec §11); placeholder paths for now. */
   spriteRef: string;
+  /** Seasonal-events seam (spec §12): optional availability window.
+   * NOTHING consumes this yet — registries accept it so seasonal content
+   * later is a data change, not a schema change. */
+  availableWindow?: { from: string; to: string };
 }
 
 export const decorations: readonly DecorationDef[] = [
@@ -33,7 +37,9 @@ export const decorations: readonly DecorationDef[] = [
   {
     id: "berry-planter",
     name: "Berry Planter",
-    cost: { wood: 3, berry: 2 },
+    // Costs are RESOURCE bundles; Berries are food (inventory) and can
+    // no longer appear in costs — you build the planter, berries grow.
+    cost: { wood: 3, fiber: 2 },
     footprint: { w: 1, h: 1 },
     spriteRef: "deco/berry-planter",
   },

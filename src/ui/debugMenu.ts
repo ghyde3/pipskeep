@@ -296,6 +296,7 @@ export function initDebugMenu(deps: DebugMenuDeps): DebugMenu {
   toggleBtn.type = "button";
   toggleBtn.className = "pk-debug-toggle";
   toggleBtn.title = "PipsKeep debug menu (`)";
+  toggleBtn.setAttribute("aria-label", "Toggle the debug menu");
   toggleBtn.textContent = "\u{1F527}"; // wrench
 
   const panel = document.createElement("div");

@@ -134,6 +134,21 @@ export function diffPhase4(
     toasts.push({ kind: "info", message: next.lastHatchOutcome.message });
   }
 
+  // A newborn with the rare iridescent genome gets its one-off double
+  // take (the scene fires the matching pastel sparkle wave).
+  if (
+    next.lastHatchOutcome !== prev.lastHatchOutcome &&
+    next.lastHatchOutcome?.ok === true
+  ) {
+    const newborn = next.pips[next.lastHatchOutcome.pipId];
+    if (newborn?.genome.shiny === true) {
+      toasts.push({
+        kind: "info",
+        message: `${newborn.name} wobbles out of the shell, catching the light… is that glitter?`,
+      });
+    }
+  }
+
   return { toasts, revealArrived, catchup };
 }
 

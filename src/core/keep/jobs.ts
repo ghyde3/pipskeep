@@ -42,6 +42,7 @@
 
 import { tuning as contentTuning } from "../../content/tuning";
 import { jobs as contentJobs } from "../../content/jobs";
+import { foods as contentFoods } from "../../content/foods";
 import { dialogue as contentDialogue } from "../../content/dialogue";
 import { createRngFromState } from "../rng";
 import type { Rng, RngStream } from "../rng";
@@ -102,6 +103,7 @@ export interface JobStateSlice extends DialogueStateSlice {
   readonly rosterOrder: readonly PipId[];
   readonly keep: KeepState;
   readonly jobs: JobsByPip;
+  readonly inventory: Readonly<Record<string, number>>;
   readonly resources: Readonly<Record<string, number>>;
 }
 
@@ -336,22 +338,26 @@ function pickWeighted(
   return (table[table.length - 1] as JobView["table"][number]).itemId;
 }
 
-/** The minimal slice tick-settling touches (production is resources +
- * rng only — `jobs`/pips bookkeeping stays with the caller). */
+/** The minimal slice tick-settling touches (production is inventory/
+ * resources + rng only — `jobs`/pips bookkeeping stays with the caller). */
 export interface JobRollSlice {
   readonly seed: number;
   readonly rngState: Readonly<Record<string, number>>;
+  readonly inventory: Readonly<Record<string, number>>;
   readonly resources: Readonly<Record<string, number>>;
 }
 
 /**
  * Roll production for already-determined ticks, in the given order: one
- * weighted `"job"`-stream roll per tick (spec §6.2 — 1 resource per
- * tick), resources merged, cursor committed. Ticks whose job id is
- * missing from the registry (content removed between sessions) are
- * skipped with zero rolls. Callers pass ticks in chronological order —
- * both the live and catch-up paths do — so the cursor advance is
- * identical whichever path processed the same timeline (spec §2 rule 3).
+ * weighted `"job"`-stream roll per tick (spec §6.2 — 1 item per tick),
+ * cursor committed. Produced items route exactly like expedition loot
+ * (spec §6.3, the ACKNOWLEDGE_REVEAL rule): food-registry members land
+ * in the INVENTORY (Berries are food first), everything else is a
+ * resource. Ticks whose job id is missing from the registry (content
+ * removed between sessions) are skipped with zero rolls. Callers pass
+ * ticks in chronological order — both the live and catch-up paths do —
+ * so the cursor advance is identical whichever path processed the same
+ * timeline (spec §2 rule 3).
  */
 export function settleJobTicks<S extends JobRollSlice>(
   state: S,
@@ -360,20 +366,23 @@ export function settleJobTicks<S extends JobRollSlice>(
 ): S {
   if (ticks.length === 0) return state;
   const registry = content.registry ?? contentJobs;
+  const foodRegistry: Readonly<Record<string, unknown>> = contentFoods;
 
   const rng = createRngFromState(state.seed, state.rngState);
   const stream = rng.stream(JOB_STREAM);
+  const inventory: Record<string, number> = { ...state.inventory };
   const resources: Record<string, number> = { ...state.resources };
   let rolled = false;
   for (const tick of ticks) {
     const job = registry[tick.jobId];
     if (job === undefined || job.table.length === 0) continue;
     const itemId = pickWeighted(stream, job.table);
-    resources[itemId] = (resources[itemId] ?? 0) + 1;
+    const bucket = foodRegistry[itemId] !== undefined ? inventory : resources;
+    bucket[itemId] = (bucket[itemId] ?? 0) + 1;
     rolled = true;
   }
   if (!rolled) return state;
-  return { ...state, resources, rngState: rng.getState() };
+  return { ...state, inventory, resources, rngState: rng.getState() };
 }
 
 /**

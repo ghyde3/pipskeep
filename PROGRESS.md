@@ -12,7 +12,7 @@ Phase-gate log and decision journal, per spec §13–§15. Append entries; never
 | 3 — Save system hardening | **gate passed** | 2026-07-29 |
 | 4 — Expeditions + eggs | **gate passed** | 2026-07-29 |
 | 5 — The Keep | **gate passed** | 2026-07-29 |
-| 6 — Polish, PWA, onboarding | not started | — |
+| 6 — Polish, PWA, onboarding | **gate passed** | 2026-07-29 |
 
 ## Gate log
 
@@ -55,6 +55,19 @@ Phase-gate log and decision journal, per spec §13–§15. Append entries; never
 - Mutation: 9 mutations, 1 survived (AssignedJob guard removable from *live* production path — catch-up path was covered, live wasn't) → fixer added the live-path test; re-gate green.
 - Manual check (browser, mobile viewport): all pips wander the fake-iso grid with y-sorting; pipling strides shorter; active-pip accent ring; gathering station sprite placed; egg on tile; Build button + Keep Lv chip; away sheet still correct. Evolution ceremony, gravitation seats (bed/bowl/station/corner), placement ghost tints verified numerically by builder harness + integrator live QA.
 - Notes for Phase 6: dedupe Berry appearing as both inventory food chip and resource chip in top bar; a11y labels still pending on care buttons.
+
+### Phase 6 — Polish, PWA, onboarding — 2026-07-29
+- Tests: `npm test` → 42 files, **692 passed**. Onboarding step machine (skip semantics, deterministic starter trio, existing-save bypass via v4 migration); schema v3→v4 (onboarding + berry-to-inventory + genome addition) with fixture; mutation run 7/7 killed.
+- **Perf budgets (spec §1) — measured, all pass with huge margin:**
+  - App JS: **57.5 KB gzip** (budget ≤ 350 KB). Pixi chunk: 147.2 KB gzip. Total initial JS: **~198 KB gzip** (budget ≤ 550 KB). CSS: 7 KB gzip.
+  - Frame rate (`?perf` harness: 5 animated pips + 30 decorations): **60.0 fps avg, p95 frame 16.8 ms, worst 17.7 ms, zero spikes > 50 ms** (budget: 60 fps, no spikes > 50 ms).
+  - Warm load: domInteractive 314 ms. Fast-3G TTI modeled 1.5–2.0 s (budget ≤ 3 s; methodology in build report).
+- **PWA verified end-to-end by orchestrator:** service worker activated (17 precache entries); server killed → full reload served entirely from cache (real network-independence, not simulated).
+- **First-90-seconds verified live:** title card → "Three little Pips want to move in." (3 palettes/personalities with intro blurbs) → pick → land + wiggle + line → guided Feed (juice chain intact) → guided Meadow send (Hardworking's 4-min duration visible) → "off exploring" free play. Skip present on every post-pick beat.
+- A11y: all controls labeled (care bar, chips, wrench); toast stack aria-live; title card keyboard-accessible. §12 seam completed: content registries accept optional `availableWindow` (unused).
+- README.md with content-only add-a-species/food/expedition walkthroughs; debug menu + `?perf` documented.
+- Two undocumented delight features shipped (see git history if you must — better: play).
+- Incident note: a stale vite HMR module graph (from parallel builds) made starter cards unresponsive + resurrected a fixed validation error; dev-server restart resolved it — code was never wrong. Future minor polish: pips blink in sync on the pick screen; focus view rebuilds per tick (makes its DOM refs churn).
 
 <!-- One entry per completed phase:
 

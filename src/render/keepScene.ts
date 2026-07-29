@@ -130,6 +130,16 @@ export interface KeepScene {
   ): void;
   /** Hide the checker + ghost (idempotent). */
   exitPlacementMode(): void;
+  /**
+   * One-off cosmetic conga across the foreground: every present roster
+   * pip marches (adults leading, Piplings trailing), confetti pops, a
+   * kazoo slot fires, and everyone ambles back to whatever they were
+   * doing. PURE COSMETICS by contract: no dispatch, no state writes, no
+   * state reads beyond the roster the scene already renders. Queues
+   * politely — never starts while a care animation or the evolution
+   * ceremony is mid-flight. Idempotent while one is queued or marching.
+   */
+  playParade(): void;
 }
 
 /** Pip-voiced refusals get the shake + line; structural blocks (cooldown,
@@ -165,14 +175,19 @@ const EGG_TILE_SLOTS: readonly { x: number; y: number }[] = [
   { x: 4, y: 1 },
 ];
 
-/** Mood → idle animation set (spec §4.3: mood selects the idle set). */
+/** Mood → idle animation set (spec §4.3: mood selects the idle set).
+ * Each mood must READ differently at a glance: Beaming bounces, Content
+ * sways, Grumpy is stiff (short, brisk, narrowed eyes, arms-crossed
+ * energy), Miserable is a full-body droop — barely bobbing, half-lidded,
+ * with a standing slump (`slumpRad`) and its own heavy-sigh flourish in
+ * updateActor. Grumpy stays upright and irritated; Miserable wilts. */
 const MOOD_IDLE: Readonly<
-  Record<Mood, { bobAmp: number; bobSpeed: number; eyes: number }>
+  Record<Mood, { bobAmp: number; bobSpeed: number; eyes: number; slumpRad: number }>
 > = {
-  beaming: { bobAmp: 3.4, bobSpeed: 4.1, eyes: 1 },
-  content: { bobAmp: 2.6, bobSpeed: 3.4, eyes: 1 },
-  grumpy: { bobAmp: 1.5, bobSpeed: 2.5, eyes: 0.85 },
-  miserable: { bobAmp: 0.9, bobSpeed: 1.9, eyes: 0.6 },
+  beaming: { bobAmp: 3.4, bobSpeed: 4.1, eyes: 1, slumpRad: 0 },
+  content: { bobAmp: 2.6, bobSpeed: 3.4, eyes: 1, slumpRad: 0 },
+  grumpy: { bobAmp: 1.2, bobSpeed: 2.8, eyes: 0.8, slumpRad: 0 },
+  miserable: { bobAmp: 0.45, bobSpeed: 1.3, eyes: 0.45, slumpRad: 0.055 },
 };
 
 const DUST_COLORS = ["#e8dcc0", "#d6c9a8", "#ffffff"] as const;
@@ -537,8 +552,12 @@ export function createKeepScene(width: number, height: number): KeepScene {
     moodRefreshMs: number;
     glowPhase: number;
     glowSparkleInMs: number;
+    /** Iridescent-variant glint timer (genome.shiny actors only). */
+    shinySparkleInMs: number;
     ceremony: boolean;
     suppressRebuild: boolean;
+    /** Marching in the conga (position driven by updateParade). */
+    parading: boolean;
     helloBubble: Container | null;
   }
 
@@ -686,8 +705,10 @@ export function createKeepScene(width: number, height: number): KeepScene {
       moodRefreshMs: 0,
       glowPhase: jitter.next() * Math.PI * 2,
       glowSparkleInMs: 900 + jitter.int(1600),
+      shinySparkleInMs: 1200 + jitter.int(2600),
       ceremony: false,
       suppressRebuild: false,
+      parading: false,
       helloBubble: null,
     };
     attachSprite(actor);
@@ -966,8 +987,9 @@ export function createKeepScene(width: number, height: number): KeepScene {
     }
     const idle = MOOD_IDLE[actor.mood];
 
-    // --- Movement / behavior (frozen during ceremony + care moments) ---
-    const frozen = actor.ceremony || actor.careHoldMs > 0;
+    // --- Movement / behavior (frozen during ceremony + care moments +
+    // the conga, whose updateParade drives positions directly) ---
+    const frozen = actor.ceremony || actor.careHoldMs > 0 || actor.parading;
     if (!frozen) {
       refreshMode(actor, state);
       if (actor.target !== null) {
@@ -1082,7 +1104,38 @@ export function createKeepScene(width: number, height: number): KeepScene {
               actor.anim.rot = 0;
             },
           });
-        } else if (actor.mood !== "miserable") {
+        } else if (actor.mood === "miserable") {
+          // The heavy sigh (spec §4.3 differentiation): sink slowly,
+          // hold flat at the bottom, deflate-recover — nothing like
+          // Grumpy's brisk shake. Scale on the rig so the breathe lerp
+          // (runner.active guard above) stays out of the way.
+          const rig = actor.sprite.rig;
+          actor.runner.sequence([
+            {
+              durationMs: 650,
+              ease: easeInOut,
+              onUpdate: (t) => {
+                rig.scale.y = 1 - 0.09 * t;
+                rig.scale.x = 1 + 0.05 * t;
+                actor.anim.y = 3.5 * t;
+              },
+            },
+            { durationMs: 420, onUpdate: () => {} }, // hold the slump
+            {
+              durationMs: 780,
+              ease: easeInOut,
+              onUpdate: (t) => {
+                rig.scale.y = 0.91 + 0.09 * t;
+                rig.scale.x = 1.05 - 0.05 * t;
+                actor.anim.y = 3.5 * (1 - t);
+              },
+              onComplete: () => {
+                rig.scale.set(1, 1);
+                actor.anim.y = 0;
+              },
+            },
+          ]);
+        } else {
           actor.runner.add({
             durationMs: 560,
             ease: linear,
@@ -1135,6 +1188,29 @@ export function createKeepScene(width: number, height: number): KeepScene {
       actor.glow.alpha = 0;
     }
 
+    // Iridescent-variant glint (genome.shiny): an occasional two-fleck
+    // pastel shimmer off the flank. Deliberately quieter than the
+    // evolution glow's gold sparkles — a secret you notice, not a siren.
+    if (actor.pip.genome.shiny && !actor.ceremony) {
+      actor.shinySparkleInMs -= dtMs;
+      if (actor.shinySparkleInMs <= 0) {
+        actor.shinySparkleInMs = 2600 + jitter.int(3800);
+        const s = visualScale(actor);
+        fxAbove.burst({
+          x: actor.x + (jitter.next() - 0.5) * PIP_BODY_WIDTH * 0.8 * s,
+          y: actor.y - (0.3 + jitter.next() * 0.6) * PIP_BODY_HEIGHT * s,
+          count: 2,
+          shape: "sparkle",
+          colors: ["#ffffff", "#ffd9ec", "#d3f4e2", "#dbe4ff"],
+          speed: 16,
+          gravity: -20,
+          lifeMs: 620,
+          sizeMin: 1.8,
+          sizeMax: 3,
+        });
+      }
+    }
+
     // Active-pip ring: a soft breathing pulse.
     if (actor.ring.visible) {
       actor.ring.alpha = 0.75 + Math.sin(actor.bobPhase * 0.7) * 0.2;
@@ -1143,7 +1219,12 @@ export function createKeepScene(width: number, height: number): KeepScene {
     // --- Composite -------------------------------------------------------
     applyActorScale(actor);
     actor.sprite.rig.position.set(actor.anim.x, bobY + actor.anim.y);
-    actor.sprite.rig.rotation = actor.slumpRot + actor.anim.rot;
+    // Standing posture: the Sulking slump and the Miserable mood-wilt
+    // never stack (max, not sum) — a sulking pip is already down bad.
+    const postureSlump = frozen
+      ? actor.slumpRot
+      : Math.max(actor.slumpRot, idle.slumpRad);
+    actor.sprite.rig.rotation = postureSlump + actor.anim.rot;
     actor.root.position.set(actor.x, actor.y);
     actor.root.zIndex = actor.seated && actor.seatZ !== null ? actor.seatZ : actor.y;
     if (actor.helloBubble !== null && !actor.helloBubble.destroyed) {
@@ -1153,6 +1234,158 @@ export function createKeepScene(width: number, height: number): KeepScene {
         actor.y + (actor.sprite.headTopY - 10) * s,
       );
     }
+  }
+
+  // --- The conga (playParade) ------------------------------------------------
+  //
+  // Cosmetic-only by construction: this block touches actor positions,
+  // particles, and the sound seam — never the store, never GameState.
+  // The only state it reads is the roster the scene already mirrors.
+
+  /** Wink lines for the closer — one random marcher gets the last word. */
+  const PARADE_WINK_LINES: readonly string[] = [
+    "We practiced that. Don't ask when.",
+    "You saw nothing. Okay — you saw everything.",
+    "Same time next never?",
+    "The kazoo was imaginary. The joy was not.",
+    "That was for morale. Morale is up.",
+  ];
+
+  interface ParadeMarcher {
+    readonly pipId: string;
+    readonly home: { x: number; y: number };
+  }
+
+  interface ParadeState {
+    t: number;
+    marchers: readonly ParadeMarcher[];
+    confettiInMs: number;
+  }
+
+  let paradeQueued = false;
+  let parade: ParadeState | null = null;
+
+  /** Foreground marching lane, recomputed live so resizes stay sane.
+   * Capped at ~78% of the view height: the grid band runs to 0.97h and
+   * the bottom ~17% sits under the DOM action bar — a conga nobody can
+   * see is a wasted kazoo. */
+  function paradeLaneY(): number {
+    const gridBottom = layout.originY + layout.rows * layout.tileH;
+    return Math.min(h * 0.78, gridBottom + layout.tileH * 0.55);
+  }
+
+  function paradeSpacing(): number {
+    return Math.max(46, PIP_BODY_WIDTH * pipScale() * 0.95);
+  }
+
+  function paradeSpeedPxPerMs(): number {
+    return Math.max(0.09, w / 7000); // leader crosses in ~7s tops
+  }
+
+  function startParade(): void {
+    paradeQueued = false;
+    if (parade !== null || lastState === null) return;
+    // Adults lead, Piplings trail (roster order within each group) —
+    // strictly the roster the scene already renders; absent (expedition)
+    // pips simply aren't in `actors`.
+    const adults: ParadeMarcher[] = [];
+    const piplings: ParadeMarcher[] = [];
+    for (const id of lastState.rosterOrder) {
+      const actor = actors.get(id);
+      if (actor === undefined) continue;
+      const marcher: ParadeMarcher = {
+        pipId: id,
+        home: { x: actor.x, y: actor.y },
+      };
+      (actor.pip.lifeStage === LifeStage.Pipling ? piplings : adults).push(marcher);
+      actor.parading = true;
+      actor.target = null;
+      actor.walkBob = 0;
+      actor.seated = false;
+      actor.anim.rot = 0;
+    }
+    const marchers = [...adults, ...piplings];
+    if (marchers.length === 0) return;
+    parade = { t: 0, marchers, confettiInMs: 260 };
+    sound("parade.kazoo");
+  }
+
+  function endParade(state: ParadeState): void {
+    parade = null;
+    const survivors: Actor[] = [];
+    for (const marcher of state.marchers) {
+      const actor = actors.get(marcher.pipId);
+      if (actor === undefined) continue;
+      survivors.push(actor);
+      actor.parading = false;
+      // Amble back to whatever they were doing: roam pips walk home to
+      // their old spot; resting/working/sulking pips re-derive their
+      // seat on the next refreshMode pass (modeKey reset forces it).
+      actor.mode = "roam";
+      actor.modeKey = "roam";
+      actor.seated = false;
+      actor.seatZ = null;
+      actor.target = { ...marcher.home };
+      actor.pauseMs = 0;
+      actor.facing = -1;
+    }
+    // The last word: a tiny wink from one random marcher as they head in.
+    const winker = survivors.length > 0 ? jitter.pick(survivors) : undefined;
+    if (winker !== undefined) {
+      showHelloBubble(winker, jitter.pick(PARADE_WINK_LINES));
+    }
+  }
+
+  function updateParade(dtMs: number): void {
+    const state = parade;
+    if (state === null) return;
+    state.t += dtMs;
+
+    const lane = paradeLaneY();
+    const spacing = paradeSpacing();
+    const speed = paradeSpeedPxPerMs();
+    let anyOnStage = false;
+
+    state.marchers.forEach((marcher, index) => {
+      const actor = actors.get(marcher.pipId);
+      if (actor === undefined) return; // left mid-parade (e.g. sent away)
+      if (actor.ceremony) return; // evolution outranks the conga — hold still
+      const x = -70 - index * spacing + state.t * speed;
+      if (x <= w + 80) anyOnStage = true;
+      actor.x = x;
+      // The conga: a snaking lane plus a per-marcher hop out of phase.
+      actor.y = lane + Math.sin(state.t * 0.004 + index * 0.85) * 5;
+      actor.facing = 1;
+      actor.anim.y = -Math.abs(Math.sin(state.t * 0.011 + index * 0.7)) * 7;
+      actor.anim.rot = Math.sin(state.t * 0.012 + index * 0.9) * 0.09;
+    });
+
+    state.confettiInMs -= dtMs;
+    if (state.confettiInMs <= 0) {
+      state.confettiInMs = 320 + jitter.int(420);
+      const onStage = state.marchers.filter((m) => {
+        const a = actors.get(m.pipId);
+        return a !== undefined && a.x > -40 && a.x < w + 40;
+      });
+      const around = onStage.length > 0 ? jitter.pick(onStage) : undefined;
+      const a = around !== undefined ? actors.get(around.pipId) : undefined;
+      if (a !== undefined) {
+        fxAbove.burst({
+          x: a.x + (jitter.next() - 0.5) * 40,
+          y: a.y - PIP_BODY_HEIGHT * 0.9 * pipScale(),
+          count: 9,
+          shape: "dot",
+          colors: [...keepPalette.flowerPetals, "#ffffff", "#f9d47d"],
+          speed: 150,
+          directionRad: -Math.PI / 2,
+          spreadRad: Math.PI * 1.2,
+          gravity: 240,
+          lifeMs: 900,
+        });
+      }
+    }
+
+    if (!anyOnStage) endParade(state);
   }
 
   // --- Evolution ceremony (spec §4.6 — the witnessed moment, < 4s) -----------
@@ -1599,6 +1832,27 @@ export function createKeepScene(width: number, height: number): KeepScene {
       sizeMin: 2.5,
       sizeMax: 4.5,
     });
+
+    // Iridescent newborn: the shell dust settles and… wait. A second,
+    // unmistakably pastel sparkle wave (the toast asks about glitter —
+    // this is the glitter). Sound slot per spec §12's no-op seam.
+    if (newborn.genome.shiny) {
+      sound("egg.hatchShiny");
+      fxAbove.burst({
+        x,
+        y: y - 30,
+        count: 18,
+        shape: "sparkle",
+        colors: ["#ffffff", "#ffd9ec", "#d3f4e2", "#dbe4ff"],
+        speed: 95,
+        directionRad: -Math.PI / 2,
+        spreadRad: Math.PI * 1.6,
+        gravity: -8,
+        lifeMs: 1200,
+        sizeMin: 2.5,
+        sizeMax: 5,
+      });
+    }
 
     pendingHatchSpawn = { pipId: newborn.id, x, y };
   }
@@ -2051,6 +2305,19 @@ export function createKeepScene(width: number, height: number): KeepScene {
       updateEggs(dtMs);
       const state = lastState;
       if (state === null) return;
+      // Queued conga starts only once every care animation and ceremony
+      // has finished (queue after — never interrupt a moment mid-flight).
+      if (paradeQueued && parade === null) {
+        const busy = [...actors.values()].some(
+          (a) => a.ceremony || a.careHoldMs > 0,
+        );
+        if (actors.size === 0) {
+          paradeQueued = false; // nobody home — quietly forget it
+        } else if (!busy) {
+          startParade();
+        }
+      }
+      updateParade(dtMs);
       for (const actor of actors.values()) {
         updateActor(actor, dtMs, state);
       }
@@ -2326,5 +2593,10 @@ export function createKeepScene(width: number, height: number): KeepScene {
 
     enterPlacementMode,
     exitPlacementMode,
+
+    playParade(): void {
+      if (parade !== null || paradeQueued) return; // one at a time
+      paradeQueued = true;
+    },
   };
 }

@@ -1219,7 +1219,10 @@
   flex-direction: column;
   align-items: flex-start;
   gap: 8px;
-  z-index: 5;
+  /* Above the upgrade card's backdrop (z 8): the Keep chip must stay
+     tappable while the card is open — repeat taps re-open the card
+     harmlessly, and a rapid streak on the chip has plans of its own. */
+  z-index: 9;
 }
 
 .pk-keep-chip,

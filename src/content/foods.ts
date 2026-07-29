@@ -18,6 +18,10 @@ export interface FoodDef {
   sideEffects?: Readonly<Partial<{ happiness: number; energy: number }>>;
   /** Resource-bundle cost — unused seam for a future shop (spec §6.3). */
   cost: ResourceBundle;
+  /** Seasonal-events seam (spec §12): optional availability window.
+   * NOTHING consumes this yet — registries accept it so seasonal content
+   * later is a data change, not a schema change. */
+  availableWindow?: { from: string; to: string };
 }
 
 export const foods: Readonly<Record<FoodId, FoodDef>> = {

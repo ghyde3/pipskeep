@@ -11,7 +11,7 @@ import type { DialoguePool } from "./index";
 
 export const lazy: DialoguePool = {
   beaming: [
-    "Peak comfort achieved. Do not perceive me.",
+    "Peak comfort achieved. Kindly schedule all excitement for never.",
     "Gravity and I are finally on the same team.",
     "I have transcended. Horizontally.",
     "Bliss is just napping with confidence.",
@@ -55,7 +55,7 @@ export const lazy: DialoguePool = {
     "The floor and I are one. A sad one.",
     "I'd complain, but that's also effort.",
     "Send snacks. Send blankets. Send everything.",
-    "My get-up-and-go got up and left without me.",
+    "I planned to get up today. The plan is also lying down.",
     "This is the bad kind of horizontal.",
     "Somebody carry me to a better mood.",
     "I hit rock bottom. It needs cushions.",

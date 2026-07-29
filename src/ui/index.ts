@@ -41,6 +41,9 @@ export interface Ui {
   showOutcome(outcome: CareOutcome): void;
   /** Open the Pip focus view on the active pip (spec §10 two views). */
   openFocus(): void;
+  /** Speak an arbitrary line above the active Pip (the onboarding
+   * landing moment, spec §10.1.2 — same bubble, same anchoring). */
+  say(line: string): void;
 }
 
 /** Warm copy for structural blocks (spec §5: the world said no, not the
@@ -107,6 +110,11 @@ export function initUi(deps: UiDeps): Ui {
 
     openFocus(): void {
       focus.open();
+    },
+
+    say(line: string): void {
+      bubble.place(deps.getBubbleAnchor());
+      bubble.show(line, "normal");
     },
   };
 }

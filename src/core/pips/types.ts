@@ -63,6 +63,13 @@ export interface TraitGenome {
   accessorySlots: number;
   /** Spec §7.3 `personality` — id into the personality registry. */
   personalityId: string;
+  /**
+   * Rare iridescent variant, rolled once at hatch from the egg stream
+   * (tuning.genome.shinyChance) and immutable for life — evolution keeps
+   * the birth genome, so the trait survives it by construction. Starters
+   * and (for now) bred children are never shiny; only hatched eggs roll.
+   */
+  shiny: boolean;
 }
 
 /**

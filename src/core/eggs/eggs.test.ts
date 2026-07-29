@@ -58,6 +58,7 @@ function makePip(id: string, overrides: Partial<PipState> = {}): PipState {
       pattern: "plain",
       accessorySlots: 1,
       personalityId: "curious",
+      shiny: false,
     },
     personalityId: "curious",
     lifeStage: LifeStage.Adult,
@@ -105,6 +106,7 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
     lastHatchOutcome: null,
     lastJobOutcome: null,
     lastEvolveOutcome: null,
+    onboarding: { completed: true, step: "done" },
     ...overrides,
   };
 }

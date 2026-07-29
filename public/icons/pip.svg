@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- PipsKeep app icon: a happy Mosspip blob (fern palette, spec §11 colors). -->
+  <defs>
+    <clipPath id="frame">
+      <rect x="0" y="0" width="512" height="512" rx="112" ry="112"/>
+    </clipPath>
+  </defs>
+  <g clip-path="url(#frame)">
+    <!-- Sky-to-meadow backdrop (keepPalette.skyTop / ground). -->
+    <rect width="512" height="512" fill="#cfe8f7"/>
+    <circle cx="400" cy="86" r="70" fill="#fff3c9" opacity="0.85"/>
+    <ellipse cx="110" cy="420" rx="260" ry="150" fill="#b7dda1"/>
+    <ellipse cx="430" cy="440" rx="240" ry="140" fill="#a8d494"/>
+    <!-- The pip: soft green blob, leaf sprout, big eyes, coral cheeks. -->
+    <g>
+      <ellipse cx="256" cy="436" rx="128" ry="26" fill="#5f8a5e" opacity="0.18"/>
+      <!-- Sprout -->
+      <path d="M256 118 C 250 84, 218 66, 186 74 C 196 108, 226 122, 252 118 Z" fill="#8fc487" stroke="#5f8a5e" stroke-width="9" stroke-linejoin="round"/>
+      <path d="M256 118 C 262 80, 296 60, 330 70 C 322 106, 288 124, 260 118 Z" fill="#aed9a4" stroke="#5f8a5e" stroke-width="9" stroke-linejoin="round"/>
+      <line x1="256" y1="122" x2="256" y2="150" stroke="#5f8a5e" stroke-width="10" stroke-linecap="round"/>
+      <!-- Body -->
+      <path d="M256 140 C 356 140, 400 224, 400 306 C 400 390, 336 440, 256 440 C 176 440, 112 390, 112 306 C 112 224, 156 140, 256 140 Z" fill="#aed9a4" stroke="#5f8a5e" stroke-width="12"/>
+      <!-- Belly highlight -->
+      <ellipse cx="256" cy="360" rx="92" ry="58" fill="#c4e6ba"/>
+      <!-- Feet -->
+      <ellipse cx="196" cy="432" rx="34" ry="18" fill="#8fc487" stroke="#5f8a5e" stroke-width="9"/>
+      <ellipse cx="316" cy="432" rx="34" ry="18" fill="#8fc487" stroke="#5f8a5e" stroke-width="9"/>
+      <!-- Eyes -->
+      <circle cx="204" cy="272" r="26" fill="#3c3a4d"/>
+      <circle cx="308" cy="272" r="26" fill="#3c3a4d"/>
+      <circle cx="212" cy="263" r="9" fill="#ffffff"/>
+      <circle cx="316" cy="263" r="9" fill="#ffffff"/>
+      <!-- Cheeks: the one loud coral note -->
+      <ellipse cx="168" cy="318" rx="20" ry="13" fill="#ff8a5c" opacity="0.75"/>
+      <ellipse cx="344" cy="318" rx="20" ry="13" fill="#ff8a5c" opacity="0.75"/>
+      <!-- Smile -->
+      <path d="M232 316 Q 256 338 280 316" fill="none" stroke="#3c3a4d" stroke-width="10" stroke-linecap="round"/>
+    </g>
+  </g>
+</svg>

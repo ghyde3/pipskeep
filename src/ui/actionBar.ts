@@ -32,6 +32,20 @@ export interface ActionBar {
 
 type ButtonId = "feed" | "clean" | "play" | "pet" | "rest" | "items";
 
+/** Accessible names for the six care buttons (a11y — spec §10 big
+ * thumb-friendly buttons must also read right to assistive tech).
+ * Exported for tests. Rest flips to the wake label while Resting. */
+export const ACTION_ARIA_LABELS: Readonly<Record<ButtonId, string>> = {
+  feed: "Feed this Pip",
+  clean: "Clean this Pip",
+  play: "Play with this Pip",
+  pet: "Pet this Pip",
+  rest: "Tuck this Pip in to rest",
+  items: "Open the items satchel",
+};
+
+export const REST_WAKE_ARIA_LABEL = "Wake this Pip up";
+
 interface ButtonEls {
   button: HTMLButtonElement;
   label: HTMLElement;
@@ -59,8 +73,13 @@ export function createActionBar(deps: ActionBarDeps): ActionBar {
     button.type = "button";
     button.className = "pk-action";
     button.dataset["action"] = id;
+    // Explicit accessible name (a11y): without it the cooldown ring's
+    // countdown digits pollute the computed name ("12 Clean") and the
+    // buttons read as unnamed/garbled to assistive tech.
+    button.setAttribute("aria-label", ACTION_ARIA_LABELS[id]);
     const ring = document.createElement("span");
     ring.className = "pk-ring";
+    ring.setAttribute("aria-hidden", "true"); // decorative countdown
     const ringText = document.createElement("span");
     ringText.className = "pk-ring-text";
     ring.appendChild(ringText);
@@ -149,8 +168,12 @@ export function createActionBar(deps: ActionBarDeps): ActionBar {
     buttons.play.button.disabled = !careOk;
     buttons.rest.button.disabled = !careOk;
     buttons.items.button.disabled = false;
-    buttons.rest.label.textContent =
-      pip.activity === PipActivity.Resting ? "Wake" : "Rest";
+    const resting = pip.activity === PipActivity.Resting;
+    buttons.rest.label.textContent = resting ? "Wake" : "Rest";
+    buttons.rest.button.setAttribute(
+      "aria-label",
+      resting ? REST_WAKE_ARIA_LABEL : ACTION_ARIA_LABELS.rest,
+    );
     syncCooldownButton("clean", state, now, careOk);
     syncCooldownButton("pet", state, now, careOk);
   };

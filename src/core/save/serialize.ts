@@ -28,7 +28,8 @@
  * them only if a reducer ever starts computing with them.
  */
 
-import type { EvolveOutcome, GameState } from "../state";
+import { ONBOARDING_STEPS } from "../state";
+import type { EvolveOutcome, GameState, OnboardingState } from "../state";
 import { LifeStage, NEED_IDS, PipActivity } from "../pips/types";
 import type {
   ActiveExpedition,
@@ -51,12 +52,15 @@ import type { AssignExpeditionOutcome, PendingReveal } from "../expeditions";
 import type { KeepState, Placement, PlacementId } from "../keep";
 import type { JobAssignment, JobOutcome, JobsByPip } from "../keep/jobs";
 
-/** v3 (Phase 5): `keepLevel` restructured into `keep: {level,
+/** v4 (Phase 6): `onboarding: { completed, step }` — guided-onboarding
+ * progress (spec §10.1); migrated saves arrive completed so only fresh
+ * games see the tutorial.
+ * (v3, Phase 5: `keepLevel` restructured into `keep: {level,
  * placements}`, plus `jobs`, `rosterUpgradePurchased`,
  * `nextPlacementNumber`, per-pip `evolved` records, and the two new
- * transient outcome echoes (job, evolve).
- * (v2, Phase 4: keepLevel, eggs, pendingReveals, id counters.) */
-export const CURRENT_SCHEMA_VERSION = 3;
+ * transient outcome echoes (job, evolve). v2, Phase 4: keepLevel, eggs,
+ * pendingReveals, id counters.) */
+export const CURRENT_SCHEMA_VERSION = 4;
 
 /** The on-disk envelope (spec §8). */
 export interface SaveBlob {
@@ -311,6 +315,11 @@ function validateGenome(value: unknown, path: string): TraitGenome {
       p(path, "accessorySlots"),
     ),
     personalityId: expectString(rec["personalityId"], p(path, "personalityId")),
+    // Absent = false rather than a hard failure: `shiny` landed inside
+    // the v4 window, so a v4 blob written just before it may lack the
+    // field. The v3→v4 migration writes it explicitly for older saves.
+    shiny:
+      rec["shiny"] === undefined ? false : expectBoolean(rec["shiny"], p(path, "shiny")),
   };
 }
 
@@ -483,6 +492,17 @@ function validateJobs(value: unknown, path: string): JobsByPip {
   return out;
 }
 
+/** Onboarding progress (v4, spec §10.1): the sim reads `completed`
+ * (boot decides whether to resume the guided beats), so it is deeply
+ * validated, unlike the transient echoes below. */
+function validateOnboarding(value: unknown, path: string): OnboardingState {
+  const rec = expectRecord(value, path);
+  return {
+    completed: expectBoolean(rec["completed"], p(path, "completed")),
+    step: expectOneOf(rec["step"], p(path, "step"), ONBOARDING_STEPS),
+  };
+}
+
 /** Transient UI echoes: shape-checked to `null | plain object` only and
  * passed through. Deliberate and permanent — the simulation never reads
  * them, and preserving them verbatim keeps save→load deep-equal; deep
@@ -622,6 +642,7 @@ function validateGameState(value: unknown, path: string): GameState {
       rec["lastEvolveOutcome"],
       p(path, "lastEvolveOutcome"),
     ) as EvolveOutcome | null,
+    onboarding: validateOnboarding(rec["onboarding"], p(path, "onboarding")),
   };
 }
 

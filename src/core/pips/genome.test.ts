@@ -53,6 +53,7 @@ const genomeOf = (
   pattern: "plain",
   accessorySlots: 1,
   personalityId: "curious",
+  shiny: false,
   ...overrides,
 });
 
@@ -68,12 +69,43 @@ describe("rollGenome — spec §7.2/§7.3", () => {
     expect(a).toEqual(b);
   });
 
-  it("consumes exactly 4 rolls (species, palette, pattern, personality)", () => {
-    const rolled = stream(7);
-    rollGenome(rolled, { species: REGISTRY });
-    const manual = stream(7);
-    for (let i = 0; i < 4; i++) manual.next();
-    expect(rolled.getState()).toBe(manual.getState());
+  it("consumes exactly 5 rolls (species, palette, pattern, personality, shiny)", () => {
+    // The shiny check consumes its roll whether or not it fires — force
+    // both extremes to prove the cursor advance is outcome-independent.
+    for (const shinyChance of [0, 1]) {
+      const rolled = stream(7);
+      rollGenome(rolled, { species: REGISTRY, shinyChance });
+      const manual = stream(7);
+      for (let i = 0; i < 5; i++) manual.next();
+      expect(rolled.getState()).toBe(manual.getState());
+    }
+  });
+
+  it("rolls shiny deterministically from the stream at the tuning chance", () => {
+    // Forced extremes prove the field is the roll's outcome…
+    expect(rollGenome(stream(3), { species: REGISTRY, shinyChance: 1 }).shiny).toBe(true);
+    expect(rollGenome(stream(3), { species: REGISTRY, shinyChance: 0 }).shiny).toBe(false);
+    // …and the same cursor always produces the same answer (reload
+    // never re-rolls, spec §2 rule 3), at the real tuning chance.
+    for (let seed = 1; seed <= 40; seed++) {
+      const a = rollGenome(stream(seed), { species: REGISTRY });
+      const b = rollGenome(stream(seed), { species: REGISTRY });
+      expect(a.shiny).toBe(b.shiny);
+    }
+    // The default chance is rare-but-findable, not off and not common.
+    expect(tuning.genome.shinyChance).toBeGreaterThan(0);
+    expect(tuning.genome.shinyChance).toBeLessThan(0.1);
+  });
+
+  it("a long seeded run actually finds shinies at roughly the tuned rate", () => {
+    let shinies = 0;
+    const runs = 4000;
+    for (let seed = 1; seed <= runs; seed++) {
+      if (rollGenome(stream(seed), { species: REGISTRY }).shiny) shinies += 1;
+    }
+    const rate = shinies / runs;
+    expect(rate).toBeGreaterThan(tuning.genome.shinyChance * 0.4);
+    expect(rate).toBeLessThan(tuning.genome.shinyChance * 2.5);
   });
 
   it("every field comes from the chosen species' registry entry / the personality list", () => {
@@ -244,6 +276,15 @@ describe("combineGenomes — the breeding seam (spec §7.3/§12)", () => {
   it("uses the tuning-defined mutation chance by default (small, spec §7.3)", () => {
     expect(tuning.breeding.mutationChance).toBeGreaterThan(0);
     expect(tuning.breeding.mutationChance).toBeLessThan(0.5);
+  });
+
+  it("does not inherit shiny (fresh sparkle is earned at hatch, zero extra rolls)", () => {
+    const shinyA = genomeOf({ shiny: true });
+    const shinyB = genomeOf({ speciesId: "emberpip", accessorySlots: 3, shiny: true });
+    for (let seed = 1; seed <= 20; seed++) {
+      const child = combineGenomes(shinyA, shinyB, stream(seed), { species: REGISTRY });
+      expect(child.shiny).toBe(false);
+    }
   });
 });
 

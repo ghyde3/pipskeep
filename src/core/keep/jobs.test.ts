@@ -60,6 +60,7 @@ function makePip(id: string, overrides: Partial<PipState> = {}): PipState {
       pattern: "plain",
       accessorySlots: 1,
       personalityId,
+      shiny: false,
     },
     personalityId,
     lifeStage: LifeStage.Adult,
@@ -120,12 +121,19 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
     lastHatchOutcome: null,
     lastJobOutcome: null,
     lastEvolveOutcome: null,
+    onboarding: { completed: true, step: "done" },
     ...overrides,
   };
 }
 
+/** Total production across BOTH pools: food output (Berries) routes to
+ * the inventory, everything else to resources (spec §6.3 routing —
+ * makeState starts both pools empty, so the sum is pure production). */
 const totalResources = (state: GameState): number =>
-  Object.values(state.resources).reduce((sum, n) => sum + n, 0);
+  [...Object.values(state.resources), ...Object.values(state.inventory)].reduce(
+    (sum, n) => sum + n,
+    0,
+  );
 
 /** First-principles replica of one weighted production roll: raw stream
  * arithmetic over the tuning table (Berries 70 / Fiber 30), independent
@@ -285,13 +293,18 @@ describe("live production (spec §6.2: 1 per 10 min from the weighted table)", (
 
     // First-principles: 6 weighted rolls from seed 42's fresh "job"
     // stream, over the tuning table — no reuse of the implementation.
+    // Routing rule (spec §6.3): berries are FOOD → inventory; fiber is
+    // a resource. Same rolls, split by the food registry.
     const ref = createRng(SEED).stream(JOB_STREAM);
-    const expected: Record<string, number> = {};
+    const expectedInventory: Record<string, number> = {};
+    const expectedResources: Record<string, number> = {};
     for (let i = 0; i < 6; i++) {
       const item = referenceRoll(() => ref.next());
-      expected[item] = (expected[item] ?? 0) + 1;
+      const bucket = item === "berry" ? expectedInventory : expectedResources;
+      bucket[item] = (bucket[item] ?? 0) + 1;
     }
-    expect(hour.resources).toEqual(expected);
+    expect(hour.inventory).toEqual(expectedInventory);
+    expect(hour.resources).toEqual(expectedResources);
     // The cursor persisted — a reload never re-rolls (spec §2 rule 3).
     expect(hour.rngState[JOB_STREAM]).toBe(ref.getState());
 
@@ -310,10 +323,11 @@ describe("live production (spec §6.2: 1 per 10 min from the weighted table)", (
       state = rootReducer(state, { type: "TICK", at: T0 + h * HOUR_MS });
     }
     expect(state.pips["pip-1"]?.activity).toBe(PipActivity.AssignedJob);
+    // Berries route to the inventory (food), fiber stays a resource.
     const produced =
-      (state.resources["berry"] ?? 0) + (state.resources["fiber"] ?? 0);
+      (state.inventory["berry"] ?? 0) + (state.resources["fiber"] ?? 0);
     expect(produced).toBe(96);
-    const berries = state.resources["berry"] ?? 0;
+    const berries = state.inventory["berry"] ?? 0;
     expect(berries / produced).toBeGreaterThan(0.6);
     expect(berries / produced).toBeLessThan(0.8);
   });
@@ -353,6 +367,7 @@ describe("live production (spec §6.2: 1 per 10 min from the weighted table)", (
     const ticked = rootReducer(assigned, { type: "TICK", at: T0 + 3 * HOUR_MS });
     expect(ticked.pips["pip-1"]?.activity).toBe(PipActivity.Sulking);
     expect(ticked.resources).toEqual({});
+    expect(ticked.inventory).toEqual({});
     expect(ticked.rngState[JOB_STREAM]).toBeUndefined();
     expect(ticked.jobs).toEqual({});
   });
@@ -416,6 +431,7 @@ describe("offline production (spec §4.5/§6.2: the 12h rate cap)", () => {
     const live = rootReducer(working(), { type: "TICK", at: T0 + HOUR_MS });
     expect(totalResources(offline)).toBe(6);
     expect(offline.resources).toEqual(live.resources);
+    expect(offline.inventory).toEqual(live.inventory);
     // Same timeline → same "job" cursor, whichever path processed it.
     expect(offline.rngState[JOB_STREAM]).toBe(live.rngState[JOB_STREAM]);
     expect(offline.jobs["pip-1"]?.lastProducedAt).toBe(T0 + HOUR_MS);
