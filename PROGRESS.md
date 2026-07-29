@@ -8,7 +8,7 @@ Phase-gate log and decision journal, per spec §13–§15. Append entries; never
 |---|---|---|
 | 0 — Scaffold | **gate passed** | 2026-07-29 |
 | 1 — Pip core (logic only) | **gate passed** | 2026-07-29 |
-| 2 — Care actions + first playable | not started | — |
+| 2 — Care actions + first playable | **gate passed** | 2026-07-29 |
 | 3 — Save system hardening | not started | — |
 | 4 — Expeditions + eggs | not started | — |
 | 5 — The Keep | not started | — |
@@ -28,6 +28,12 @@ Phase-gate log and decision journal, per spec §13–§15. Append entries; never
 - Build: `tsc --noEmit && vite build` green.
 - Review: mutation tester ran 8 targeted mutations; 1 survived (Beaming-before-Grumpy precedence swap) → fixer added overlapping-threshold precedence tests; re-gate green. Spec audit clean.
 - Notes for Phase 2: Chaotic's 10% displayed-mood offset (§4.3) is a display-layer concern — tuning value exists, must be consumed where mood selects dialogue/portrait. Dialogue underfill validation must flip warn→error after the authoring pass.
+
+### Phase 2 — Care actions + first playable — 2026-07-29
+- Tests: `npm test` → 17 files, **361 passed**. Every care action has exact stat-effect + cooldown-boundary tests (60s/30s exact via FakeClock); refusal matrix at 9.99/10 and 29.99/30; deep-equal save round-trip incl. RNG-cursor continuation (draw-5-compare); dialogue validation now hard-fails below 8 lines/pool (all 30 pools pass — 340 lines authored).
+- Mutation: 8/8 mutations killed (cooldown removal, refusal thresholds, inventory decrement, rngState drop, context swap, Chaotic quirk).
+- Manual check (human at the controls, browser on :5317): Feed → berry arc + munch + "Stay forever?" + Food 60→85 + Berry ×3→×2; Pet → hearts + lean-in + 30s conic cooldown ring counting down; Play → confetti + Energy −10; Rest → eyes closed + Z's + button flips to Wake; Clean → sparkle. **Reload restored everything exactly** — still Resting, cooldown expired in real time, inventory/needs intact.
+- Notes for later phases: action buttons need accessible names (a11y, Phase 6); top bar is single-portrait — becomes the §10 multi-pip selector when Phase 4 hatching lands; idle animation should vary by mood (§4.3) — Phase 6 juice pass; 4 cross-personality duplicate jokes to deduplicate in a Phase 6 dialogue pass.
 
 <!-- One entry per completed phase:
 

@@ -1,0 +1,101 @@
+{
+  "schemaVersion": 1,
+  "seed": 1337,
+  "savedAt": 90000000,
+  "state": {
+    "pips": {
+      "pip-1": {
+        "id": "pip-1",
+        "speciesId": "mosspip",
+        "name": "Mosspip",
+        "genome": {
+          "speciesId": "mosspip",
+          "palette": "fern",
+          "pattern": "plain",
+          "accessorySlots": 1,
+          "personalityId": "curious"
+        },
+        "personalityId": "curious",
+        "lifeStage": "adult",
+        "hatchedAt": 0,
+        "ageMs": 90000000,
+        "happinessIntegral": 6300000000,
+        "needs": {
+          "hunger": 52.5,
+          "cleanliness": 71,
+          "happiness": 64.25,
+          "energy": 88
+        },
+        "activity": "onExpedition",
+        "pendingSulk": false,
+        "readyToEvolve": false,
+        "lastGiftItemId": "shiny-pebble",
+        "expedition": {
+          "expeditionId": "mossy-hollow",
+          "departedAt": 89400000,
+          "durationMs": 1800000
+        },
+        "needsUpdatedAt": 90000000
+      },
+      "pip-2": {
+        "id": "pip-2",
+        "speciesId": "mosspip",
+        "name": "Sprout",
+        "genome": {
+          "speciesId": "mosspip",
+          "palette": "moss",
+          "pattern": "speckled",
+          "accessorySlots": 1,
+          "personalityId": "clingy"
+        },
+        "personalityId": "clingy",
+        "lifeStage": "pipling",
+        "hatchedAt": 82800000,
+        "ageMs": 7200000,
+        "happinessIntegral": 216000000,
+        "needs": {
+          "hunger": 12,
+          "cleanliness": 40,
+          "happiness": 0,
+          "energy": 33
+        },
+        "activity": "sulking",
+        "pendingSulk": false,
+        "readyToEvolve": false,
+        "lastGiftItemId": null,
+        "expedition": null,
+        "needsUpdatedAt": 90000000
+      }
+    },
+    "rosterOrder": ["pip-1", "pip-2"],
+    "activePipId": "pip-1",
+    "inventory": { "berry": 2, "stew": 1 },
+    "resources": { "moss": 5, "pebble": 12 },
+    "rngState": {
+      "genesis": 305419896,
+      "dialogue": 2596069104,
+      "quirks": 4041261184,
+      "mood-display": 19088743
+    },
+    "seed": 1337,
+    "cooldowns": {
+      "pip-1": { "clean": 89940000, "pet": 89985000 }
+    },
+    "lastLineIndex": {
+      "pip-1": { "content": 1, "refusal": 0 },
+      "pip-2": { "sulking": 2 }
+    },
+    "createdAt": 0,
+    "lastTickAt": 90000000,
+    "lastCareOutcome": {
+      "action": "pet",
+      "pipId": "pip-1",
+      "at": 89985000,
+      "applied": true,
+      "dialogueContext": "content",
+      "lineId": "curious/content/1",
+      "line": "placeholder"
+    },
+    "lastCatchup": null
+  }
+}

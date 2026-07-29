@@ -1,6 +1,15 @@
 /**
  * render/ (spec §2): Pixi scenes, sprites, animations. Reads state, never
- * mutates it. First real scene lands in Phase 2 (minimal Keep view).
+ * mutates it.
+ *
+ * - spriteResolver.ts — THE `(genome, stage) → composed sprite` mapping
+ *   (spec §11); all Pip visuals load through it.
+ * - keepScene.ts — the Phase 2 Keep view: diorama, active Pip, care
+ *   animations.
+ * - tween.ts / particles.ts — dependency-free juice utilities.
  */
 
-export {};
+export * from "./spriteResolver";
+export * from "./keepScene";
+export * from "./tween";
+export * from "./particles";

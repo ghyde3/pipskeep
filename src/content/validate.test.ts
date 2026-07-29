@@ -19,12 +19,27 @@ describe("default content bundle", () => {
     expect(errors).toEqual([]);
   });
 
-  it("warns (not errors) about underfilled dialogue pools until Phase 2", () => {
-    const { warnings } = collectContentIssues(defaultContentBundle);
-    // Placeholder pools have 1-2 lines each, below the launch minimum.
+  it("ships fully-authored dialogue pools (Phase 2 authoring pass)", () => {
+    // Spec §3: 8+ lines per personality × context is the launch minimum.
+    const { errors, warnings } = collectContentIssues(defaultContentBundle);
     expect(REQUIRED_LINES_PER_CONTEXT).toBe(8);
-    expect(warnings.length).toBeGreaterThan(0);
-    expect(warnings.every((w) => w.startsWith("dialogue:"))).toBe(true);
+    expect(errors.filter((e) => e.startsWith("dialogue:"))).toEqual([]);
+    expect(warnings).toEqual([]);
+  });
+
+  it("hard-fails an underfilled dialogue pool (spec §3 violation)", () => {
+    const lazy = defaultContentBundle.dialogue.lazy;
+    const bundle: ContentBundle = {
+      ...defaultContentBundle,
+      dialogue: {
+        ...defaultContentBundle.dialogue,
+        lazy: { ...lazy, refusal: ["Hmm. No."] },
+      },
+    };
+    const { errors } = collectContentIssues(bundle);
+    expect(errors).toEqual([
+      `dialogue: pool lazy/refusal has 1/${REQUIRED_LINES_PER_CONTEXT} lines (launch minimum, spec §3)`,
+    ]);
   });
 });
 
@@ -154,8 +169,8 @@ describe("validateContent logging", () => {
     expect(errorSpy).toHaveBeenCalledWith(
       '[content] expedition "meadow": empty loot table',
     );
-    // Underfilled dialogue pools surface as warnings, not errors.
-    expect(warnSpy).toHaveBeenCalled();
+    // Fully-authored default dialogue → nothing left to warn about.
+    expect(warnSpy).not.toHaveBeenCalled();
   });
 
   it("logs no errors for the shipped default content", () => {

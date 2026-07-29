@@ -2,20 +2,27 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no"
+    />
+    <meta name="theme-color" content="#cfe8f7" />
     <title>PipsKeep</title>
     <style>
+      /* Structural shell only — the UI overlay's styles live in src/ui/ui.css. */
       html,
       body {
         margin: 0;
         padding: 0;
         height: 100%;
         overflow: hidden;
-        background: #f4ead5;
+        background: #eef7ea;
+        overscroll-behavior: none;
       }
       #app {
-        width: 100%;
-        height: 100%;
+        position: absolute;
+        inset: 0;
+        touch-action: none;
       }
       #app canvas {
         display: block;

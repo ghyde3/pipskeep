@@ -1,8 +1,9 @@
 /**
  * Content validation (spec §3): run at boot in dev mode. Broken evolution
- * targets, empty loot tables, missing species/item refs, negative costs
- * → loud console.error. Underfilled dialogue pools → console.warn
- * (placeholder pools are expected until the Phase 2 authoring pass).
+ * targets, empty loot tables, missing species/item refs, negative costs,
+ * and underfilled dialogue pools (the Phase 2 authoring pass landed —
+ * spec §3's 8-line minimum is now a hard requirement) → loud
+ * console.error.
  */
 
 import { RESOURCE_IDS, type ResourceBundle } from "../core/economy";
@@ -168,11 +169,10 @@ export function collectContentIssues(
     }
   }
 
-  // --- Dialogue: underfilled pools WARN until the Phase 2 authoring pass ---
-  // TODO(Phase 2 gate — BLOCKING): after the authoring pass, push these
-  // into `errors` instead — an underfilled pool at launch is a spec §3
-  // violation and must fail loudly, not warn.
-  warnings.push(...findUnderfilledDialoguePools(content.dialogue));
+  // --- Dialogue: underfilled pools are ERRORS (spec §3: minimum 8 lines
+  // per personality × context; the Phase 2 authoring pass landed, so the
+  // pre-authoring warn downgrade is gone per the Phase 2 gate TODO) ---
+  errors.push(...findUnderfilledDialoguePools(content.dialogue));
 
   return { errors, warnings };
 }
