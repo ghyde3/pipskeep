@@ -9,7 +9,7 @@ Phase-gate log and decision journal, per spec §13–§15. Append entries; never
 | 0 — Scaffold | **gate passed** | 2026-07-29 |
 | 1 — Pip core (logic only) | **gate passed** | 2026-07-29 |
 | 2 — Care actions + first playable | **gate passed** | 2026-07-29 |
-| 3 — Save system hardening | not started | — |
+| 3 — Save system hardening | **gate passed** | 2026-07-29 |
 | 4 — Expeditions + eggs | not started | — |
 | 5 — The Keep | not started | — |
 | 6 — Polish, PWA, onboarding | not started | — |
@@ -34,6 +34,13 @@ Phase-gate log and decision journal, per spec §13–§15. Append entries; never
 - Mutation: 8/8 mutations killed (cooldown removal, refusal thresholds, inventory decrement, rngState drop, context swap, Chaotic quirk).
 - Manual check (human at the controls, browser on :5317): Feed → berry arc + munch + "Stay forever?" + Food 60→85 + Berry ×3→×2; Pet → hearts + lean-in + 30s conic cooldown ring counting down; Play → confetti + Energy −10; Rest → eyes closed + Z's + button flips to Wake; Clean → sparkle. **Reload restored everything exactly** — still Resting, cooldown expired in real time, inventory/needs intact.
 - Notes for later phases: action buttons need accessible names (a11y, Phase 6); top bar is single-portrait — becomes the §10 multi-pip selector when Phase 4 hatching lands; idle animation should vary by mood (§4.3) — Phase 6 juice pass; 4 cross-personality duplicate jokes to deduplicate in a Phase 6 dialogue pass.
+
+### Phase 3 — Save system hardening — 2026-07-29
+- Tests: `npm test` → 21 files, **406 passed**. Migration fixture harness (self-extending: fails if schemaVersion bumps without a fixture); anchored-debounce autosave proven to save every action within 2000ms under continuous 1 Hz ticking; hidden + pagehide immediate flush; quarantine-before-overwrite ordering; import rejects invalid blobs with typed errors.
+- **Critical bug found & fixed in-phase:** the debounce re-armed on every dispatch, so the 1 Hz ticker starved autosave forever — a real kill-tab would have lost the whole session. Now anchored: first unsaved dispatch arms the timer, later dispatches never push it back.
+- Mutation: 7 mutations; 1 survived initially (boot silently creating a new game on corrupt blob — the exact §8-forbidden bug) → fixer added boot-level coverage; re-gate green (398→406 tests).
+- Manual check (browser): wrench menu opens; +6h skew live-verified the personality table (Food 57→21 = 6×6, Happy −24 = 6×5×0.8 Curious, Clean −28.8 = 6×4×1.2), clock badge +6h; corrupt-save flow QA'd — modal with warm copy, broken blob quarantined verbatim in idb, Start Fresh only on explicit click; export/import round-trip incl. bad-JSON rejection toast. Debug menu confirmed absent from prod bundle (grep dist clean).
+- Notes: `new Date(exportedAt)` in recovery.ts formats an injected timestamp (letter-vs-spirit of §2 rule 2 — acceptable, documented); transient echoes (lastCareOutcome/lastCatchup) remain shallow-validated.
 
 <!-- One entry per completed phase:
 

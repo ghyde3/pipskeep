@@ -283,6 +283,54 @@ describe("rootReducer CATCHUP — delegates to runCatchup (spec §4.5)", () => {
   });
 });
 
+describe("rootReducer DEBUG_GRANT — the debug menu's grant seam (spec §14)", () => {
+  it("adds exact item and resource deltas, creating missing entries", () => {
+    const state = makeState(); // inventory { berry: 3, stew: 1 }
+    const next = rootReducer(state, {
+      type: "DEBUG_GRANT",
+      items: { berry: 5, stew: 1 },
+      resources: { wood: 10, fiber: 10 },
+    });
+    expect(next.inventory).toStrictEqual({ berry: 8, stew: 2 });
+    expect(next.resources).toStrictEqual({ wood: 10, fiber: 10 });
+    // Nothing else moves — pips are the same object.
+    expect(next.pips).toBe(state.pips);
+    expect(next.lastTickAt).toBe(state.lastTickAt);
+  });
+
+  it("omitted fields leave their record untouched (same reference)", () => {
+    const state = makeState();
+    const next = rootReducer(state, { type: "DEBUG_GRANT", items: { berry: 1 } });
+    expect(next.resources).toBe(state.resources);
+    const again = rootReducer(state, {
+      type: "DEBUG_GRANT",
+      resources: { shell: 10 },
+    });
+    expect(again.inventory).toBe(state.inventory);
+  });
+});
+
+describe("rootReducer LOAD_SAVE — validated-save replacement (debug import)", () => {
+  it("replaces the world wholesale and nulls the transient UI echoes", () => {
+    const running = makeState();
+    const imported = makeState({
+      pip: makePip({ id: "pip-9", name: "Importpip" }),
+      seed: 777,
+      inventory: { stew: 4 },
+      lastCareOutcome: {} as GameState["lastCareOutcome"],
+      lastCatchup: {} as GameState["lastCatchup"],
+    });
+    const next = rootReducer(running, { type: "LOAD_SAVE", state: imported });
+    expect(next.seed).toBe(777);
+    expect(next.pips["pip-9"]?.name).toBe("Importpip");
+    expect(next.pips["pip-1"]).toBeUndefined();
+    expect(next.inventory).toStrictEqual({ stew: 4 });
+    // Stale echoes from the imported blob never replay animations.
+    expect(next.lastCareOutcome).toBeNull();
+    expect(next.lastCatchup).toBeNull();
+  });
+});
+
 describe("rootReducer purity — input state is never mutated", () => {
   const actions: GameAction[] = [
     { type: "TICK", at: HOUR_MS },
@@ -293,6 +341,8 @@ describe("rootReducer purity — input state is never mutated", () => {
     { type: "REST_TOGGLE", pipId: "pip-1", at: 1 },
     { type: "GIVE_ITEM", pipId: "pip-1", itemId: "stew", at: 1 },
     { type: "CATCHUP", savedAt: 0, now: HOUR_MS },
+    { type: "DEBUG_GRANT", items: { berry: 5 }, resources: { wood: 10 } },
+    { type: "LOAD_SAVE", state: makeState() },
   ];
 
   it("every action type runs cleanly on a deep-frozen state", () => {

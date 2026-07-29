@@ -1,9 +1,13 @@
 /**
- * Persistence wiring tests (spec §8): debounced autosave (2s trailing,
- * re-armed by every dispatch), immediate flush on visibility→hidden,
- * load-on-init (empty / valid / corrupt), and dispose. The idb layer is
- * an in-memory SaveStore stub; timers are driven by FakeClock so the
- * debounce boundary is tested at exactly AUTOSAVE_DEBOUNCE_MS.
+ * Persistence wiring tests (spec §8): ANCHORED autosave debounce (the
+ * first unsaved dispatch arms the 2s timer; later dispatches never push
+ * it back, so no action waits on disk longer than AUTOSAVE_DEBOUNCE_MS —
+ * the Phase 3 gate's "kill-tab loses ≤ 2s" bound, proven below under a
+ * continuous 1 Hz TICK stream), immediate flush on visibility→hidden AND
+ * on pagehide (Safari's kill-tab event), load-on-init (empty / valid /
+ * corrupt), and dispose. The idb layer is an in-memory SaveStore stub;
+ * timers are driven by FakeClock so the debounce boundary is tested at
+ * exactly AUTOSAVE_DEBOUNCE_MS.
  */
 
 import { describe, expect, it } from "vitest";
@@ -17,11 +21,18 @@ import type { SaveBlob } from "../core/save/serialize";
 import {
   AUTOSAVE_DEBOUNCE_MS,
   LATEST_SAVE_KEY,
+  QUARANTINE_KEY_PREFIX,
   initPersistence,
   loadPipskeep,
+  quarantineCorruptSave,
   savePipskeepNow,
 } from "./persistence";
-import type { SaveStore, TimerHost, VisibilityHost } from "./persistence";
+import type {
+  PageHideHost,
+  SaveStore,
+  TimerHost,
+  VisibilityHost,
+} from "./persistence";
 
 const SEED = 7;
 
@@ -105,6 +116,22 @@ class FakeVisibility implements VisibilityHost {
   }
 }
 
+class FakePageHide implements PageHideHost {
+  private readonly listeners = new Set<() => void>();
+
+  addEventListener(_type: "pagehide", listener: () => void): void {
+    this.listeners.add(listener);
+  }
+
+  removeEventListener(_type: "pagehide", listener: () => void): void {
+    this.listeners.delete(listener);
+  }
+
+  fire(): void {
+    for (const listener of [...this.listeners]) listener();
+  }
+}
+
 /** Let the async save promise chain settle after a synchronous trigger. */
 function settle(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
@@ -114,6 +141,7 @@ interface Harness {
   clock: FakeClock;
   timers: FakeTimers;
   visibility: FakeVisibility;
+  pageHide: FakePageHide;
   saveStore: MemorySaveStore;
   store: Store<GameState, GameAction>;
 }
@@ -124,6 +152,7 @@ function makeHarness(startAt = 1_000): Harness {
     clock,
     timers: new FakeTimers(clock),
     visibility: new FakeVisibility(),
+    pageHide: new FakePageHide(),
     saveStore: new MemorySaveStore(),
     store: createStore(rootReducer, createNewGame(SEED, startAt)),
   };
@@ -138,6 +167,7 @@ async function init(h: Harness) {
     saveStore: h.saveStore,
     timers: h.timers,
     visibility: h.visibility,
+    pageHide: h.pageHide,
   });
 }
 
@@ -145,7 +175,8 @@ describe("loadPipskeep", () => {
   it("reports no save on an empty store", async () => {
     const result = await loadPipskeep(new MemorySaveStore());
     expect(result.save).toBeNull();
-    expect(result.error).toBeUndefined();
+    expect(result.loadError).toBeUndefined();
+    expect(result.rawBlob).toBeUndefined();
   });
 
   it("returns a migrated, validated blob when one exists", async () => {
@@ -164,8 +195,8 @@ describe("loadPipskeep", () => {
     h.saveStore.data.set(LATEST_SAVE_KEY, broken);
     const result = await loadPipskeep(h.saveStore);
     expect(result.save).toBeNull();
-    expect(result.error?.code).toBe("invalid-field");
-    expect(result.raw).toBe(broken);
+    expect(result.loadError?.code).toBe("invalid-field");
+    expect(result.rawBlob).toBe(broken);
   });
 });
 
@@ -201,12 +232,13 @@ describe("initPersistence load-on-init", () => {
     persistence.dispose();
   });
 
-  it("reports loaded: false plus loadError on a corrupt blob", async () => {
+  it("reports loaded: false plus loadError and quarantineKey on a corrupt blob", async () => {
     const h = makeHarness();
     h.saveStore.data.set(LATEST_SAVE_KEY, { schemaVersion: 1 });
     const persistence = await init(h);
     expect(persistence.loaded).toBe(false);
     expect(persistence.loadError).toBeDefined();
+    expect(persistence.quarantineKey?.startsWith(QUARANTINE_KEY_PREFIX)).toBe(true);
     persistence.dispose();
   });
 
@@ -245,24 +277,59 @@ describe("autosave debounce (2s trailing, FakeClock-driven)", () => {
     persistence.dispose();
   });
 
-  it("re-arms on every dispatch: two dispatches 1s apart yield one save, 2s after the last", async () => {
+  it("anchors to the FIRST unsaved dispatch: two dispatches 1s apart yield one save, 2s after the first, holding the latest state", async () => {
     const h = makeHarness();
     const persistence = await init(h);
-    tick(h); // t = 1000
+    tick(h); // t = 1000 — arms the timer for t = 3000
     h.timers.advance(1_000); // t = 2000
-    tick(h); // re-arms to t = 4000
-    h.timers.advance(AUTOSAVE_DEBOUNCE_MS - 1); // t = 3999
+    tick(h); // must NOT push the timer back
+    h.timers.advance(AUTOSAVE_DEBOUNCE_MS - 1_001); // t = 2999
     await settle();
     expect(h.saveStore.puts).toHaveLength(0);
 
-    h.timers.advance(1); // t = 4000
+    h.timers.advance(1); // t = 3000 — anchored deadline
     await settle();
     expect(h.saveStore.puts).toHaveLength(1);
-    expect((h.saveStore.puts[0]?.value as SaveBlob).savedAt).toBe(4_000);
+    const blob = h.saveStore.puts[0]?.value as SaveBlob;
+    expect(blob.savedAt).toBe(3_000);
+    // The save carries everything dispatched so far, including the
+    // second tick — anchoring bounds latency, it never drops actions.
+    expect(blob.state).toBe(h.store.getState());
     persistence.dispose();
   });
 
-  it("flushes immediately on visibility→hidden and cancels the pending debounce", async () => {
+  it("gate bound: under a continuous 1 Hz TICK stream, every dispatch is on disk within AUTOSAVE_DEBOUNCE_MS (a re-arming debounce would never save at all)", async () => {
+    const h = makeHarness();
+    const persistence = await init(h);
+    const dispatchTimes: number[] = [];
+    for (let i = 0; i < 10; i++) {
+      tick(h);
+      dispatchTimes.push(h.clock.now());
+      h.timers.advance(1_000);
+      await settle();
+    }
+    // Let the final armed timer run out too.
+    h.timers.advance(AUTOSAVE_DEBOUNCE_MS);
+    await settle();
+
+    const saveTimes = h.saveStore.puts.map(
+      (put) => (put.value as SaveBlob).savedAt,
+    );
+    expect(saveTimes.length).toBeGreaterThan(0);
+    // THE Phase 3 claim, verbatim: kill the tab at any instant and the
+    // unsaved window behind it is at most AUTOSAVE_DEBOUNCE_MS old.
+    for (const at of dispatchTimes) {
+      const covered = saveTimes.some(
+        (savedAt) => savedAt >= at && savedAt <= at + AUTOSAVE_DEBOUNCE_MS,
+      );
+      expect(covered, `dispatch at ${at} not saved within ${AUTOSAVE_DEBOUNCE_MS}ms`).toBe(true);
+    }
+    // And the anchored cadence is exactly one save per debounce window.
+    expect(saveTimes).toStrictEqual([3_000, 5_000, 7_000, 9_000, 11_000]);
+    persistence.dispose();
+  });
+
+  it("a dispatch followed by hidden at 500ms flushes immediately and cancels the pending debounce", async () => {
     const h = makeHarness();
     const persistence = await init(h);
     tick(h); // t = 1000, debounce armed for 3000
@@ -270,10 +337,32 @@ describe("autosave debounce (2s trailing, FakeClock-driven)", () => {
     h.visibility.hide();
     await settle();
     expect(h.saveStore.puts).toHaveLength(1);
-    expect((h.saveStore.puts[0]?.value as SaveBlob).savedAt).toBe(1_500);
+    const blob = h.saveStore.puts[0]?.value as SaveBlob;
+    expect(blob.savedAt).toBe(1_500);
+    // The flush persisted the dispatched action's state, not a stale one.
+    expect(blob.state).toBe(h.store.getState());
     expect(h.timers.pendingCount()).toBe(0);
 
     // The canceled debounce never fires a second save.
+    h.timers.advance(AUTOSAVE_DEBOUNCE_MS * 2);
+    await settle();
+    expect(h.saveStore.puts).toHaveLength(1);
+    persistence.dispose();
+  });
+
+  it("a dispatch followed by pagehide at 500ms flushes immediately (Safari kill-tab path)", async () => {
+    const h = makeHarness();
+    const persistence = await init(h);
+    tick(h); // t = 1000, debounce armed for 3000
+    h.timers.advance(500); // t = 1500
+    h.pageHide.fire();
+    await settle();
+    expect(h.saveStore.puts).toHaveLength(1);
+    const blob = h.saveStore.puts[0]?.value as SaveBlob;
+    expect(blob.savedAt).toBe(1_500);
+    expect(blob.state).toBe(h.store.getState());
+    expect(h.timers.pendingCount()).toBe(0);
+
     h.timers.advance(AUTOSAVE_DEBOUNCE_MS * 2);
     await settle();
     expect(h.saveStore.puts).toHaveLength(1);
@@ -293,13 +382,14 @@ describe("autosave debounce (2s trailing, FakeClock-driven)", () => {
     persistence.dispose();
   });
 
-  it("dispose() stops autosave and visibility flushes", async () => {
+  it("dispose() stops autosave, visibility flushes, and pagehide flushes", async () => {
     const h = makeHarness();
     const persistence = await init(h);
     tick(h);
     persistence.dispose();
     h.timers.advance(AUTOSAVE_DEBOUNCE_MS * 2);
     h.visibility.hide();
+    h.pageHide.fire();
     await settle();
     expect(h.saveStore.puts).toHaveLength(0);
   });
@@ -316,5 +406,62 @@ describe("autosave debounce (2s trailing, FakeClock-driven)", () => {
     const reloaded = await loadPipskeep(fresh);
     expect(reloaded.save?.state).toStrictEqual(h.store.getState());
     persistence.dispose();
+  });
+});
+
+describe("corrupt-save quarantine (spec §8: never destroy the evidence)", () => {
+  const BROKEN = { schemaVersion: 1, seed: "definitely not a number" };
+
+  it("stashes the broken blob under quarantine-<timestamp> BEFORE any overwrite of latest", async () => {
+    const h = makeHarness(1_000);
+    h.saveStore.data.set(LATEST_SAVE_KEY, BROKEN);
+    const persistence = await init(h);
+
+    // The quarantine write is the very first put — before any autosave
+    // exists that could overwrite the corrupt blob.
+    expect(h.saveStore.puts).toHaveLength(1);
+    expect(h.saveStore.puts[0]?.key).toBe(`${QUARANTINE_KEY_PREFIX}1000`);
+    expect(h.saveStore.puts[0]?.value).toBe(BROKEN);
+    expect(persistence.quarantineKey).toBe(`${QUARANTINE_KEY_PREFIX}1000`);
+    // Nothing has touched the latest slot yet.
+    expect(h.saveStore.data.get(LATEST_SAVE_KEY)).toBe(BROKEN);
+
+    // A fresh game's autosave then overwrites latest — but the evidence
+    // is already stashed and stays byte-for-byte intact.
+    tick(h);
+    h.timers.advance(AUTOSAVE_DEBOUNCE_MS);
+    await settle();
+    expect(h.saveStore.puts).toHaveLength(2);
+    expect(h.saveStore.puts[1]?.key).toBe(LATEST_SAVE_KEY);
+    expect(h.saveStore.data.get(`${QUARANTINE_KEY_PREFIX}1000`)).toBe(BROKEN);
+    const reloaded = await loadPipskeep(h.saveStore);
+    expect(reloaded.save?.state).toStrictEqual(h.store.getState());
+    persistence.dispose();
+  });
+
+  it("quarantineCorruptSave picks a fresh key on a same-millisecond collision", async () => {
+    const saveStore = new MemorySaveStore();
+    const first = await quarantineCorruptSave({ a: 1 }, 42, saveStore);
+    const second = await quarantineCorruptSave({ b: 2 }, 42, saveStore);
+    expect(first).toBe(`${QUARANTINE_KEY_PREFIX}42`);
+    expect(second).toBe(`${QUARANTINE_KEY_PREFIX}42-2`);
+    expect(saveStore.data.get(first)).toStrictEqual({ a: 1 });
+    expect(saveStore.data.get(second)).toStrictEqual({ b: 2 });
+  });
+
+  it("does not quarantine on a fresh install or a valid save", async () => {
+    const fresh = makeHarness();
+    const p1 = await init(fresh);
+    expect(p1.quarantineKey).toBeUndefined();
+    expect(fresh.saveStore.puts).toHaveLength(0);
+    p1.dispose();
+
+    const valid = makeHarness();
+    const blob = toSaveBlob(valid.store.getState(), 500);
+    valid.saveStore.data.set(LATEST_SAVE_KEY, JSON.parse(JSON.stringify(blob)));
+    const p2 = await init(valid);
+    expect(p2.quarantineKey).toBeUndefined();
+    expect(valid.saveStore.puts).toHaveLength(0);
+    p2.dispose();
   });
 });

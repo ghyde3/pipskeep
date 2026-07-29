@@ -3,14 +3,21 @@
  * persistence + live ticker — the Phase 2 first playable.
  *
  * Boot order (matches src/app/persistence.ts's documented sequence):
- *   1. loadPipskeep() — before the store exists.
+ *   1. loadPipskeep() — before the store exists. Three outcomes:
+ *      valid save → load + CATCHUP; nothing stored → fresh game; corrupt
+ *      blob → the §8 recovery modal (Download broken save / Start Fresh)
+ *      and boot HALTS until the player decides — never a silent wipe.
  *   2. Store from the loaded state, or createNewGame (seed generation is
- *      app-layer: crypto, with a SystemClock fallback — core never rolls
- *      its own seed).
+ *      app-layer: crypto, with a clock-bits fallback — core never rolls
+ *      its own seed). ALL app-layer time comes from the one shared
+ *      OffsetClock (src/app/appClock.ts), so the dev debug menu's time
+ *      skew moves the whole world at once.
  *   3. If a save loaded: dispatch CATCHUP over the absence (spec §4.5).
  *      The "While you were away…" sheet is Phase 4 — for now the summary
  *      goes to console.info.
- *   4. initPersistence wires the debounced autosave (spec §8).
+ *   4. initPersistence wires the debounced autosave (spec §8). On the
+ *      recovery path it also quarantines the broken blob under its own
+ *      idb key before the first autosave can overwrite it.
  *   5. Scene + UI subscribe to the store; ticker dispatches TICK ≤ 1/s.
  *
  * This module owns the seams between layers: it watches state diffs to
@@ -21,14 +28,18 @@
 
 import { Application } from "pixi.js";
 import { validateContent } from "../content/validate";
-import { SystemClock } from "../core/clock";
+import type { Clock } from "../core/clock";
 import { createStore } from "../core/store";
 import { createNewGame, rootReducer } from "../core/state";
 import type { GameState } from "../core/state";
 import { NEED_IDS, PipActivity } from "../core/pips/types";
 import { createKeepScene } from "../render/keepScene";
 import { initUi, notify } from "../ui";
-import { initPersistence, loadPipskeep } from "./persistence";
+import { showRecoveryModal } from "../ui/recovery";
+import { OffsetClock } from "./appClock";
+import { routeBoot } from "./bootRoute";
+import { initPersistence, loadPipskeep, openSaveStore } from "./persistence";
+import type { LoadResult, SaveStore } from "./persistence";
 import { startTicker } from "./ticker";
 
 /** In-app alert threshold (spec §10: "need < 25"). UI copy trigger, not
@@ -45,7 +56,7 @@ const NEED_ALERT_COPY: Readonly<Record<string, (name: string) => string>> = {
 /** App-layer seed roll: crypto when available, clock bits otherwise.
  * (Randomness INSIDE the game goes through core/rng — this only picks
  * which deterministic universe a brand-new save lives in.) */
-function generateSeed(clock: SystemClock): number {
+function generateSeed(clock: Clock): number {
   if (typeof crypto !== "undefined" && "getRandomValues" in crypto) {
     const word = crypto.getRandomValues(new Uint32Array(1))[0];
     if (word !== undefined) return word >>> 0;
@@ -96,10 +107,44 @@ async function boot(): Promise<void> {
     validateContent();
   }
 
-  const clock = new SystemClock();
+  // ONE app clock (src/app/appClock.ts): system time plus the debug
+  // menu's skewable offset. Every app-layer timestamp flows through it.
+  const clock = new OffsetClock();
 
-  // --- Persistence-first boot (spec §8) ---
-  const loaded = await loadPipskeep();
+  // --- Persistence-first boot (spec §8) --- one idb connection, shared
+  // by load, autosave, and the debug menu's corrupt-save button.
+  const saveStore = await openSaveStore();
+  const loaded = await loadPipskeep(saveStore);
+
+  // The corrupt-vs-missing-vs-valid decision lives in routeBoot
+  // (src/app/bootRoute.ts) so it is testable without Pixi. Corrupt blob:
+  // recovery modal, NOT a silent new game (spec §8) — boot halts there;
+  // the fresh game exists only after the explicit Start Fresh click, and
+  // initPersistence quarantines the broken blob before its first
+  // autosave can overwrite it. Missing save = new install → no ceremony.
+  await routeBoot(loaded, {
+    showRecovery: ({ loadError, rawBlob, onStartFresh }) => {
+      console.error("PipsKeep save failed to load", loadError);
+      showRecoveryModal({
+        mount: document.body,
+        loadError,
+        rawBlob,
+        exportedAt: clock.now(),
+        onStartFresh,
+      });
+    },
+    startGame: (routed) => startGame(clock, saveStore, routed),
+  });
+}
+
+/** The rest of boot: store, Pixi world, UI, ticker. `loaded.save` null
+ * here always means "start a new game" — the corrupt case was already
+ * routed through the recovery modal above. */
+async function startGame(
+  clock: OffsetClock,
+  saveStore: SaveStore,
+  loaded: LoadResult,
+): Promise<void> {
   const freshGame = loaded.save === null;
   const initial: GameState =
     loaded.save !== null
@@ -113,7 +158,10 @@ async function boot(): Promise<void> {
       now: clock.now(),
     });
   }
-  await initPersistence(store, clock, { preloaded: loaded });
+  const persistence = await initPersistence(store, clock, {
+    saveStore,
+    preloaded: loaded,
+  });
 
   // --- Pixi world ---
   const app = new Application();
@@ -171,6 +219,21 @@ async function boot(): Promise<void> {
       }
     }
   });
+
+  // --- Debug menu (spec §14, dev builds only) ---
+  // Dynamic import inside the DEV guard: the production build replaces
+  // `import.meta.env.DEV` with false, dead-code-eliminates this branch,
+  // and never emits a debug-menu chunk (verified by grepping dist/).
+  if (import.meta.env.DEV) {
+    const { initDebugMenu } = await import("../ui/debugMenu");
+    initDebugMenu({
+      mount: document.body,
+      store,
+      clock,
+      saveStore,
+      persistence,
+    });
+  }
 
   // --- Loops ---
   app.ticker.add((ticker) => {

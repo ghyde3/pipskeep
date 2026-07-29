@@ -2,7 +2,9 @@
  * Time is injected (spec §2 rule 2).
  *
  * This file is the ONLY place in the entire repo allowed to call
- * `Date.now()` (or `new Date()`). Everything else receives a `Clock`.
+ * `Date.now()` (or `new Date()`). Everything else receives a `Clock` —
+ * and formats timestamps via `isoStamp` below, so the repo-wide
+ * "no `new Date(` outside clock.ts" grep stays at exactly zero.
  */
 
 /** Milliseconds since the Unix epoch (or an arbitrary test origin). */
@@ -15,6 +17,15 @@ export class SystemClock implements Clock {
   now(): number {
     return Date.now();
   }
+}
+
+/**
+ * Format a Clock timestamp (ms) as an ISO-8601 UTC string. A pure,
+ * deterministic function of its argument — it reads no ambient time —
+ * but it lives here because rendering a timestamp requires `Date`.
+ */
+export function isoStamp(ms: number): string {
+  return new Date(ms).toISOString();
 }
 
 /**

@@ -20,8 +20,11 @@
  * Validation depth: every field the simulation computes with is deeply
  * validated (pips, needs, rng cursors, cooldowns, roster referential
  * integrity). The two transient UI echoes (`lastCareOutcome`,
- * `lastCatchup`) are checked to be `null | plain object` only — the sim
- * never reads them, and deep-validating them is Phase 3 hardening.
+ * `lastCatchup`) are checked to be `null | plain object` only — a
+ * deliberate, permanent contract, not a stopgap: the sim never reads
+ * them (they only feed UI diffing), and passing them through unchanged
+ * is what keeps save→load deep-equal (the Phase 2 gate). Deep-validate
+ * them only if a reducer ever starts computing with them.
  */
 
 import type { GameState } from "../state";
@@ -346,8 +349,9 @@ function validateLastLineIndex(
 }
 
 /** Transient UI echoes: shape-checked to `null | plain object` only and
- * passed through — the simulation never reads them (Phase 3 hardening
- * deep-validates or drops them). */
+ * passed through. Deliberate and permanent — the simulation never reads
+ * them, and preserving them verbatim keeps save→load deep-equal; deep
+ * validation starts mattering only if a reducer ever reads them. */
 function passThroughTransient(value: unknown, path: string): unknown {
   if (value === null) return null;
   return expectRecord(value, path);

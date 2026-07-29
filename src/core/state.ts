@@ -25,6 +25,9 @@
  * - CATCHUP {savedAt, now} — delegates to pips/catchup.ts `runCatchup`
  *   (the §4.5 segmented pass with the 12h rate cap); the CatchupSummary
  *   lands in `lastCatchup` for the "While you were away…" sheet.
+ * - DEBUG_GRANT / LOAD_SAVE — the debug menu's seams (spec §14): additive
+ *   item/resource grants and wholesale replacement with a migrated,
+ *   validated save (import). Both pure; both plain data in, data out.
  */
 
 import { HOUR_MS, tuning as contentTuning } from "../content/tuning";
@@ -96,7 +99,21 @@ export type GameAction =
   | { readonly type: "PET"; readonly pipId: PipId; readonly at: number }
   | { readonly type: "REST_TOGGLE"; readonly pipId: PipId; readonly at: number }
   | { readonly type: "GIVE_ITEM"; readonly pipId: PipId; readonly itemId: string; readonly at: number }
-  | { readonly type: "CATCHUP"; readonly savedAt: number; readonly now: number };
+  | { readonly type: "CATCHUP"; readonly savedAt: number; readonly now: number }
+  /** Debug-menu grant (spec §14, dev builds only): additively merges item
+   * and resource counts. Pure like everything else — the "debug" prefix
+   * marks intent (QA seeding), not impurity. */
+  | {
+      readonly type: "DEBUG_GRANT";
+      readonly items?: Readonly<Record<string, number>>;
+      readonly resources?: Readonly<Record<string, number>>;
+    }
+  /** Wholesale state replacement from a validated save (debug-menu import,
+   * spec §8/§14). `state` MUST come out of `migrate()` — the reducer
+   * trusts it. Transient UI echoes are nulled so the swap does not replay
+   * a stale care animation; callers follow up with CATCHUP over
+   * `savedAt → now`, exactly like boot. */
+  | { readonly type: "LOAD_SAVE"; readonly state: GameState };
 
 /**
  * Starter hunger (spec §10.1: "Hunger bar is visibly at ~60" so the
@@ -299,7 +316,34 @@ export function rootReducer(state: GameState, action: GameAction): GameState {
         lastCatchup: result.summary,
       };
     }
+
+    case "DEBUG_GRANT": {
+      return {
+        ...state,
+        inventory: mergeCounts(state.inventory, action.items),
+        resources: mergeCounts(state.resources, action.resources),
+      };
+    }
+
+    case "LOAD_SAVE": {
+      // Replace everything; drop the transient UI echoes so subscribers
+      // diffing lastCareOutcome/lastCatchup don't replay stale moments.
+      return { ...action.state, lastCareOutcome: null, lastCatchup: null };
+    }
   }
+}
+
+/** Additive merge of count records (DEBUG_GRANT). Never mutates. */
+function mergeCounts(
+  base: Readonly<Record<string, number>>,
+  delta: Readonly<Record<string, number>> | undefined,
+): Readonly<Record<string, number>> {
+  if (delta === undefined) return base;
+  const out: Record<string, number> = { ...base };
+  for (const [id, count] of Object.entries(delta)) {
+    out[id] = (out[id] ?? 0) + count;
+  }
+  return out;
 }
 
 /** Care delegation: performCare owns effects/refusals/dialogue; the

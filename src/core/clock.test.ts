@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { FakeClock, SystemClock } from "./clock";
+import { FakeClock, SystemClock, isoStamp } from "./clock";
 
 describe("FakeClock", () => {
   it("starts at 0 by default", () => {
@@ -56,6 +56,25 @@ describe("FakeClock", () => {
     expect(clock.now()).toBe(123_456);
     clock.advance(4);
     expect(clock.now()).toBe(123_460);
+  });
+});
+
+describe("isoStamp", () => {
+  it("formats a millisecond timestamp as ISO-8601 UTC, deterministically", () => {
+    expect(isoStamp(0)).toBe("1970-01-01T00:00:00.000Z");
+    expect(isoStamp(1_753_747_200_000)).toBe("2025-07-29T00:00:00.000Z");
+  });
+
+  it("reads no ambient time — same input, same output, always", () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1_000_000);
+      const a = isoStamp(42);
+      vi.setSystemTime(999_000_000);
+      expect(isoStamp(42)).toBe(a);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
