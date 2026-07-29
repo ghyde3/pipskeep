@@ -1000,6 +1000,40 @@
   border-radius: 50%;
 }
 
+/* Species greeting (content bible §6.2/§8.2.5) — plays EVERY time the
+   focus view opens for a Pip, not just the first (true "first meeting"
+   tracking needs a persisted per-species-seen record, deferred to the
+   Pipdex round). Same expand/collapse mechanics as the refusal line below
+   but a cooler, welcoming tone rather than the refusal's apologetic
+   orange. */
+
+.pk-focus-greeting {
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  transform: scale(0.9);
+  background: #eef6ec;
+  border: 2px solid rgba(122, 168, 116, 0.45);
+  border-radius: 14px;
+  padding: 0 13px;
+  font-size: 13px;
+  line-height: 1.35;
+  text-align: center;
+  transition:
+    max-height 240ms ease,
+    opacity 200ms ease,
+    padding 240ms ease,
+    transform 240ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.pk-focus-greeting--in {
+  max-height: 90px;
+  opacity: 1;
+  transform: scale(1);
+  padding: 8px 13px;
+  margin-top: 2px;
+}
+
 /* In-panel refusal line (the pip's own voice — spec §4.7). */
 
 .pk-focus-refusal {

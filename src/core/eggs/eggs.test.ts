@@ -20,6 +20,7 @@ import { describe, expect, it } from "vitest";
 import { HOUR_MS, MINUTE_MS, tuning } from "../../content/tuning";
 import { ROSTER_FULL_MESSAGE } from "../../content/eggs";
 import { species as contentSpecies } from "../../content/species";
+import { expeditions as contentExpeditions } from "../../content/expeditions";
 import { createRngFromState } from "../rng";
 import { LifeStage, PipActivity } from "../pips/types";
 import type { PipNeeds, PipState } from "../pips/types";
@@ -412,6 +413,102 @@ describe("HATCH_EGG (spec §7.2/§7.4)", () => {
     const two = rootReducer(one, { type: "HATCH_EGG", eggId: "egg-2", at: T0 });
     expect(two.lastHatchOutcome).toMatchObject({ ok: false, reason: "rosterFull" });
     expect(two.eggs).toHaveLength(1);
+  });
+});
+
+describe("HATCH_EGG — biome-themed egg pools (round 2B, orchestrator ruling #1)", () => {
+  /** Independent reference registry for a pool of species ids — built the
+   * same way `eggSpeciesPoolFor` (core/state.ts) does, but from the test
+   * side, so the assertion doesn't just call the implementation back. */
+  function poolRegistry(
+    ids: readonly string[],
+  ): Record<string, (typeof contentSpecies)[string]> {
+    const out: Record<string, (typeof contentSpecies)[string]> = {};
+    for (const id of ids) {
+      const entry = contentSpecies[id];
+      if (entry !== undefined) out[id] = entry;
+    }
+    return out;
+  }
+
+  it("an egg found on an expedition with an eggSpecies pool only ever hatches from that pool", () => {
+    const forestPool = contentExpeditions.forest.eggSpecies;
+    expect(forestPool).toBeDefined();
+    const state = makeState({
+      eggs: [{ ...pippingEgg("egg-1", T0), sourceExpeditionId: "forest" }],
+    });
+    const at = T0 + HOUR_MS;
+
+    const expectedGenome = rollGenome(
+      createRngFromState(state.seed, state.rngState).stream(EGG_STREAM),
+      { species: poolRegistry(forestPool ?? []) },
+    );
+
+    const next = rootReducer(state, { type: "HATCH_EGG", eggId: "egg-1", at });
+    const pipling = next.pips["pip-2"];
+    expect(pipling?.genome).toEqual(expectedGenome);
+    expect(forestPool).toContain(pipling?.genome.speciesId);
+  });
+
+  it("a different biome's egg draws only from ITS pool (Shore never hatches a Forest-only species)", () => {
+    const shorePool = contentExpeditions.shore.eggSpecies ?? [];
+    const state = makeState({
+      eggs: [{ ...pippingEgg("egg-1", T0), sourceExpeditionId: "shore" }],
+    });
+    const next = rootReducer(state, {
+      type: "HATCH_EGG",
+      eggId: "egg-1",
+      at: T0 + HOUR_MS,
+    });
+    expect(shorePool).toContain(next.pips["pip-2"]?.genome.speciesId);
+    expect(next.pips["pip-2"]?.genome.speciesId).not.toBe("pebblepip"); // Forest/Bramblewick-only
+  });
+
+  it("an egg with no sourceExpeditionId (the DEBUG_SPAWN_EGG QA seam, spec §14) still rolls the whole registry", () => {
+    const state = makeState({ eggs: [pippingEgg("egg-1", T0)] }); // sourceExpeditionId: null
+    const expectedGenome = rollGenome(
+      createRngFromState(state.seed, state.rngState).stream(EGG_STREAM),
+    );
+    const next = rootReducer(state, {
+      type: "HATCH_EGG",
+      eggId: "egg-1",
+      at: T0 + HOUR_MS,
+    });
+    expect(next.pips["pip-2"]?.genome).toEqual(expectedGenome);
+  });
+
+  it("falls back to the whole registry when sourceExpeditionId doesn't resolve to a known expedition (defensive)", () => {
+    const state = makeState({
+      eggs: [{ ...pippingEgg("egg-1", T0), sourceExpeditionId: "nonexistent-biome" }],
+    });
+    const expectedGenome = rollGenome(
+      createRngFromState(state.seed, state.rngState).stream(EGG_STREAM),
+    );
+    const next = rootReducer(state, {
+      type: "HATCH_EGG",
+      eggId: "egg-1",
+      at: T0 + HOUR_MS,
+    });
+    expect(next.pips["pip-2"]?.genome).toEqual(expectedGenome);
+  });
+
+  it("RNG CURSOR PARITY (hard constraint, orchestrator ruling #1): the egg stream advances IDENTICALLY no matter which biome pool an egg rolls from", () => {
+    // Forest's pool has 3 species, Shore's has 2, and the no-pool default
+    // rolls across the whole registry (14) — three very different sizes.
+    const at = T0 + HOUR_MS;
+    const cursorAfter = (sourceExpeditionId: string | null): unknown => {
+      const state = makeState({
+        eggs: [{ ...pippingEgg("egg-1", T0), sourceExpeditionId }],
+      });
+      const next = rootReducer(state, { type: "HATCH_EGG", eggId: "egg-1", at });
+      return next.rngState[EGG_STREAM];
+    };
+    const forestCursor = cursorAfter("forest");
+    const shoreCursor = cursorAfter("shore");
+    const wholeRegistryCursor = cursorAfter(null);
+    expect(forestCursor).toBeTypeOf("number");
+    expect(shoreCursor).toBe(forestCursor);
+    expect(wholeRegistryCursor).toBe(forestCursor);
   });
 });
 

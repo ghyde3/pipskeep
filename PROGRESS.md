@@ -16,6 +16,28 @@ Phase-gate log and decision journal, per spec §13–§15. Append entries; never
 
 ## Gate log
 
+### Round 2B — Big content expansion — 2026-07-29
+Design-first round: a 932-line content bible (`docs/content-bible.md`) planned everything, with the economy verified against the *real* loot roller rather than estimated, then three authors implemented it in parallel.
+
+- **Content shipped:** 7 species lines / **14 forms** (Mosspip, Pebblepip, Tidepip, Emberpip, Snowpip, Cloudpip, Lanternpip → Grovepip, Cairnpip, Reefpip, Hearthpip, Frostpip, Thunderpip, Beaconpip) with 21 gift-selected evolution variants; **6 biomes** (Bramblewick, Snowdrift, Lanterngrotto added) structured as a *quick trip + deep trip pair per Keep level* rather than six tiers; **10 foods** incl. a treat (Honeydrop 10/+32) and a feast (Feastpot 100/+30/+15); **20 decorations**, 1 placeable (Stockpot), 1 new job (Simmering); 56 species flavor lines in a new `speciesLines.ts`.
+- **§3 verified:** the deep trips, foods, decorations and the new job all landed as pure content. The job system turned out to be genuinely registry-driven — a clean proof point. Deliberately declined: a 5th `RESOURCE_ID` and widening the `KeepLevel` union; the bible designed around both.
+- **One authorized core change:** `HATCH_EGG` now passes `sourceExpeditionId` into the genome roll so eggs hatch their biome's species — the collection engine. Approved as a *feature*, not a §3 violation, on the condition that the RNG cursor advances identically regardless of pool (tested).
+- **Two shipped bugs found by the design pass:** `grovepip` had `rarity: "uncommon"`, so ~1 egg in 5 hatched a fully-evolved Grovepip and undercut evolution's payoff — fixed with a zero-weight `lineage` tier. And **`pip.evolved.variantId` was written by `applyEvolution` and read by nobody**, so every gift-selected evolution variant since Phase 5 was invisible; the palette data for those looks did not even exist. Both fixed. Lesson: the tests asserted the stored value, never that anything rendered it.
+- **A third deadlock class closed:** the reachability test now tags every placeable and covers the new tiers, so the level-3 shell/driftwood trap (found in 2A) cannot recur in any new content.
+- **Deep trips deliberately do NOT win on throughput** — the Meadow still out-farms every long trail per minute. They earn a slot by being the only door to their biome's species and foods, which is a better reason than bigger numbers.
+- Mutation: 8/8 killed. Audit majors fixed in-round: species lines were only firing on shiny hatches (~2.5% of hatches) — now every hatch surfaces its species' voice, with shiny keeping its rarer one-off.
+- Tests: **1053 passing** (was 962). Build clean.
+- Known deferred: "first meeting" fires on every focus-view open, since true first-time tracking needs a persisted seen-record — correctly deferred to the Pipdex round.
+
+### Round 2 side-fix — Sulking under-reporting (playtest follow-up) — 2026-07-29
+Round 2A made sulking a flag orthogonal to `activity`, which left two reporting surfaces comparing the literal activity value and so silently under-reporting the sulk.
+- `src/ui/awaySheet.ts` now reads `isSulking` off the post-catchup pip snapshot it already receives (simpler than plumbing new fields through the shared `PipCatchupDelta`).
+- Toast logic extracted from `main.ts` into a new pure `src/app/alerts.ts` (`collectAlerts(prev, next) → NotifyEvent[]`) reading `isSulking`. Extraction was necessary because `main.ts` ends in `void boot()`, so nothing inside it can be imported by a test. Need-low crossings gained coverage they never had.
+- The away sheet's "dozed through the whole thing" branch no longer beats the sulk branch — a sulking pip whose needs happened not to move is never told it dozed.
+- Guards mutation-verified: reverting each site to its activity comparison fails the new tests.
+- **Process note:** my first pass at this collided with round 2B running concurrently. 2B's gate-runner correctly flagged my `catchup.ts` edit as an unexplained core change and its fixer reverted it. Lesson recorded: do not hand-edit shared core files while a workflow with a no-core-changes mandate is auditing them.
+
+
 ### Round 2A — Fix & Feel (playtest response) — 2026-07-29
 Triggered by the project owner's first real playtest. Four reports, all reproduced against code.
 

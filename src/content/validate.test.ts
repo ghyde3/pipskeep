@@ -9,6 +9,7 @@ import { REQUIRED_LINES_PER_CONTEXT } from "./dialogue";
 import type { ExpeditionDef } from "./expeditions";
 import type { SpeciesDef } from "./species";
 import { tuning } from "./tuning";
+import type { ResourceBundle } from "../core/economy";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -115,6 +116,78 @@ describe("broken content is caught", () => {
     ]);
   });
 
+  // ROUND 2B — biome-themed egg pools (orchestrator ruling #1): every
+  // `eggSpecies` id must resolve to a real, hatchable species, or
+  // `core/state.ts`'s fallback to the whole registry would be silent.
+  it("flags an eggSpecies pool referencing an unknown species", () => {
+    const meadow = defaultContentBundle.expeditions["meadow"] as ExpeditionDef;
+    const bundle: ContentBundle = {
+      ...defaultContentBundle,
+      expeditions: {
+        ...defaultContentBundle.expeditions,
+        meadow: { ...meadow, eggSpecies: ["ghostpip"] },
+      },
+    };
+    const { errors } = collectContentIssues(bundle);
+    expect(errors).toContain(
+      'expedition "meadow": eggSpecies references unknown species "ghostpip"',
+    );
+    expect(errors).toContain(
+      'expedition "meadow": eggSpecies has no hatchable species (every listed id is unknown or zero-weight) — hatches from this biome would silently fall back to the whole registry',
+    );
+  });
+
+  it("flags an eggSpecies pool that is present but empty", () => {
+    const meadow = defaultContentBundle.expeditions["meadow"] as ExpeditionDef;
+    const bundle: ContentBundle = {
+      ...defaultContentBundle,
+      expeditions: {
+        ...defaultContentBundle.expeditions,
+        meadow: { ...meadow, eggSpecies: [] },
+      },
+    };
+    const { errors } = collectContentIssues(bundle);
+    expect(errors).toEqual(['expedition "meadow": eggSpecies is present but empty']);
+  });
+
+  it("warns (does not error) when an eggSpecies pool includes a zero-weight lineage species, but still errors if that's ALL it has", () => {
+    const meadow = defaultContentBundle.expeditions["meadow"] as ExpeditionDef;
+    // grovepip is "lineage" (zero hatch weight) — mixed with a real
+    // hatchable species this is a soft warning, not a hard error.
+    const mixedBundle: ContentBundle = {
+      ...defaultContentBundle,
+      expeditions: {
+        ...defaultContentBundle.expeditions,
+        meadow: { ...meadow, eggSpecies: ["mosspip", "grovepip"] },
+      },
+    };
+    const mixed = collectContentIssues(mixedBundle);
+    expect(mixed.errors).toEqual([]);
+    expect(mixed.warnings).toContain(
+      'expedition "meadow": eggSpecies includes "grovepip", whose rarity ("lineage") has zero hatch weight — it can never actually hatch from this pool',
+    );
+
+    // Lineage-only is a hard error: the pool would hatch NOTHING from
+    // its own list and silently fall back to the whole registry.
+    const lineageOnlyBundle: ContentBundle = {
+      ...defaultContentBundle,
+      expeditions: {
+        ...defaultContentBundle.expeditions,
+        meadow: { ...meadow, eggSpecies: ["grovepip"] },
+      },
+    };
+    const lineageOnly = collectContentIssues(lineageOnlyBundle);
+    expect(lineageOnly.errors).toContain(
+      'expedition "meadow": eggSpecies has no hatchable species (every listed id is unknown or zero-weight) — hatches from this biome would silently fall back to the whole registry',
+    );
+  });
+
+  it("the shipped registry's every eggSpecies pool is fully hatchable (no lineage forms, no unknown ids)", () => {
+    const { errors, warnings } = collectContentIssues(defaultContentBundle);
+    expect(errors).toEqual([]);
+    expect(warnings.filter((w) => w.includes("eggSpecies"))).toEqual([]);
+  });
+
   it("flags negative costs", () => {
     const first = defaultContentBundle.decorations[0];
     expect(first).toBeDefined();
@@ -148,6 +221,136 @@ describe("broken content is caught", () => {
     expect(errors).toEqual([
       'species "mosspip": evolution gift item "golden-acorn" does not exist',
     ]);
+  });
+
+  it("flags a gift variant referencing a food-shaped id that does not exist (round 2B)", () => {
+    // The content-bible §1.7 coordination rule: every giftVariants key MUST
+    // be a real food id. A typo'd or renamed food (e.g. a species author
+    // wiring up "feastpot-deluxe" instead of the shipped "feastpot") must
+    // fail loudly, not silently no-op at Give Item time.
+    const mosspip = defaultContentBundle.species["mosspip"] as SpeciesDef;
+    const broken: SpeciesDef = {
+      ...mosspip,
+      evolution: {
+        ...mosspip.evolution!,
+        giftVariants: { "feastpot-deluxe": "gilded" },
+      },
+    };
+    const bundle: ContentBundle = {
+      ...defaultContentBundle,
+      species: { ...defaultContentBundle.species, mosspip: broken },
+    };
+    const { errors } = collectContentIssues(bundle);
+    expect(errors).toEqual([
+      'species "mosspip": evolution gift item "feastpot-deluxe" does not exist',
+    ]);
+  });
+
+  it("accepts a gift variant that references a REAL food id (the positive case)", () => {
+    const mosspip = defaultContentBundle.species["mosspip"] as SpeciesDef;
+    const fine: SpeciesDef = {
+      ...mosspip,
+      evolution: {
+        ...mosspip.evolution!,
+        giftVariants: { feastpot: "some-variant" },
+      },
+    };
+    const bundle: ContentBundle = {
+      ...defaultContentBundle,
+      species: { ...defaultContentBundle.species, mosspip: fine },
+    };
+    const { errors } = collectContentIssues(bundle);
+    expect(errors).toEqual([]);
+  });
+
+  it("flags an unknown resource in a decoration's cost bundle", () => {
+    const first = defaultContentBundle.decorations[0];
+    expect(first).toBeDefined();
+    const bundle: ContentBundle = {
+      ...defaultContentBundle,
+      decorations: [
+        { ...first!, cost: { stone: 3 } as unknown as ResourceBundle },
+        ...defaultContentBundle.decorations.slice(1),
+      ],
+    };
+    const { errors } = collectContentIssues(bundle);
+    expect(errors).toEqual([
+      `decoration "${first!.id}": unknown resource "stone" in cost`,
+    ]);
+  });
+
+  it("flags an unknown resource in a placeable's cost bundle", () => {
+    const first = defaultContentBundle.placeables[0];
+    expect(first).toBeDefined();
+    const bundle: ContentBundle = {
+      ...defaultContentBundle,
+      placeables: [
+        { ...first!, cost: { glowsilk: 2 } as unknown as ResourceBundle },
+        ...defaultContentBundle.placeables.slice(1),
+      ],
+    };
+    const { errors } = collectContentIssues(bundle);
+    expect(errors).toEqual([
+      `placeable "${first!.id}": unknown resource "glowsilk" in cost`,
+    ]);
+  });
+
+  it("flags a food with a negative hungerRestore (a negative restore)", () => {
+    const berry = defaultContentBundle.foods["berry"];
+    expect(berry).toBeDefined();
+    const bundle: ContentBundle = {
+      ...defaultContentBundle,
+      foods: {
+        ...defaultContentBundle.foods,
+        berry: { ...berry!, hungerRestore: -10 },
+      },
+    };
+    const { errors } = collectContentIssues(bundle);
+    expect(errors).toEqual(['food "berry": negative hungerRestore -10']);
+  });
+
+  it("flags a food with a negative side-effect restore", () => {
+    // Round 2B extends the "negative restore" guard beyond hungerRestore:
+    // a food's Happiness/Energy side effects (spec §5) are bonuses and
+    // must only ever ADD — a negative one would silently punish a Feed.
+    const stew = defaultContentBundle.foods["stew"];
+    expect(stew).toBeDefined();
+    const bundle: ContentBundle = {
+      ...defaultContentBundle,
+      foods: {
+        ...defaultContentBundle.foods,
+        stew: { ...stew!, sideEffects: { happiness: -15 } },
+      },
+    };
+    const { errors } = collectContentIssues(bundle);
+    expect(errors).toEqual(['food "stew": negative happiness side effect -15']);
+  });
+
+  it("flags a food, decoration, or placeable missing flavor text", () => {
+    const berry = defaultContentBundle.foods["berry"]!;
+    const firstDeco = defaultContentBundle.decorations[0]!;
+    const firstPlaceable = defaultContentBundle.placeables[0]!;
+    const bundle: ContentBundle = {
+      ...defaultContentBundle,
+      foods: { ...defaultContentBundle.foods, berry: { ...berry, flavor: "  " } },
+      decorations: [
+        { ...firstDeco, flavor: "" },
+        ...defaultContentBundle.decorations.slice(1),
+      ],
+      placeables: [
+        { ...firstPlaceable, flavor: "" },
+        ...defaultContentBundle.placeables.slice(1),
+      ],
+    };
+    const { errors } = collectContentIssues(bundle);
+    expect(errors).toEqual(
+      expect.arrayContaining([
+        'food "berry": missing flavor text',
+        `decoration "${firstDeco.id}": missing flavor text`,
+        `placeable "${firstPlaceable.id}": missing flavor text`,
+      ]),
+    );
+    expect(errors).toHaveLength(3);
   });
 });
 

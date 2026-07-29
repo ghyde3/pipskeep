@@ -67,6 +67,35 @@ describe("buildRevealScript — staged timing", () => {
     );
   });
 
+  // ROUND 2B (content bible §8.2.3): the eight new foods must not flip past
+  // as plain commons — the default tiers now come from `FoodDef.revealTier`
+  // (content/foods.ts), not just the two hardcoded ids this file used to
+  // pin. Without this, the Feastpot — the rarest, richest item in the game
+  // — would present with no more ceremony than a twig.
+  it("Feastpot (the rarest item in the game) defaults to the 'rare' showstopper tier", () => {
+    const script = buildRevealScript(reveal({ items: ["berry", "feastpot"] }), PIPS);
+    const feastpot = script.steps.find((s) => s.itemId === "feastpot");
+    expect(feastpot?.tier).toBe("rare");
+  });
+
+  it("Emberloaf, Glowcap, and Cocoa Bun default to 'uncommon' (joining Stew/Driftwood)", () => {
+    const script = buildRevealScript(
+      reveal({ items: ["emberloaf", "glowcap", "cocoabun", "driftwood"] }),
+      PIPS,
+    );
+    const tierOf = (id: string): unknown =>
+      script.steps.find((s) => s.itemId === id)?.tier;
+    expect(tierOf("emberloaf")).toBe("uncommon");
+    expect(tierOf("glowcap")).toBe("uncommon");
+    expect(tierOf("cocoabun")).toBe("uncommon");
+    expect(tierOf("driftwood")).toBe("uncommon");
+  });
+
+  it("a plain resource with no FoodDef and no hardcoded entry stays common", () => {
+    const script = buildRevealScript(reveal({ items: ["shell"] }), PIPS);
+    expect(script.steps[0]?.tier).toBe("common");
+  });
+
   it("the egg is always the last beat, with the showstopper lead-in", () => {
     const egg = createEgg({ id: "egg-1", foundAt: 0, sourceExpeditionId: "meadow" });
     const script = buildRevealScript(reveal({ items: ["berry"], egg }), PIPS);

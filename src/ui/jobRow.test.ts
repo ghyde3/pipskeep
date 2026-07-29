@@ -216,6 +216,49 @@ describe("buildJobRows — structural notes vs pip-voiced refusals", () => {
     expect(rows(state)[0]?.status).toBe("available");
     expect(rows(state)[0]?.assignable).toBe(true);
   });
+
+  // ROUND 2B (content bible §8.2.4, a fence exception): job copy is now
+  // per-job content (JobDef.verbing/restingNote), not a Gathering-only
+  // hardcoded string — a Pip at the Stockpot must read as "simmering",
+  // never "gathering away".
+  it("the Stockpot's Simmering job gets its OWN verb, distinct from Gathering's", () => {
+    const stockpotKeep = {
+      level: 1,
+      placements: { "place-1": { itemId: "stockpot", x: 1, y: 1 } },
+    };
+    const pip = makePip({ activity: PipActivity.AssignedJob });
+    const state = makeState({
+      pip,
+      keep: stockpotKeep,
+      jobs: {
+        [pip.id]: {
+          jobId: "simmering",
+          stationPlacementId: "place-1",
+          assignedAt: 0,
+          lastProducedAt: 0,
+        },
+      },
+    });
+    const built = rows(state);
+    expect(built[0]?.jobName).toBe("Simmering");
+    expect(built[0]?.note).toContain("Mosspip is simmering away");
+    expect(built[0]?.note).not.toContain("gathering");
+  });
+
+  it("a resting pip at the Stockpot gets the Stockpot's OWN resting note, not the Gathering Station's", () => {
+    const stockpotKeep = {
+      level: 1,
+      placements: { "place-1": { itemId: "stockpot", x: 1, y: 1 } },
+    };
+    const resting = makeState({
+      pip: makePip({ activity: PipActivity.Resting }),
+      keep: stockpotKeep,
+    });
+    const built = rows(resting);
+    expect(built[0]?.status).toBe("resting");
+    expect(built[0]?.note).not.toBe("Fast asleep. The basket can wait; the dream cannot.");
+    expect(built[0]?.note).toContain("pot");
+  });
 });
 
 describe("buildFocusModel carries the job rows", () => {

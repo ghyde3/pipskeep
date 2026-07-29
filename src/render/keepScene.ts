@@ -609,11 +609,18 @@ export function createKeepScene(width: number, height: number): KeepScene {
   }
 
   /** Resolve with the LIVE species (evolution changes it, spec §4.6);
-   * genome stays the immutable birth record for palette/pattern. */
+   * genome stays the immutable birth record for palette/pattern — UNLESS
+   * the Pip has evolved with a gift-selected variant (`pip.evolved.
+   * variantId`, content-bible §8.2.2), in which case that variant id
+   * stands in for the palette lookup key (spriteResolver.ts's optional
+   * third param). Without this, every evolution gift variant authored in
+   * content/palette.ts is dead: `applyEvolution` writes `variantId` and
+   * nothing ever read it back. */
   function resolveActorSprite(pip: PipState): PipSprite {
     return resolvePipSprite(
       { ...pip.genome, speciesId: pip.speciesId },
       pip.lifeStage,
+      pip.evolved?.variantId,
     );
   }
 
@@ -643,7 +650,10 @@ export function createKeepScene(width: number, height: number): KeepScene {
   }
 
   function actorSpriteKey(pip: PipState): string {
-    return `${pip.id}|${pip.lifeStage}|${pip.speciesId}|${pip.genome.palette}|${pip.genome.pattern}`;
+    // `variantId` joins the key (content-bible §8.2.2): two Pips of the
+    // same evolved species that were fed different gift items must NOT
+    // share a cached sprite just because species/palette/pattern match.
+    return `${pip.id}|${pip.lifeStage}|${pip.speciesId}|${pip.genome.palette}|${pip.genome.pattern}|${pip.evolved?.variantId ?? ""}`;
   }
 
   function spawnPos(pip: PipState): { x: number; y: number } {

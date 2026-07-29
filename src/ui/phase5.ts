@@ -28,6 +28,7 @@ import type { GameAction, GameState } from "../core/state";
 import type { PlacementId } from "../core/keep";
 import { species as contentSpecies } from "../content/species";
 import { jobs as contentJobs } from "../content/jobs";
+import { pickSpeciesLine } from "../content/speciesLines";
 import { setPipTapHandler } from "../render/pipTap";
 import { sound } from "../app/sound";
 import { notify } from "./notify";
@@ -437,6 +438,14 @@ export function initPhase5Ui(deps: Phase5UiDeps): Phase5Ui {
 
   const openEvolveBubble = (pipId: string): void => {
     evolvePipId = pipId;
+    // The species' own line for this moment (content bible §6.2/§8.2.5,
+    // a fence exception) — falls back to the generic prompt for a
+    // species missing from `speciesLines` (defensive; validate.ts
+    // requires every species to have one).
+    const pip = store.getState().pips[pipId];
+    evolveText.textContent =
+      (pip !== undefined ? pickSpeciesLine(pip.speciesId, pip.id) : null) ??
+      "Something wants to change…";
     // Position ONCE at open. Pips wander (spec §9), but a bubble that
     // follows them slides out from under the player's thumb mid-press —
     // the buttons must hold still to be pressable.

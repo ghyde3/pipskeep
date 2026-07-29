@@ -47,6 +47,7 @@ import { placeables } from "../content/placeables";
 import { personalities } from "../content/personalities";
 import type { PersonalityId } from "../content/personalities";
 import { species } from "../content/species";
+import { pickSpeciesLine } from "../content/speciesLines";
 import {
   moodColors,
   needColors,
@@ -239,7 +240,9 @@ export function buildJobRows(state: GameState, pip: PipState): JobRowModel[] {
       rows.push({
         ...base,
         status: "assigned",
-        note: `${pip.name} is gathering away — a little something ${base.cadenceLabel}.`,
+        // Content-owned per-job verb (content bible §8.2.4): a Pip at the
+        // Stockpot is "simmering away", not "gathering away".
+        note: `${pip.name} is ${job.verbing} away — a little something ${base.cadenceLabel}.`,
         assignable: false,
         unassignable: true,
       });
@@ -291,7 +294,9 @@ export function buildJobRows(state: GameState, pip: PipState): JobRowModel[] {
       rows.push({
         ...base,
         status: "resting",
-        note: "Fast asleep. The basket can wait; the dream cannot.",
+        // Content-owned per-job note (content bible §8.2.4) — "the
+        // basket can wait" doesn't describe a pot.
+        note: job.restingNote,
         assignable: false,
         unassignable: false,
       });
@@ -547,14 +552,51 @@ export function createFocusView(deps: FocusViewDeps): FocusView {
   let refusalTimer: number | null = null;
   /** Survives the per-TICK rebuilds — reapplied until the timer clears it. */
   let refusalText: string | null = null;
+  /**
+   * ROUND 2B (content bible §6.2/§8.2.5, a fence exception): the
+   * species' own line, shown briefly whenever the focus view opens for
+   * a Pip — the third of three call sites that make `speciesLines.ts`'s
+   * 56 authored lines actually visible (hatch toast, evolution prompt,
+   * here). Same survive-the-rebuild pattern as `refusalText` above; set
+   * ONLY by `open()`, never by a plain `sync()` rebuild, so it doesn't
+   * re-trigger on every need tick while the panel is open.
+   */
+  let greetingEl: HTMLElement | null = null;
+  let greetingTimer: number | null = null;
+  let greetingText: string | null = null;
 
   const close = (): void => {
     isOpen = false;
     viewedPipId = null;
     refusalText = null;
+    greetingText = null;
+    if (greetingTimer !== null) {
+      window.clearTimeout(greetingTimer);
+      greetingTimer = null;
+    }
     el.classList.remove("pk-focus-wrap--open");
   };
   backdrop.addEventListener("click", close);
+
+  const applyGreeting = (): void => {
+    if (greetingEl === null) return;
+    if (greetingText !== null) {
+      greetingEl.textContent = greetingText;
+      greetingEl.classList.add("pk-focus-greeting--in");
+    } else {
+      greetingEl.classList.remove("pk-focus-greeting--in");
+    }
+  };
+
+  const showGreetingLine = (line: string): void => {
+    greetingText = line;
+    applyGreeting();
+    if (greetingTimer !== null) window.clearTimeout(greetingTimer);
+    greetingTimer = window.setTimeout(() => {
+      greetingText = null;
+      applyGreeting();
+    }, 4200);
+  };
 
   const applyRefusal = (): void => {
     if (refusalEl === null) return;
@@ -646,7 +688,13 @@ export function createFocusView(deps: FocusViewDeps): FocusView {
     const moodText = document.createElement("span");
     moodText.textContent = `Feeling ${model.mood}`;
     moodRow.append(moodDot, moodText);
-    head.append(name, kind, blurb, moodRow);
+    // Species greeting (content bible §6.2/§8.2.5) — set by open(), not
+    // here, so it survives the per-TICK rebuild the same way the refusal
+    // line does (see the two `applyX()` calls below).
+    greetingEl = document.createElement("div");
+    greetingEl.className = "pk-focus-greeting";
+    head.append(name, kind, blurb, greetingEl, moodRow);
+    applyGreeting();
 
     // In-panel refusal line (the pip says no, in its own voice).
     refusalEl = document.createElement("div");
@@ -887,6 +935,19 @@ export function createFocusView(deps: FocusViewDeps): FocusView {
       isOpen = true;
       sound("ui.sheet");
       rebuild(state);
+      // Species greeting (content bible §6.2/§8.2.5) — set here (not in
+      // rebuild()) so it plays once per open call, not on every subsequent
+      // state-driven rebuild while the panel stays open. NOTE: this fires
+      // on EVERY open, not just the pip's first ever — the bible frames
+      // this as a rare "first meeting" beat, but true first-time tracking
+      // needs a persisted per-species-seen record, deferred to the Pipdex
+      // round (see the orchestrator's round-2B note). `pickSpeciesLine`
+      // being a deterministic hash of the pip's id means the same line
+      // repeats verbatim on every repeat visit. Silent if the species is
+      // missing from `speciesLines` (defensive).
+      const pip = state.pips[viewedPipId];
+      const line = pip !== undefined ? pickSpeciesLine(pip.speciesId, pip.id) : null;
+      if (line !== null) showGreetingLine(line);
       el.classList.add("pk-focus-wrap--open");
     },
 

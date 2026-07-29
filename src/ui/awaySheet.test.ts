@@ -11,8 +11,8 @@ import type {
   CatchupSummary,
   PipCatchupDelta,
 } from "../core/pips/catchup";
-import type { NeedId, PipNeeds } from "../core/pips/types";
-import { PipActivity } from "../core/pips/types";
+import type { NeedId, PipNeeds, PipState } from "../core/pips/types";
+import { LifeStage, PipActivity } from "../core/pips/types";
 import { HOUR_MS, MINUTE_MS, tuning } from "../content/tuning";
 import {
   AWAY_SHEET_MIN_ELAPSED_MS,
@@ -20,8 +20,44 @@ import {
   elapsedLabel,
 } from "./awaySheet";
 
+/** Full `PipState` fixture — `AwaySheetStateView.pips` needs the real
+ * shape (not just `{ name }`) so the sulking note can read `isSulking`. */
+function pip(overrides: Partial<PipState> = {}): PipState {
+  return {
+    id: "pip-1",
+    name: "Moss",
+    speciesId: "mosspip",
+    personalityId: "curious",
+    genome: {
+      speciesId: "mosspip",
+      palette: "meadow",
+      pattern: "speckled",
+      accessorySlots: [],
+      personality: "curious",
+      shiny: false,
+    },
+    lifeStage: LifeStage.Adult,
+    hatchedAt: 0,
+    ageMs: 0,
+    happinessIntegral: 0,
+    needs: needs(),
+    activity: PipActivity.Idle,
+    pendingSulk: false,
+    readyToEvolve: false,
+    lastGiftItemId: null,
+    expedition: null,
+    needsUpdatedAt: 0,
+    evolved: null,
+    sulking: false,
+    ...overrides,
+  } as PipState;
+}
+
 const STATE = {
-  pips: { "pip-1": { name: "Moss" }, "pip-2": { name: "Wren" } },
+  pips: {
+    "pip-1": pip({ id: "pip-1", name: "Moss" }),
+    "pip-2": pip({ id: "pip-2", name: "Wren" }),
+  },
   pendingReveals: [] as readonly unknown[],
 };
 
@@ -118,10 +154,60 @@ describe("per-pip needs deltas — arrows, not doom", () => {
           }),
         ],
       }),
-      STATE,
+      { ...STATE, pips: { ...STATE.pips, "pip-1": pip({ activity: PipActivity.Sulking }) } },
     );
     expect(model!.pips[0]!.note).toContain("sulky");
     expect(model!.pips[0]!.note).toContain("snack");
+  });
+
+  // Round 2A made sulking a flag orthogonal to activity: a pip can nap
+  // through a sulk, keeping activity === Resting. Reading activityAfter
+  // would show generic copy and quietly under-report the sulk. The sheet
+  // reads sulking-ness off the pip's current state (`isSulking`), not off
+  // `delta.activityAfter`, so a Resting-but-sulking pip must be reflected
+  // in the state passed alongside the delta.
+  it("a pip that landed Resting-while-sulking still gets the sulky aside", () => {
+    const model = deriveAwaySheet(
+      summary({
+        pips: [
+          pipDelta({
+            activityAfter: PipActivity.Resting,
+            needsDelta: { hunger: -40, cleanliness: -10, happiness: -30, energy: 20 },
+          }),
+        ],
+      }),
+      {
+        ...STATE,
+        pips: {
+          ...STATE.pips,
+          "pip-1": pip({ activity: PipActivity.Resting, sulking: true }),
+        },
+      },
+    );
+    expect(model!.pips[0]!.note).toContain("sulky");
+  });
+
+  it("a sulking pip whose needs did not move is never told it dozed through", () => {
+    const model = deriveAwaySheet(
+      summary({
+        pips: [
+          pipDelta({
+            activityAfter: PipActivity.Resting,
+            needsDelta: { hunger: 0, cleanliness: 0, happiness: 0, energy: 0 },
+          }),
+        ],
+      }),
+      {
+        ...STATE,
+        pips: {
+          ...STATE.pips,
+          "pip-1": pip({ activity: PipActivity.Resting, sulking: true }),
+        },
+      },
+    );
+    expect(model!.pips[0]!.needLines).toHaveLength(0);
+    expect(model!.pips[0]!.note).toContain("sulky");
+    expect(model!.pips[0]!.note).not.toContain("dozed");
   });
 });
 

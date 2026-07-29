@@ -21,7 +21,8 @@
  */
 
 import type { CatchupSummary } from "../core/pips/catchup";
-import type { NeedId } from "../core/pips/types";
+import type { NeedId, PipState } from "../core/pips/types";
+import { isSulking } from "../core/pips/machine";
 import { expeditions as contentExpeditions } from "../content/expeditions";
 import { HOUR_MS, MINUTE_MS, tuning as contentTuning } from "../content/tuning";
 import { EGG_READY_TAG } from "../core/eggs";
@@ -62,9 +63,13 @@ export interface AwaySheetModel {
 }
 
 /** The slices of GameState the derivation reads (GameState satisfies
- * both structurally — tests can pass tiny literals). */
+ * both structurally — tests can pass tiny literals).
+ *
+ * `pips` holds full `PipState` (not just `{ name }`) so the sulking note
+ * below can read `isSulking` off the pip's CURRENT (post-catchup) snapshot
+ * — see that call site for why the delta itself can't carry this. */
 export interface AwaySheetStateView {
-  readonly pips: Readonly<Record<string, { readonly name: string }>>;
+  readonly pips: Readonly<Record<string, PipState | undefined>>;
   readonly pendingReveals: readonly unknown[];
 }
 
@@ -129,10 +134,18 @@ export function deriveAwaySheet(
       });
     }
     let note: string | null = null;
-    if (needLines.length === 0) {
-      note = "dozed through the whole thing, honestly.";
-    } else if (delta.activityAfter === "sulking") {
+    // Sulking is checked first, and via `isSulking` (flag OR activity)
+    // rather than `delta.activityAfter`: a pip can nap through a sulk
+    // (activity stays Resting, machine.ts "Sulking: activity vs. flag")
+    // and a sulking pip whose needs happened not to move must not be told
+    // it "dozed through". `state.pips` already holds the pip's CURRENT
+    // (post-catchup) snapshot, so we read sulking-ness there instead of
+    // asking the catch-up engine to additionally report it on the delta.
+    const afterPip = state.pips[delta.pipId];
+    if (afterPip !== undefined && isSulking(afterPip)) {
       note = "came home a bit sulky. One good snack fixes everything.";
+    } else if (needLines.length === 0) {
+      note = "dozed through the whole thing, honestly.";
     }
     return { pipId: delta.pipId, name: pipName(delta.pipId), needLines, note };
   });

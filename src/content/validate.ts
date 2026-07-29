@@ -9,6 +9,7 @@
 import { RESOURCE_IDS, type ResourceBundle } from "../core/economy";
 import type { SpeciesDef, SpeciesId } from "./species";
 import { species as defaultSpecies } from "./species";
+import { tuning as defaultTuning } from "./tuning";
 import type { FoodDef } from "./foods";
 import { foods as defaultFoods } from "./foods";
 import type { ExpeditionDef } from "./expeditions";
@@ -25,6 +26,10 @@ import type { PlaceableDef } from "./placeables";
 import { placeables as defaultPlaceables } from "./placeables";
 import type { JobDef } from "./jobs";
 import { jobs as defaultJobs } from "./jobs";
+import type { SpeciesPaletteDef } from "./palette";
+import { speciesPalettes as defaultSpeciesPalettes } from "./palette";
+import type { SpeciesLines } from "./speciesLines";
+import { speciesLines as defaultSpeciesLines } from "./speciesLines";
 
 export interface ContentBundle {
   species: Readonly<Record<SpeciesId, SpeciesDef>>;
@@ -37,6 +42,14 @@ export interface ContentBundle {
   decorations: readonly DecorationDef[];
   placeables: readonly PlaceableDef[];
   jobs: Readonly<Record<string, JobDef>>;
+  /** Species palette tokens (spec §11); keyed by species id. */
+  speciesPalettes: Readonly<Record<string, SpeciesPaletteDef>>;
+  /** Species flavor lines (content-bible §6.2); keyed by species id. */
+  speciesLines: Readonly<Record<SpeciesId, SpeciesLines>>;
+  /** Rarity → hatch weight (spec §7.3, content-bible round 2B's
+   * zero-weight "lineage" tier): used to catch an expedition's
+   * `eggSpecies` pool that resolves to zero hatchable species. */
+  rarityWeights: Readonly<Record<string, number>>;
 }
 
 export const defaultContentBundle: ContentBundle = {
@@ -50,6 +63,9 @@ export const defaultContentBundle: ContentBundle = {
   decorations: defaultDecorations,
   placeables: defaultPlaceables,
   jobs: defaultJobs,
+  speciesPalettes: defaultSpeciesPalettes,
+  speciesLines: defaultSpeciesLines,
+  rarityWeights: defaultTuning.eggs.rarityWeights,
 };
 
 export interface ValidationResult {
@@ -119,10 +135,64 @@ export function collectContentIssues(
     }
   }
 
-  // --- Foods: sane effects, non-negative costs ---
+  // --- Evolution variants (content-bible §1.7/§8.2.2): a gift variant or
+  // default variant id that resolves to no authored palette entry doesn't
+  // crash — `resolvePipPalette` falls back gracefully — but it silently
+  // renders as the fallback look instead of the distinct one the gift was
+  // supposed to unlock. That is exactly the "gift variants are invisible"
+  // bug this round fixes on the data side; catch a re-regression loudly.
+  // Scoped to species whose evolution target itself resolves (a broken
+  // `targetSpeciesId` is already its own error above; re-flagging every
+  // variant under a species that doesn't exist would just be noise).
+  for (const s of Object.values(content.species)) {
+    if (!s.evolution || !(s.evolution.targetSpeciesId in content.species)) continue;
+    const targetPalette = content.speciesPalettes[s.evolution.targetSpeciesId];
+    const variantIds = new Set([
+      ...Object.values(s.evolution.giftVariants),
+      s.evolution.defaultVariantId,
+    ]);
+    for (const variantId of variantIds) {
+      if (targetPalette === undefined || !(variantId in targetPalette.variants)) {
+        warnings.push(
+          `species "${s.id}": evolution variant "${variantId}" has no authored palette on "${s.evolution.targetSpeciesId}" (renders as the fallback look)`,
+        );
+      }
+    }
+  }
+
+  // --- Species flavor lines (content-bible §6.2): every species has an
+  // entry, and every line is non-empty (the tuple TYPE already enforces
+  // "exactly four"; this is the runtime "every species is covered" half)
+  for (const s of Object.values(content.species)) {
+    const lines = content.speciesLines[s.id];
+    if (lines === undefined) {
+      errors.push(`species "${s.id}": missing speciesLines entry`);
+      continue;
+    }
+    if (lines.some((line) => line.trim().length === 0)) {
+      errors.push(`species "${s.id}": speciesLines has an empty line`);
+    }
+  }
+
+  // --- Foods: sane effects, non-negative costs, real flavor text ---
   for (const f of Object.values(content.foods)) {
     if (f.hungerRestore < 0) {
       errors.push(`food "${f.id}": negative hungerRestore ${f.hungerRestore}`);
+    }
+    // Side effects are bonuses (spec §5: Happiness/Energy are cured by
+    // Play/Pet/Rest), but a NEGATIVE one would silently punish a Feed —
+    // every restore in this game only ever adds. Round 2B content
+    // expansion: the same "negative restore" failure mode Feed's
+    // hungerRestore has always guarded against, extended to sideEffects.
+    if (f.sideEffects) {
+      for (const [effect, amount] of Object.entries(f.sideEffects)) {
+        if (amount !== undefined && amount < 0) {
+          errors.push(`food "${f.id}": negative ${effect} side effect ${amount}`);
+        }
+      }
+    }
+    if (f.flavor.trim().length === 0) {
+      errors.push(`food "${f.id}": missing flavor text`);
     }
     checkCostBundle(`food "${f.id}"`, f.cost, errors);
   }
@@ -162,6 +232,45 @@ export function collectContentIssues(
     }
   }
 
+  // --- Egg pools (round 2B, orchestrator ruling #1 — biome-themed egg
+  // pools): every `eggSpecies` id must resolve to a real, HATCHABLE
+  // species. `core/state.ts`'s `eggSpeciesPoolFor` silently falls back to
+  // the whole registry when a pool resolves to zero hatchable species
+  // (unknown ids, or every listed species is a zero-weight "lineage"
+  // form) — which is exactly the "this content silently does nothing"
+  // failure mode validation exists to catch loudly instead of at the
+  // reducer boundary.
+  for (const e of Object.values(content.expeditions)) {
+    if (e.eggSpecies === undefined) continue;
+    if (e.eggSpecies.length === 0) {
+      errors.push(`expedition "${e.id}": eggSpecies is present but empty`);
+      continue;
+    }
+    let hatchable = 0;
+    for (const speciesId of e.eggSpecies) {
+      const entry = content.species[speciesId];
+      if (entry === undefined) {
+        errors.push(
+          `expedition "${e.id}": eggSpecies references unknown species "${speciesId}"`,
+        );
+        continue;
+      }
+      const weight = content.rarityWeights[entry.rarity] ?? 1;
+      if (weight > 0) {
+        hatchable += 1;
+      } else {
+        warnings.push(
+          `expedition "${e.id}": eggSpecies includes "${speciesId}", whose rarity ("${entry.rarity}") has zero hatch weight — it can never actually hatch from this pool`,
+        );
+      }
+    }
+    if (hatchable === 0) {
+      errors.push(
+        `expedition "${e.id}": eggSpecies has no hatchable species (every listed id is unknown or zero-weight) — hatches from this biome would silently fall back to the whole registry`,
+      );
+    }
+  }
+
   // --- Personalities: multipliers must be positive ---
   for (const p of Object.values(content.personalities)) {
     for (const [need, mult] of Object.entries(p.decayMultipliers)) {
@@ -189,6 +298,9 @@ export function collectContentIssues(
     if (d.spriteRef.length === 0) {
       errors.push(`decoration "${d.id}": missing spriteRef`);
     }
+    if (d.flavor.trim().length === 0) {
+      errors.push(`decoration "${d.id}": missing flavor text`);
+    }
   }
 
   // --- Placeables (spec §9): same bar as decorations, plus id
@@ -205,6 +317,9 @@ export function collectContentIssues(
     }
     if (pl.spriteRef.length === 0) {
       errors.push(`placeable "${pl.id}": missing spriteRef`);
+    }
+    if (pl.flavor.trim().length === 0) {
+      errors.push(`placeable "${pl.id}": missing flavor text`);
     }
     if (placementItemIds.has(pl.id)) {
       errors.push(
@@ -225,7 +340,7 @@ export function collectContentIssues(
   }
 
   // --- Jobs (spec §6.2 registry): station must be a placeable, table
-  // items must exist, positive weights, positive interval ---
+  // items must exist, positive weights, positive interval, real copy ---
   const placeableIds = new Set(content.placeables.map((pl) => pl.id));
   for (const job of Object.values(content.jobs)) {
     if (!placeableIds.has(job.stationItemId)) {
@@ -250,6 +365,15 @@ export function collectContentIssues(
           `job "${job.id}": production item "${entry.itemId}" has non-positive weight ${entry.weight}`,
         );
       }
+    }
+    // ROUND 2B (content bible §8.2.4): per-job copy must actually be
+    // authored — an empty `verbing`/`restingNote` would silently degrade
+    // to "${pip.name} is  away" or a blank resting note.
+    if (job.verbing.trim().length === 0) {
+      errors.push(`job "${job.id}": missing verbing`);
+    }
+    if (job.restingNote.trim().length === 0) {
+      errors.push(`job "${job.id}": missing restingNote`);
     }
   }
 

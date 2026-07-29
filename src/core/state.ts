@@ -97,6 +97,15 @@ import { performCare } from "./pips/care";
 import type { CareAction, CareOutcome, CooldownsByPip } from "./pips/care";
 import type { LastLineIndexByPip } from "./pips/dialogue";
 import { createPipFromGenome, rollGenome } from "./pips/genome";
+import type { GenomeSpeciesEntry, GenomeSpeciesRegistry } from "./pips/genome";
+// ROUND 2B (content bible §3.6, orchestrator ruling #1 — biome-themed egg
+// pools): a value import of content/expeditions, same established pattern
+// as contentSpecies/contentFoods/contentPlaceables/contentDecorations
+// above — core/state.ts already treats content registries as the single
+// source of truth for ids (spec §2 rule 5 keeps the *logic* pure; the data
+// is allowed to be content). Type-only on content/expeditions' own side
+// (SpeciesId, KeepLevel) keeps this a one-way import, no cycle.
+import { expeditions as contentExpeditions } from "../content/expeditions";
 import {
   EGG_STREAM,
   EggState,
@@ -387,6 +396,50 @@ function defaultStarterContent(): StarterContent {
 
 /** How many starter Pips the onboarding offers (spec §7.1: three). */
 export const STARTER_CANDIDATE_COUNT = 3;
+
+/**
+ * ROUND 2B — biome-themed egg pools (content bible §3.6, orchestrator
+ * ruling #1). An egg's species pool comes from the expedition biome it
+ * was found in (`egg.sourceExpeditionId`), not the whole registry.
+ *
+ * RNG CURSOR CONTRACT (spec §2 rule 3 — hard constraint on this patch):
+ * `rollGenome` (core/pips/genome.ts) always consumes EXACTLY 5 rolls from
+ * the stream it is handed — species/palette/pattern/personality/shiny —
+ * regardless of how many entries are in the registry it rolls against
+ * (`pickSpecies` does one weighted draw over `Object.values(registry)`,
+ * one `stream.next()` call either way). So narrowing the registry here
+ * never changes how many rolls a hatch consumes; a fixed seed advances
+ * the cursor identically whichever pool an egg's species come from.
+ * Pinned by `core/state.test.ts` ("biome pool cursor parity").
+ *
+ * Falls back to the FULL registry (returns `undefined`, `rollGenome`'s own
+ * default) when: the egg has no `sourceExpeditionId` (the DEBUG_SPAWN_EGG
+ * QA seam, spec §14, passes `null`); the id doesn't resolve to a known
+ * expedition (defensive — content should always agree with itself); the
+ * expedition declares no `eggSpecies` (content opts out on purpose,
+ * content/expeditions.ts's own doc comment); or every listed id is itself
+ * missing from the species registry (defensive; validate.ts catches this
+ * loudly as a content error before it ever reaches here).
+ */
+function eggSpeciesPoolFor(
+  sourceExpeditionId: string | null,
+): GenomeSpeciesRegistry | undefined {
+  if (sourceExpeditionId === null) return undefined;
+  // Structural lookup only (spec §2 rule 5 — core treats content ids as
+  // opaque strings, same as GenomeSpeciesEntry above): ExpeditionId is a
+  // fixed content-side union, but the egg only ever stored a plain string.
+  const registry = contentExpeditions as Readonly<
+    Record<string, { eggSpecies?: readonly string[] }>
+  >;
+  const pool = registry[sourceExpeditionId]?.eggSpecies;
+  if (pool === undefined || pool.length === 0) return undefined;
+  const filtered: Record<string, GenomeSpeciesEntry> = {};
+  for (const id of pool) {
+    const entry = contentSpecies[id];
+    if (entry !== undefined) filtered[id] = entry;
+  }
+  return Object.keys(filtered).length > 0 ? filtered : undefined;
+}
 
 /** Draw one entry from `pool` without replacement (splice), refilling
  * from `all` if the pool ever runs dry (defensive: tiny injected test
@@ -728,8 +781,16 @@ export function rootReducer(state: GameState, action: GameAction): GameState {
       // Genome from the "egg" stream (spec §7.2/§7.3): species weighted
       // by registry rarity; palette/pattern/personality random. The
       // cursor advance persists in rngState — a reload never re-rolls.
+      // ROUND 2B: the pool narrows to the biome the egg was found in
+      // (egg.sourceExpeditionId → content/expeditions.ts's eggSpecies),
+      // when the content declares one — see eggSpeciesPoolFor's doc
+      // comment for the RNG-cursor-parity guarantee this relies on.
       const rng = createRngFromState(state.seed, state.rngState);
-      const genome = rollGenome(rng.stream(EGG_STREAM));
+      const speciesPool = eggSpeciesPoolFor(egg.sourceExpeditionId);
+      const genome = rollGenome(
+        rng.stream(EGG_STREAM),
+        speciesPool !== undefined ? { species: speciesPool } : {},
+      );
       const pipId: PipId = `pip-${state.nextPipNumber}`;
       const pipling = createPipFromGenome(genome, {
         id: pipId,

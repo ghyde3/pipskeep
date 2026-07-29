@@ -26,6 +26,7 @@ import type { GameAction, GameState } from "../core/state";
 import type { CatchupSummary } from "../core/pips/catchup";
 import { EggState } from "../core/eggs";
 import { expeditions as contentExpeditions } from "../content/expeditions";
+import { pickSpeciesLine } from "../content/speciesLines";
 import { setEggTapHandler } from "../render/eggTap";
 import { notify } from "./notify";
 import type { NotifyEvent } from "./notify";
@@ -134,17 +135,31 @@ export function diffPhase4(
     toasts.push({ kind: "info", message: next.lastHatchOutcome.message });
   }
 
-  // A newborn with the rare iridescent genome gets its one-off double
-  // take (the scene fires the matching pastel sparkle wave).
+  // Every hatch gets a hatch toast (content bible §6.2/§8.2.5, a fence
+  // exception): this is one of exactly three moments the 56-line species
+  // corpus commits to, so an ordinary hatch surfaces the species' own
+  // voice via `pickSpeciesLine` (falling back to a generic line only if a
+  // species is somehow missing from `speciesLines` — defensive;
+  // validate.ts requires every species to have one).
+  //
+  // A shiny newborn keeps its own pre-existing "is that glitter?" one-off
+  // (the scene fires the matching pastel sparkle wave) UNDILUTED instead
+  // of being replaced by the generic species line — shiny is the rarer,
+  // more special moment, and the species' own line still gets its due the
+  // first time this Pip is opened in the focus view ("first meeting").
   if (
     next.lastHatchOutcome !== prev.lastHatchOutcome &&
     next.lastHatchOutcome?.ok === true
   ) {
     const newborn = next.pips[next.lastHatchOutcome.pipId];
-    if (newborn?.genome.shiny === true) {
+    if (newborn !== undefined) {
       toasts.push({
         kind: "info",
-        message: `${newborn.name} wobbles out of the shell, catching the light… is that glitter?`,
+        message:
+          newborn.genome.shiny === true
+            ? `${newborn.name} wobbles out of the shell, catching the light… is that glitter?`
+            : (pickSpeciesLine(newborn.speciesId, newborn.id) ??
+                `${newborn.name} has hatched!`),
       });
     }
   }

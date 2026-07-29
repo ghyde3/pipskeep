@@ -336,7 +336,7 @@ describe("formatGrowUpCountdown — coarse above an hour, live below", () => {
 });
 
 describe("buildFocusModel — the whole panel model", () => {
-  it("assembles identity, stage, mood, needs, and all three expedition rows", () => {
+  it("assembles identity, stage, mood, needs, and every expedition row", () => {
     const state = makeState();
     const model = buildFocusModel(state, "pip-1", 0);
     expect(model).not.toBeNull();
@@ -346,10 +346,15 @@ describe("buildFocusModel — the whole panel model", () => {
     expect(model?.stageLabel).toBe(lifeStageLabel(LifeStage.Adult));
     expect(model?.mood).toBe("beaming"); // all needs at 80 ≥ 70
     expect(model?.needs.hunger).toBe(80);
+    // ROUND 2B (content bible §2): six biomes, three tiers, two rhythms —
+    // a quick trip and a deep trip per Keep level.
     expect(model?.expeditions.map((r) => r.id)).toEqual([
       "meadow",
+      "bramblewick",
       "forest",
+      "snowdrift",
       "shore",
+      "lanterngrotto",
     ]);
   });
 

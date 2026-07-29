@@ -15,21 +15,31 @@ export interface KeepLevelDef {
   unlocks: readonly string[];
 }
 
+// ROUND 2B (content bible §2.1): each level's expedition pair is now a
+// QUICK trip (already listed) plus a DEEP trip. Keep levels themselves
+// stay at 1/2/3 — see tuning.ts's `expeditions` comment for why a sixth
+// Keep level was considered and declined (`core/keep`'s `KeepLevel` union
+// would need widening, a §3 core change; two trips per tier is the
+// stronger shape anyway).
 export const keepLevels: readonly KeepLevelDef[] = [
   {
     level: 1,
     cost: {},
-    unlocks: ["Meadow expedition", "8x8 starting plot"],
+    unlocks: ["Meadow expedition", "Bramblewick expedition", "8x8 starting plot"],
   },
   {
     level: 2,
     cost: tuning.keepLevelCosts[2],
-    unlocks: ["Forest expedition", "+4x8 plot"],
+    unlocks: ["Forest expedition", "Snowdrift expedition", "+4x8 plot"],
   },
   {
     level: 3,
     cost: tuning.keepLevelCosts[3],
-    unlocks: ["Shore expedition", "roster upgrade purchasable"],
+    unlocks: [
+      "Shore expedition",
+      "Lanterngrotto expedition",
+      "roster upgrade purchasable",
+    ],
   },
 ];
 

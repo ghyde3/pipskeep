@@ -43,7 +43,7 @@ import {
   rootReducer,
 } from "../core/state";
 import type { GameState } from "../core/state";
-import { NEED_IDS, PipActivity } from "../core/pips/types";
+import { collectAlerts } from "./alerts";
 import type { PipState } from "../core/pips/types";
 import { createKeepScene } from "../render/keepScene";
 import { initUi, notify } from "../ui";
@@ -74,17 +74,6 @@ import { initPersistence, loadPipskeep, openSaveStore } from "./persistence";
 import type { LoadResult, SaveStore } from "./persistence";
 import { startTicker } from "./ticker";
 
-/** In-app alert threshold (spec §10: "need < 25"). UI copy trigger, not
- * gameplay tuning — the Sulking floor and mood thresholds own gameplay. */
-const NEED_ALERT_BELOW = 25;
-
-const NEED_ALERT_COPY: Readonly<Record<string, (name: string) => string>> = {
-  hunger: (name) => `${name}'s tummy is rumbling…`,
-  cleanliness: (name) => `${name} is getting a bit mossy. The bad kind.`,
-  happiness: (name) => `${name} could use some fun.`,
-  energy: (name) => `${name} is running on fumes.`,
-};
-
 /** App-layer seed roll: crypto when available, clock bits otherwise.
  * (Randomness INSIDE the game goes through core/rng — this only picks
  * which deterministic universe a brand-new save lives in.) */
@@ -96,32 +85,11 @@ function generateSeed(clock: Clock): number {
   return clock.now() >>> 0;
 }
 
-/** Fire need-low / Sulking toasts on downward crossings only. */
+/** Fire the toasts a state transition earns (decisions live in alerts.ts,
+ * which reads sulking via `isSulking` so a Pip napping through a sulk is
+ * still announced). */
 function watchAlerts(prev: GameState, next: GameState): void {
-  for (const id of next.rosterOrder) {
-    const before = prev.pips[id];
-    const after = next.pips[id];
-    if (after === undefined) continue;
-    for (const need of NEED_IDS) {
-      const was = before?.needs[need] ?? 100;
-      const now = after.needs[need];
-      if (now < NEED_ALERT_BELOW && was >= NEED_ALERT_BELOW) {
-        const copy = NEED_ALERT_COPY[need];
-        if (copy !== undefined) {
-          notify({ kind: "needLow", message: copy(after.name) });
-        }
-      }
-    }
-    if (
-      after.activity === PipActivity.Sulking &&
-      before?.activity !== PipActivity.Sulking
-    ) {
-      notify({
-        kind: "sulking",
-        message: `${after.name} is sulking. One good care session fixes it.`,
-      });
-    }
-  }
+  for (const alert of collectAlerts(prev, next)) notify(alert);
 }
 
 /** Display name for an expedition id (registry, with a safe fallback). */

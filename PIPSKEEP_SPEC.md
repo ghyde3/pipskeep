@@ -388,6 +388,14 @@ Onboarding flow, first-90-seconds sequence tuned, in-app notifications, PWA mani
 
 ## 16. Changelog
 
+**v1.3 (2026-07-29)** — content expansion (round 2B).
+
+- **§3 holds, with one named exception.** Species, foods, decorations, expeditions and even a new *job* were all added as pure content. The exception is deliberate: `HATCH_EGG` now reads an egg's `sourceExpeditionId` so eggs hatch their biome's species. Per-biome pools are a **feature** (the collection engine), not content addition, so §3 is not violated — but any such change must preserve the RNG cursor contract exactly, and that is now tested.
+- **New standing rule (generalizing v1.2's):** evolved forms carry the zero-weight `lineage` rarity tier and can never be rolled from an egg. Evolution must be earned.
+- **§4.6 gift variants are now actually rendered.** `evolved.variantId` was stored and never read from Phase 5 until this round; the variant looks did not exist as data. A stored variant that nothing displays is a dead feature — treat "written to state" and "visible to the player" as separate acceptance criteria.
+- **§6.1 expeditions are now six**, as a quick-trip/deep-trip pair per Keep level. Deep trips are intentionally *not* throughput upgrades; they are the sole source of their biome's species and foods.
+- **§10 reporting rule:** anything that reports Sulking to the player must use `isSulking`, never `activity === "sulking"` — a Pip can nap through a sulk. Applies to toasts, the away sheet, and any future summary surface.
+
 **v1.2 (2026-07-29)** — playtest amendments. v1.0 shipped, was played, and the feedback overrode several spec decisions. Where this section conflicts with earlier sections, **this section wins**; tuning values live in `content/tuning.ts` as always.
 
 - **§6.3 economy was unwinnable and is corrected.** The costs I set in v1.1 created a circular dependency (level 2 needs wood; wood needs Forest; Forest needs level 2) and a second one at level 3 (shell/driftwood need the Shore, which unlocks at level 3). Meadow now drops wood; level costs are rebalanced; shell/driftwood moved to the roster upgrade. **New standing rule: every gated cost must be obtainable from activities unlocked at the previous tier, enforced by `economy/reachability.test.ts`.**

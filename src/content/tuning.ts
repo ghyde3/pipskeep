@@ -213,6 +213,39 @@ export const tuning = {
    * Expedition table (spec §6.1). Loot tables live in expeditions.ts.
    * `lootRolls` = base weighted rolls per completed trip (the reveal's
    * item count before Curious's bonus rolls).
+   *
+   * ROUND 2B — SIX BIOMES, THREE TIERS, TWO RHYTHMS. Each Keep level now
+   * unlocks a PAIR of trails rather than one:
+   *
+   *   - a QUICK trip (Meadow 5m / Forest 15m / Shore 30m) — the active
+   *     loop. Best items per minute, best eggs per HOUR, the thing you tap
+   *     between care actions.
+   *   - a DEEP trip (Bramblewick 40m / Snowdrift 60m / Lanterngrotto 90m)
+   *     — the idle loop. One per absence, higher egg chance PER TRIP,
+   *     richer foods, and (with per-biome egg pools) the only source of
+   *     its species.
+   *
+   * Deep trips deliberately do NOT win on throughput — the Meadow still
+   * out-farms every one of them per minute, and remains the best egg farm
+   * per hour. They are worth a slot because they are the only door to
+   * their biome's foods and species, not because they are faster.
+   *
+   * ⚠️ THE LEVEL-1 WOOD CEILING (the fragile invariant — see the note on
+   * `keepLevelCosts`). The Meadow is the ONLY wood source at Keep level 1,
+   * and BOTH level 2 and the Gathering Station are priced wood-first. So:
+   *
+   *   - no new Keep-level-1 expedition may push wood above ~0.183/min, or
+   *     the level-2 target falls through its 15-minute floor;
+   *   - no new Keep-level-1 expedition may push fiber above 0.400/min, or
+   *     fiber becomes the binding resource and hits the same floor.
+   *
+   * That is why the Bramblewick drops ZERO wood and lands fiber at
+   * 0.302/min: every shipped level-1 number is byte-identical to round
+   * 2A's, and the Meadow/Forest tables are untouched on purpose. What is
+   * actually asserted is the 15-minute floor this protects, so an
+   * innocent-looking level-1 wood drop presents as a confusing failure in
+   * "expects to be affordable in 30–45 minutes" — start here.
+   * Guarded by `core/economy/reachability.test.ts`.
    */
   expeditions: {
     meadow: {
@@ -222,8 +255,26 @@ export const tuning = {
       /** ROUND 2A: 2 → 3. The Meadow is the ONLY expedition at level 1
        * and only one Pip can be on it at a time (spec §6.1), so its
        * per-trip yield is the hard ceiling on early progression — and a
-       * 2-item reveal after five minutes was a thin dopamine moment. */
+       * 2-item reveal after five minutes was a thin dopamine moment.
+       * ROUND 2B: unchanged, and load-bearing for four pinned assertions
+       * (the 30–45 minute level-2 target, the Gathering-Station on-ramp
+       * ratio, the Forest-beats-Meadow-on-wood pair, and the daily-berry
+       * ritual). Do not retune it casually. */
       lootRolls: 3,
+    },
+    /**
+     * ROUND 2B — the level-1 DEEP trip. 40 minutes is the shortest thing
+     * that reads as "leave it running while you do something else", and
+     * short enough that a first session can still see one come home.
+     * Drops no wood by design (see the ceiling note above), so it changes
+     * nothing about how long Keep level 2 takes — it only makes the
+     * waiting richer: fiber, the Honeydrop treat, and the Toastnut.
+     */
+    bramblewick: {
+      durationMs: 40 * MINUTE_MS,
+      eggChance: 0.25,
+      unlockKeepLevel: 1,
+      lootRolls: 9,
     },
     /**
      * ROUND 2A: Forest 3 → 4 rolls, Shore 4 → 6. Rolls did not scale with
@@ -255,11 +306,37 @@ export const tuning = {
       unlockKeepLevel: 2,
       lootRolls: 6,
     },
+    /**
+     * ROUND 2B — the level-2 DEEP trip. An hour, sized so an overnight
+     * player gets exactly one completed run. Thin pickings and fat egg
+     * odds: above the treeline there is not much to carry home, but it is
+     * the only place a Snowpip has ever been seen.
+     */
+    snowdrift: {
+      durationMs: 60 * MINUTE_MS,
+      eggChance: 0.35,
+      unlockKeepLevel: 2,
+      lootRolls: 12,
+    },
     shore: {
       durationMs: 30 * MINUTE_MS,
       eggChance: 0.18,
       unlockKeepLevel: 3,
       lootRolls: 6,
+    },
+    /**
+     * ROUND 2B — the level-3 DEEP trip, and the top of the ladder. 90
+     * minutes, the richest food table in the game (it is the only source
+     * of the Emberloaf and the Feastpot), and a coin-flip egg chance on
+     * the only pool a Lanternpip appears in. Still not a throughput win:
+     * 14 rolls over 90 minutes is 0.156 items/min against the Meadow's
+     * 0.60. You go for what only it has.
+     */
+    lanterngrotto: {
+      durationMs: 90 * MINUTE_MS,
+      eggChance: 0.5,
+      unlockKeepLevel: 3,
+      lootRolls: 14,
     },
   } satisfies Record<
     string,
@@ -289,6 +366,29 @@ export const tuning = {
     table: { berry: 0.5, fiber: 0.3, wood: 0.2 },
   },
 
+  /**
+   * Simmering job (content bible §5.4) — the second job, at the Stockpot.
+   * Deliberately slower and food-only: 30 min per tick (vs Gathering's 10)
+   * and NO Wood/Fiber, so it never competes with Gathering as the
+   * materials faucet. One capped 16h absence = 32 ticks ≈ 12.8 Berries +
+   * 19.2 Toastnuts — generous pantry, but it costs a Pip's labour, and
+   * staffing both stations consumes two-thirds of the base 3-Pip roster.
+   *
+   * Deliberately NO Stew: Stew stays a Forest/Shore-only reward, because
+   * "Keep level 2 visibly makes feeding easier" is a shipped round-2B
+   * promise and a level-1 Stockpot dropping Stew would eat it.
+   *
+   * Placed next to `gathering` on purpose — two production RATES that
+   * must stay in a legible relationship (the round-2B lesson about two
+   * PRICES that must stay in a relationship, one level up).
+   */
+  jobs: {
+    simmering: {
+      intervalMs: 30 * MINUTE_MS,
+      table: { berry: 40, toastnut: 60 },
+    },
+  },
+
   /** Eggs (spec §7). Incubation timers are never capped by offline rules. */
   eggs: {
     /** Incubation (spec §7.2): real-time, 2h default. */
@@ -300,11 +400,25 @@ export const tuning = {
     /**
      * Species-roll weights by registry rarity at hatch (spec §7.3:
      * "weighted by registry rarity"). Relative weights per species entry.
+     *
+     * ROUND 2B (content bible §1.2) — the `lineage` tier and the bug it
+     * fixes: evolved forms (Grovepip, Cairnpip, Reefpip, Hearthpip,
+     * Frostpip, Thunderpip, Beaconpip) are registered with
+     * `rarity: "lineage"`, and `lineage: 0` here removes them from the
+     * hatch pool entirely — `core/pips/genome.test.ts` already pins "weight
+     * 0 never hatches". Before this fix, `grovepip` shipped as
+     * `rarity: "uncommon"`, so roughly one egg in five hatched a
+     * fully-evolved Grovepip, quietly undercutting the whole evolution
+     * feature. `uncommon`/`rare` also move 25→30 / 5→12 per the bible (now
+     * that the registry has 14 entries instead of 2, the old weights would
+     * have made the two rarer BASE species harder to find than before this
+     * expansion, which is backwards).
      */
     rarityWeights: {
       common: 100,
-      uncommon: 25,
-      rare: 5,
+      uncommon: 30,
+      rare: 12,
+      lineage: 0,
     } satisfies Record<Rarity, number>,
   },
 
@@ -439,6 +553,17 @@ export const tuning = {
     "food-bowl": { wood: 2 },
     bed: { wood: 4, fiber: 3 },
     "gathering-station": { wood: 3, fiber: 2 },
+    /**
+     * ROUND 2B — the Stockpot (content bible §5.3), the Simmering job's
+     * station. Wood + fiber ONLY, per the placeables rule below `placeableCosts`
+     * itself proves (§3.4 of the bible: placeables carry no level gate, so
+     * they may only cost resources obtainable at Keep level 1). Priced
+     * MORE than the Gathering Station in both resources on purpose (bible
+     * §3.5) so a first-session player still reaches for the Gathering
+     * Station first and the casual on-ramp narrative (see the comment
+     * above) survives having a second station to buy.
+     */
+    stockpot: { wood: 5, fiber: 4 },
   } satisfies Readonly<Record<string, ResourceBundle>>,
 
   /**
@@ -478,10 +603,57 @@ export const tuning = {
    *           point: unlocking Keep level 2 visibly makes feeding easier.
    *
    * Guarded by `core/pips/balance.test.ts` (the second-absence loop).
+   *
+   * ROUND 2B CONTENT EXPANSION — eight more foods, all sized against the
+   * SAME single number. Say it once, out loud, because every row below
+   * is an answer to it:
+   *
+   *   worst Hunger lost over one full capped absence
+   *     = 3.8/h × 1.15 (Hardworking) × 16 h  =  69.92
+   *
+   * "Servings to cover a day away" is therefore `ceil(69.92 / hunger)`,
+   * and the sizing rule (spec §16 v1.2) is that the everyday food must
+   * make that number small enough to be one homecoming's worth of taps:
+   *
+   *   berry      45   → 2   (2×45  = 90.0)   the staple
+   *   stew       75   → 1   (75.0)           the meal
+   *   honeydrop  10   → 7   (7×10  = 70.0)   THE TREAT — never a meal
+   *   toastnut   55   → 2   (2×55  = 110.0)  the pocket snack
+   *   frostberry 40   → 2   (2×40  = 80.0)   the brisk one
+   *   cocoabun   60   → 2   (2×60  = 120.0)  the comfort bake
+   *   glowcap    35   → 2   (2×35  = 70.0)   the odd little mushroom
+   *   tideroll   60   → 2   (2×60  = 120.0)  the seaside lunch
+   *   emberloaf  90   → 1   (90.0)           the hot dinner
+   *   feastpot  100   → 1   (100.0)          THE FEAST
+   *
+   * Two of those margins are thin ON PURPOSE and are pinned in
+   * `foods.test.ts` so a decay nudge lands there first: Honeydrop
+   * (70.0 vs 69.92) and Glowcap (70.0 vs 69.92) both clear the day by
+   * 0.08 of a point. Honeydrop's job is the +32 Happiness — more than a
+   * Pet, with no cooldown — handed to a grumpy Pip while the stew is
+   * still fifteen minutes out; being a ludicrous meal is the price of
+   * that and the reason it is not simply better than a Berry.
+   *
+   * Nothing here weakens Berry or Stew: every new food is additive
+   * headroom, and the two load-bearing rows are byte-identical to what
+   * `core/pips/balance.test.ts` already pins.
+   *
+   * Side effects are bonuses, never load-bearing (spec §5: Happiness is
+   * cured by Play + Pet, Energy by Rest). Feed applies them; Give Item
+   * applies the side effects ONLY (`core/pips/care.ts`), which is why the
+   * treat and the feast read so differently as gifts.
    */
   foods: {
     berry: { hunger: 45 },
     stew: { hunger: 75, happiness: 15 },
+    honeydrop: { hunger: 10, happiness: 32 },
+    toastnut: { hunger: 55, energy: 6 },
+    frostberry: { hunger: 40, energy: 12 },
+    cocoabun: { hunger: 60, happiness: 18 },
+    glowcap: { hunger: 35, happiness: 20 },
+    tideroll: { hunger: 60, energy: 5 },
+    emberloaf: { hunger: 90, happiness: 10 },
+    feastpot: { hunger: 100, happiness: 30, energy: 15 },
   },
 
   /** New saves are seeded with 3 Berries so the guided first Feed works

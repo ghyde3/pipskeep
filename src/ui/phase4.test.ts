@@ -16,6 +16,7 @@ import { createNewGame, rootReducer } from "../core/state";
 import type { GameAction, GameState } from "../core/state";
 import { HOUR_MS, tuning } from "../content/tuning";
 import { ROSTER_FULL_MESSAGE } from "../content/eggs";
+import { pickSpeciesLine } from "../content/speciesLines";
 import { emitEggTap, setEggTapHandler } from "../render/eggTap";
 import { diffPhase4, wireEggTaps } from "./phase4";
 
@@ -200,6 +201,62 @@ describe("diffPhase4 — roster-cap hatch refusal (spec §7.4)", () => {
     });
     expect(next.lastHatchOutcome?.ok).toBe(false);
     expect(diffPhase4(prev, next).toasts).toHaveLength(0);
+  });
+});
+
+describe("diffPhase4 — the hatch toast (content bible §6.2/§8.2.5)", () => {
+  /** Hatch a single egg on a fresh store of the given seed and return the
+   * {prev, next} diff pair plus the newborn's live state. */
+  function hatchOne(
+    seed: number,
+  ): { prev: GameState; next: GameState; newborn: GameState["pips"][string] } {
+    const store = makeStore(seed);
+    spawnPippingEggs(store, 1, T0);
+    const { prev, next } = step(store, {
+      type: "HATCH_EGG",
+      eggId: "egg-1",
+      at: T0 + INCUBATION_MS + 1,
+    });
+    const outcome = next.lastHatchOutcome;
+    if (outcome?.ok !== true) throw new Error("expected a successful hatch");
+    const newborn = next.pips[outcome.pipId];
+    if (newborn === undefined) throw new Error("newborn missing from state");
+    return { prev, next, newborn };
+  }
+
+  it("an ordinary (non-shiny) hatch toasts the species' own line", () => {
+    // Shininess is rare (< 10% per genome.test.ts) — sweep seeds for one
+    // that lands non-shiny rather than assuming any particular seed.
+    for (let seed = 1; seed <= 200; seed++) {
+      const { prev, next, newborn } = hatchOne(seed);
+      if (newborn.genome.shiny) continue;
+
+      const effects = diffPhase4(prev, next);
+      const hatchToast = effects.toasts.find(
+        (t) => t.kind === "info" && t.message !== ROSTER_FULL_MESSAGE,
+      );
+      expect(hatchToast).toBeDefined();
+      expect(hatchToast?.message).not.toContain("glitter");
+      expect(hatchToast?.message).toBe(
+        pickSpeciesLine(newborn.speciesId, newborn.id),
+      );
+      return;
+    }
+    throw new Error("no non-shiny hatch found in 200 seeds — check the RNG");
+  });
+
+  it("a shiny hatch keeps its own celebration line, undiluted by the species line", () => {
+    for (let seed = 1; seed <= 400; seed++) {
+      const { prev, next, newborn } = hatchOne(seed);
+      if (!newborn.genome.shiny) continue;
+
+      const effects = diffPhase4(prev, next);
+      const hatchToast = effects.toasts.find((t) => t.kind === "info");
+      expect(hatchToast?.message).toContain("glitter");
+      expect(hatchToast?.message).toContain(newborn.name);
+      return;
+    }
+    throw new Error("no shiny hatch found in 400 seeds — check shinyChance");
   });
 });
 

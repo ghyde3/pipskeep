@@ -45,13 +45,30 @@ export type RevealTier = "common" | "uncommon" | "rare";
  * Which items get the bigger flair (task: "commons quick, uncommon/rare
  * items get a pause + bigger flair"). UI presentation tiers, not gameplay
  * data — loot odds live in content/expeditions.ts. Unknown ids present as
- * common. Stew is the spec §6.3 "richer food … uncommon drop"; driftwood
- * is the Shore's semi-precious find.
+ * common.
+ *
+ * ROUND 2B (content bible §8.2.3): food tiers now live on
+ * `FoodDef.revealTier` — a content decision, not a `ui/` edit, so a new
+ * food's ceremony is authored right next to the food itself. This map
+ * keeps only the RESOURCE ids with no `FoodDef` of their own; Driftwood
+ * is the Shore's semi-precious find. `resolveItemRevealTiers` merges the
+ * two into the one lookup `buildRevealScript` reads.
  */
 export const ITEM_REVEAL_TIERS: Readonly<Record<string, RevealTier>> = {
-  stew: "uncommon",
   driftwood: "uncommon",
 };
+
+/** Merge a food registry's `revealTier` fields on top of the resource-only
+ * tiers above — the single source `buildRevealScript` defaults to. */
+function resolveItemRevealTiers(
+  foods: Readonly<Record<string, { readonly revealTier?: RevealTier }>>,
+): Readonly<Record<string, RevealTier>> {
+  const merged: Record<string, RevealTier> = { ...ITEM_REVEAL_TIERS };
+  for (const [id, food] of Object.entries(foods)) {
+    if (food.revealTier !== undefined) merged[id] = food.revealTier;
+  }
+  return merged;
+}
 
 /** First flip lands after this much anticipation. */
 export const REVEAL_FIRST_FLIP_MS = 700;
@@ -153,7 +170,7 @@ export function buildRevealScript(
   const expeditionNames =
     content.expeditionNames ??
     (contentExpeditions as Readonly<Record<string, { name: string }>>);
-  const tiers = content.tiers ?? ITEM_REVEAL_TIERS;
+  const tiers = content.tiers ?? resolveItemRevealTiers(contentFoods);
 
   const pipName = pips[reveal.pipId]?.name ?? "Your Pip";
   const expeditionName =
