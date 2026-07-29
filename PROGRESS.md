@@ -7,7 +7,7 @@ Phase-gate log and decision journal, per spec §13–§15. Append entries; never
 | Phase | Status | Gate logged |
 |---|---|---|
 | 0 — Scaffold | **gate passed** | 2026-07-29 |
-| 1 — Pip core (logic only) | not started | — |
+| 1 — Pip core (logic only) | **gate passed** | 2026-07-29 |
 | 2 — Care actions + first playable | not started | — |
 | 3 — Save system hardening | not started | — |
 | 4 — Expeditions + eggs | not started | — |
@@ -22,6 +22,12 @@ Phase-gate log and decision journal, per spec §13–§15. Append entries; never
 - Manual check: blank pastel canvas verified in browser via `vite preview` (canvas mounted, zero console errors); dev server confirmed on port 5317.
 - Review: adversarial audit (purity greps, spec-table fidelity, vocabulary) clean; one major finding (vacuous FakeClock drift test) found by mutation testing and fixed.
 - Notes for Phase 1: aggregate per-Pip type must be named `PipState` (§0 vocabulary — only `PipActivity` exists so far); dialogue underfill validation is warn-only until Phase 2's authoring pass, then must become an error.
+
+### Phase 1 — Pip core (logic only) — 2026-07-29
+- Tests: `npm test` → 9 files, **239 passed** (needs 30, mood 14, machine 79, lifecycle 34, catchup 24, plus Phase 0's 48+). All 11 gate clauses mapped by the gate-runner to named exact-value FakeClock tests: 6h hunger −36 ±0, all five §4.2 multiplier rows, sulk enter-at-0/exit-all-≥25-inclusive, 7-day absence = exactly 12h rate changes, Clingy segmentation (2h×(−5·1.3·2.0)+4h×(−5·1.3) exact), negative-elapsed clamp, pipling ×1.2 multiplicative + adult at exactly 24h, mood precedence with boundary values, deferred sulking on expedition, rest auto-wake at exactly 100, evolution readiness flag-only at avg≥70/age≥72h.
+- Build: `tsc --noEmit && vite build` green.
+- Review: mutation tester ran 8 targeted mutations; 1 survived (Beaming-before-Grumpy precedence swap) → fixer added overlapping-threshold precedence tests; re-gate green. Spec audit clean.
+- Notes for Phase 2: Chaotic's 10% displayed-mood offset (§4.3) is a display-layer concern — tuning value exists, must be consumed where mood selects dialogue/portrait. Dialogue underfill validation must flip warn→error after the authoring pass.
 
 <!-- One entry per completed phase:
 
