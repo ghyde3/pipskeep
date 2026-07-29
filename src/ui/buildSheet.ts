@@ -22,6 +22,13 @@ export interface BuildSheetDeps {
   startMove(placementId: PlacementId): void;
   /** Remove this placement (sheet stays open and re-syncs). */
   remove(placementId: PlacementId): void;
+  /**
+   * Fired whenever the sheet opens or closes. The keep bar lives inside
+   * `.pk-phase5`, which is its own stacking context, so it cannot be
+   * z-index'd under this sheet — the caller hides it instead (same
+   * mechanism placement mode already uses).
+   */
+  onOpenChange?(open: boolean): void;
 }
 
 export interface BuildSheet {
@@ -61,6 +68,7 @@ export function createBuildSheet(deps: BuildSheetDeps): BuildSheet {
   const close = (): void => {
     isOpen = false;
     el.classList.remove("pk-sheet-wrap--open");
+    deps.onOpenChange?.(false);
   };
   backdrop.addEventListener("click", close);
 
@@ -168,6 +176,7 @@ export function createBuildSheet(deps: BuildSheetDeps): BuildSheet {
       lastState = deps.getState();
       rebuild(lastState);
       el.classList.add("pk-sheet-wrap--open");
+      deps.onOpenChange?.(true);
     },
     close,
     sync(state: GameState): void {

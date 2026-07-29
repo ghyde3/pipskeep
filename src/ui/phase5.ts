@@ -372,6 +372,13 @@ export function initPhase5Ui(deps: Phase5UiDeps): Phase5Ui {
     startPlace,
     startMove,
     remove: removePlacement,
+    // The keep bar cannot be z-index'd beneath the sheet (it lives in
+    // .pk-phase5's own stacking context), so it steps aside while the
+    // sheet is up — otherwise the chip and Build button sit on top of
+    // the catalog and cover a card.
+    onOpenChange: (open) => {
+      keepBar.classList.toggle("pk-keepbar--hide", open);
+    },
   });
   root.appendChild(buildSheet.el);
   buildBtn.addEventListener("click", () => {
