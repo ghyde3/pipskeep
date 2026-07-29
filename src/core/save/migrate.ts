@@ -73,6 +73,45 @@ export const MIGRATIONS: Readonly<Record<number, MigrationStep>> = {
     }
     return out;
   },
+
+  /**
+   * v2 → v3 (Phase 5, the Keep): the flat `keepLevel` becomes
+   * `keep: { level, placements }` (level carried over, nothing placed
+   * yet — placement did not exist before v3), plus the new empty/false
+   * defaults: `jobs`, `rosterUpgradePurchased`, `nextPlacementNumber`,
+   * a null `evolved` record on every pip (nothing could have evolved),
+   * and the two new transient echoes starting null.
+   */
+  2: (blob) => {
+    const out: Record<string, unknown> = { ...blob, schemaVersion: 3 };
+    const state = blob["state"];
+    if (isPlainRecord(state)) {
+      const { keepLevel, ...rest } = state;
+      const pips = state["pips"];
+      const migratedPips = isPlainRecord(pips)
+        ? Object.fromEntries(
+            Object.entries(pips).map(([pipId, pip]) => [
+              pipId,
+              isPlainRecord(pip) ? { ...pip, evolved: null } : pip,
+            ]),
+          )
+        : pips;
+      out["state"] = {
+        ...rest,
+        pips: migratedPips,
+        keep: {
+          level: typeof keepLevel === "number" ? keepLevel : 1,
+          placements: {},
+        },
+        jobs: {},
+        rosterUpgradePurchased: false,
+        nextPlacementNumber: 1,
+        lastJobOutcome: null,
+        lastEvolveOutcome: null,
+      };
+    }
+    return out;
+  },
 };
 
 export type MigrateResult =

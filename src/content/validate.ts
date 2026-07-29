@@ -17,10 +17,14 @@ import type { PersonalityDef, PersonalityId } from "./personalities";
 import { personalities as defaultPersonalities } from "./personalities";
 import type { DialoguePools } from "./dialogue";
 import { dialogue as defaultDialogue, findUnderfilledDialoguePools } from "./dialogue";
-import type { KeepLevelDef } from "./keep";
-import { keepLevels as defaultKeepLevels } from "./keep";
+import type { KeepLevelDef, KeepUpgradeDef } from "./keep";
+import { keepLevels as defaultKeepLevels, keepUpgrades as defaultKeepUpgrades } from "./keep";
 import type { DecorationDef } from "./decorations";
 import { decorations as defaultDecorations } from "./decorations";
+import type { PlaceableDef } from "./placeables";
+import { placeables as defaultPlaceables } from "./placeables";
+import type { JobDef } from "./jobs";
+import { jobs as defaultJobs } from "./jobs";
 
 export interface ContentBundle {
   species: Readonly<Record<SpeciesId, SpeciesDef>>;
@@ -29,7 +33,10 @@ export interface ContentBundle {
   personalities: Readonly<Record<PersonalityId, PersonalityDef>>;
   dialogue: DialoguePools;
   keepLevels: readonly KeepLevelDef[];
+  keepUpgrades: Readonly<Record<string, KeepUpgradeDef>>;
   decorations: readonly DecorationDef[];
+  placeables: readonly PlaceableDef[];
+  jobs: Readonly<Record<string, JobDef>>;
 }
 
 export const defaultContentBundle: ContentBundle = {
@@ -39,7 +46,10 @@ export const defaultContentBundle: ContentBundle = {
   personalities: defaultPersonalities,
   dialogue: defaultDialogue,
   keepLevels: defaultKeepLevels,
+  keepUpgrades: defaultKeepUpgrades,
   decorations: defaultDecorations,
+  placeables: defaultPlaceables,
+  jobs: defaultJobs,
 };
 
 export interface ValidationResult {
@@ -178,6 +188,68 @@ export function collectContentIssues(
     }
     if (d.spriteRef.length === 0) {
       errors.push(`decoration "${d.id}": missing spriteRef`);
+    }
+  }
+
+  // --- Placeables (spec §9): same bar as decorations, plus id
+  // uniqueness ACROSS both registries — core/keep merges them into one
+  // placement-item view, so a shared id would shadow a footprint ---
+  const placementItemIds = new Set<string>();
+  for (const d of content.decorations) placementItemIds.add(d.id);
+  for (const pl of content.placeables) {
+    checkCostBundle(`placeable "${pl.id}"`, pl.cost, errors);
+    if (pl.footprint.w <= 0 || pl.footprint.h <= 0) {
+      errors.push(
+        `placeable "${pl.id}": footprint ${pl.footprint.w}x${pl.footprint.h} must be positive`,
+      );
+    }
+    if (pl.spriteRef.length === 0) {
+      errors.push(`placeable "${pl.id}": missing spriteRef`);
+    }
+    if (placementItemIds.has(pl.id)) {
+      errors.push(
+        `placeable "${pl.id}": id collides with another placement item`,
+      );
+    }
+    placementItemIds.add(pl.id);
+  }
+
+  // --- Keep upgrades (spec §3 registry): sane costs + prerequisites ---
+  for (const upgrade of Object.values(content.keepUpgrades)) {
+    checkCostBundle(`keep upgrade "${upgrade.id}"`, upgrade.cost, errors);
+    if (!knownKeepLevels.has(upgrade.prerequisiteLevel)) {
+      errors.push(
+        `keep upgrade "${upgrade.id}": prerequisiteLevel ${upgrade.prerequisiteLevel} is not a defined Keep level`,
+      );
+    }
+  }
+
+  // --- Jobs (spec §6.2 registry): station must be a placeable, table
+  // items must exist, positive weights, positive interval ---
+  const placeableIds = new Set(content.placeables.map((pl) => pl.id));
+  for (const job of Object.values(content.jobs)) {
+    if (!placeableIds.has(job.stationItemId)) {
+      errors.push(
+        `job "${job.id}": station item "${job.stationItemId}" is not a placeable`,
+      );
+    }
+    if (job.intervalMs <= 0) {
+      errors.push(`job "${job.id}": intervalMs must be > 0`);
+    }
+    if (job.table.length === 0) {
+      errors.push(`job "${job.id}": empty production table`);
+    }
+    for (const entry of job.table) {
+      if (!knownItemIds.has(entry.itemId)) {
+        errors.push(
+          `job "${job.id}": production item "${entry.itemId}" does not exist`,
+        );
+      }
+      if (entry.weight <= 0) {
+        errors.push(
+          `job "${job.id}": production item "${entry.itemId}" has non-positive weight ${entry.weight}`,
+        );
+      }
     }
   }
 

@@ -28,10 +28,11 @@
  * them only if a reducer ever starts computing with them.
  */
 
-import type { GameState } from "../state";
+import type { EvolveOutcome, GameState } from "../state";
 import { LifeStage, NEED_IDS, PipActivity } from "../pips/types";
 import type {
   ActiveExpedition,
+  EvolvedRecord,
   NeedId,
   PipId,
   PipNeeds,
@@ -47,10 +48,15 @@ import type { CatchupSummary } from "../pips/catchup";
 import { EggState } from "../eggs";
 import type { Egg, HatchOutcome } from "../eggs";
 import type { AssignExpeditionOutcome, PendingReveal } from "../expeditions";
+import type { KeepState, Placement, PlacementId } from "../keep";
+import type { JobAssignment, JobOutcome, JobsByPip } from "../keep/jobs";
 
-/** v2 (Phase 4): keepLevel, eggs, pendingReveals, id counters, and the
- * two new transient outcome echoes. */
-export const CURRENT_SCHEMA_VERSION = 2;
+/** v3 (Phase 5): `keepLevel` restructured into `keep: {level,
+ * placements}`, plus `jobs`, `rosterUpgradePurchased`,
+ * `nextPlacementNumber`, per-pip `evolved` records, and the two new
+ * transient outcome echoes (job, evolve).
+ * (v2, Phase 4: keepLevel, eggs, pendingReveals, id counters.) */
+export const CURRENT_SCHEMA_VERSION = 3;
 
 /** The on-disk envelope (spec §8). */
 export interface SaveBlob {
@@ -317,6 +323,16 @@ function validateNeeds(value: unknown, path: string): PipNeeds {
   return needs;
 }
 
+/** Evolution record (spec §4.6): null until the pip evolved. */
+function validateEvolved(value: unknown, path: string): EvolvedRecord | null {
+  if (value === null) return null;
+  const rec = expectRecord(value, path);
+  return {
+    variantId: expectString(rec["variantId"], p(path, "variantId")),
+    evolvedAt: expectFiniteNumber(rec["evolvedAt"], p(path, "evolvedAt")),
+  };
+}
+
 function validateExpedition(
   value: unknown,
   path: string,
@@ -361,6 +377,7 @@ function validatePipState(
     activity: expectOneOf(rec["activity"], p(path, "activity"), ACTIVITIES),
     pendingSulk: expectBoolean(rec["pendingSulk"], p(path, "pendingSulk")),
     readyToEvolve: expectBoolean(rec["readyToEvolve"], p(path, "readyToEvolve")),
+    evolved: validateEvolved(rec["evolved"], p(path, "evolved")),
     lastGiftItemId: expectStringOrNull(
       rec["lastGiftItemId"],
       p(path, "lastGiftItemId"),
@@ -404,6 +421,64 @@ function validateLastLineIndex(
       entry[context] = expectFiniteNumber(index, p(tablePath, key));
     }
     out[pipId] = entry;
+  }
+  return out;
+}
+
+/** One placed item on the Keep grid (spec §9). Structural only: bounds
+ * and collision are gameplay rules over content footprints, which the
+ * save layer deliberately does not import — placement legality was
+ * enforced when the item was placed. */
+function validatePlacement(value: unknown, path: string): Placement {
+  const rec = expectRecord(value, path);
+  return {
+    itemId: expectString(rec["itemId"], p(path, "itemId")),
+    x: expectFiniteNumber(rec["x"], p(path, "x")),
+    y: expectFiniteNumber(rec["y"], p(path, "y")),
+  };
+}
+
+/** The Keep slice (spec §9): level 1..3 plus every placement. */
+function validateKeep(value: unknown, path: string): KeepState {
+  const rec = expectRecord(value, path);
+  const level = expectFiniteNumber(rec["level"], p(path, "level"));
+  if (!Number.isInteger(level) || level < 1) {
+    fail(
+      "invalid-field",
+      p(path, "level"),
+      `keep level must be a positive integer, got ${level}`,
+    );
+  }
+  const placementsRec = expectRecord(rec["placements"], p(path, "placements"));
+  const placements: Record<PlacementId, Placement> = {};
+  for (const [placementId, placement] of Object.entries(placementsRec)) {
+    placements[placementId] = validatePlacement(
+      placement,
+      p(p(path, "placements"), placementId),
+    );
+  }
+  return { level, placements };
+}
+
+/** Standing jobs (spec §6.2), keyed by working pip. */
+function validateJobs(value: unknown, path: string): JobsByPip {
+  const rec = expectRecord(value, path);
+  const out: Record<PipId, JobAssignment> = {};
+  for (const [pipId, job] of Object.entries(rec)) {
+    const jobPath = p(path, pipId);
+    const jobRec = expectRecord(job, jobPath);
+    out[pipId] = {
+      jobId: expectString(jobRec["jobId"], p(jobPath, "jobId")),
+      stationPlacementId: expectString(
+        jobRec["stationPlacementId"],
+        p(jobPath, "stationPlacementId"),
+      ),
+      assignedAt: expectFiniteNumber(jobRec["assignedAt"], p(jobPath, "assignedAt")),
+      lastProducedAt: expectFiniteNumber(
+        jobRec["lastProducedAt"],
+        p(jobPath, "lastProducedAt"),
+      ),
+    };
   }
   return out;
 }
@@ -465,6 +540,27 @@ function validateGameState(value: unknown, path: string): GameState {
     }
   });
 
+  // Jobs are doubly referential: the working pip must exist, and the
+  // station placement must still be on the grid (same bar as roster).
+  const keep = validateKeep(rec["keep"], p(path, "keep"));
+  const jobs = validateJobs(rec["jobs"], p(path, "jobs"));
+  for (const [pipId, job] of Object.entries(jobs)) {
+    if (pips[pipId] === undefined) {
+      fail(
+        "invalid-field",
+        p(p(path, "jobs"), pipId),
+        `job references unknown pip ${JSON.stringify(pipId)}`,
+      );
+    }
+    if (keep.placements[job.stationPlacementId] === undefined) {
+      fail(
+        "invalid-field",
+        p(p(p(path, "jobs"), pipId), "stationPlacementId"),
+        `job references unknown placement ${JSON.stringify(job.stationPlacementId)}`,
+      );
+    }
+  }
+
   return {
     pips,
     rosterOrder,
@@ -475,7 +571,12 @@ function validateGameState(value: unknown, path: string): GameState {
     // reload produce the exact same future rolls.
     rngState: validateNumberRecord(rec["rngState"], p(path, "rngState")),
     seed: expectFiniteNumber(rec["seed"], p(path, "seed")),
-    keepLevel: expectFiniteNumber(rec["keepLevel"], p(path, "keepLevel")),
+    keep,
+    jobs,
+    rosterUpgradePurchased: expectBoolean(
+      rec["rosterUpgradePurchased"],
+      p(path, "rosterUpgradePurchased"),
+    ),
     eggs: validateEggs(rec["eggs"], p(path, "eggs")),
     pendingReveals,
     nextPipNumber: expectFiniteNumber(
@@ -485,6 +586,10 @@ function validateGameState(value: unknown, path: string): GameState {
     nextEggNumber: expectFiniteNumber(
       rec["nextEggNumber"],
       p(path, "nextEggNumber"),
+    ),
+    nextPlacementNumber: expectFiniteNumber(
+      rec["nextPlacementNumber"],
+      p(path, "nextPlacementNumber"),
     ),
     cooldowns: validateCooldowns(rec["cooldowns"], p(path, "cooldowns")),
     lastLineIndex: validateLastLineIndex(
@@ -509,6 +614,14 @@ function validateGameState(value: unknown, path: string): GameState {
       rec["lastHatchOutcome"],
       p(path, "lastHatchOutcome"),
     ) as HatchOutcome | null,
+    lastJobOutcome: passThroughTransient(
+      rec["lastJobOutcome"],
+      p(path, "lastJobOutcome"),
+    ) as JobOutcome | null,
+    lastEvolveOutcome: passThroughTransient(
+      rec["lastEvolveOutcome"],
+      p(path, "lastEvolveOutcome"),
+    ) as EvolveOutcome | null,
   };
 }
 

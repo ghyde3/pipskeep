@@ -44,6 +44,10 @@ import { formatDurationShort } from "../ui/focusView";
 // src/ui/phase4.ts is missing, the build fails loudly right here rather
 // than silently shipping without the reveal moment.
 import { initPhase4Ui } from "../ui/phase4";
+// Phase 5 UI (Build sheet + placement, Keep-level upgrades, Gathering
+// job UX, evolution taps) — same parallel-module pattern as phase4;
+// static import so a missing module fails the build loudly.
+import { initPhase5Ui } from "../ui/phase5";
 import { showRecoveryModal } from "../ui/recovery";
 import { OffsetClock } from "./appClock";
 import { routeBoot } from "./bootRoute";
@@ -238,6 +242,18 @@ async function startGame(
     clock,
     getBubbleAnchor: () => scene.getBubbleAnchor(),
     openReveal: () => phase4.openLootReveal(),
+  });
+
+  // --- Phase 5 UI (Build/placement, Keep upgrades, jobs, evolution) ---
+  // Drives the scene's placement mode (enterPlacementMode/
+  // exitPlacementMode) and registers the render/pipTap.ts seam handler.
+  initPhase5Ui({
+    mount: document.body,
+    store,
+    clock,
+    scene,
+    getBubbleAnchor: () => scene.getBubbleAnchor(),
+    openFocus: () => ui.openFocus(),
   });
 
   // --- Store → scene/UI reactions ---

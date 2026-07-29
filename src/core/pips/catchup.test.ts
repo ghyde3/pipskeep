@@ -65,6 +65,7 @@ function makePip(overrides: Partial<PipState> = {}): PipState {
     activity: PipActivity.Idle,
     pendingSulk: false,
     readyToEvolve: false,
+    evolved: null,
     lastGiftItemId: null,
     expedition: null,
     needsUpdatedAt: SAVED_AT,

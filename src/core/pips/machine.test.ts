@@ -68,6 +68,7 @@ function makePip(overrides: Partial<PipState> = {}): PipState {
     activity,
     pendingSulk: false,
     readyToEvolve: false,
+    evolved: null,
     lastGiftItemId: null,
     // Invariant: non-null exactly while OnExpedition/Returning.
     expedition: away ? meadowTrip() : null,

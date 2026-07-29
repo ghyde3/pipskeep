@@ -70,12 +70,12 @@ describe("migrate fixtures", () => {
     }
   });
 
-  it("v1 → v2 fills Phase 4 defaults and derives the pip counter", () => {
+  it("v1 → v2 → v3 fills phase defaults and derives the pip counter", () => {
     const result = migrate(loadFixture(1));
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     const state = result.save.state;
-    expect(state.keepLevel).toBe(1);
+    expect(state.keep).toEqual({ level: 1, placements: {} });
     expect(state.eggs).toEqual([]);
     expect(state.pendingReveals).toEqual([]);
     // v1 fixture has pip-1 and pip-2 → the next id is pip-3.
@@ -83,6 +83,27 @@ describe("migrate fixtures", () => {
     expect(state.nextEggNumber).toBe(1);
     expect(state.lastAssignOutcome).toBeNull();
     expect(state.lastHatchOutcome).toBeNull();
+  });
+
+  it("v2 → v3 restructures keepLevel into keep and fills Phase 5 defaults", () => {
+    const result = migrate(loadFixture(2));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const state = result.save.state;
+    // The v2 fixture is at keepLevel 2 — the level carries over; nothing
+    // was placeable before v3, so the grid starts empty.
+    expect(state.keep).toEqual({ level: 2, placements: {} });
+    expect(state.jobs).toEqual({});
+    expect(state.rosterUpgradePurchased).toBe(false);
+    expect(state.nextPlacementNumber).toBe(1);
+    expect(state.lastJobOutcome).toBeNull();
+    expect(state.lastEvolveOutcome).toBeNull();
+    // No pip could have evolved before v3.
+    for (const pip of Object.values(state.pips)) {
+      expect(pip.evolved).toBeNull();
+    }
+    // The flat v2 field is gone, not left dangling.
+    expect("keepLevel" in state).toBe(false);
   });
 });
 

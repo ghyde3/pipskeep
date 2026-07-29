@@ -39,6 +39,7 @@ function makePip(overrides: Partial<PipState> = {}): PipState {
     activity: PipActivity.Idle,
     pendingSulk: false,
     readyToEvolve: false,
+    evolved: null,
     lastGiftItemId: null,
     expedition: null,
     needsUpdatedAt: 0,
@@ -54,9 +55,10 @@ describe("statusGlyph — tiny selector badges (spec §10)", () => {
     expect(statusGlyph(PipActivity.Sulking)?.glyph).toBe("…");
   });
 
-  it("present pips (Idle / AssignedJob) carry no badge", () => {
+  it("Idle pips carry no badge; working pips wear the basket (spec §6.2)", () => {
     expect(statusGlyph(PipActivity.Idle)).toBeNull();
-    expect(statusGlyph(PipActivity.AssignedJob)).toBeNull();
+    expect(statusGlyph(PipActivity.AssignedJob)?.glyph).toBe("🧺");
+    expect(statusGlyph(PipActivity.AssignedJob)?.label).toBe("gathering away");
   });
 });
 

@@ -65,6 +65,19 @@ export interface TraitGenome {
   personalityId: string;
 }
 
+/**
+ * The record of a completed evolution (spec §4.6): the variant the most
+ * recent Give Item selected, and when the player witnessed it. `null`
+ * until the Pip evolves. Set ONLY by the EVOLVE_PIP action (via
+ * lifecycle's `applyEvolution`) — never by TICK or CATCHUP.
+ */
+export interface EvolvedRecord {
+  /** Evolution variant id from the species registry's gift mapping. */
+  variantId: string;
+  /** Clock timestamp (ms) of the player's evolution tap. */
+  evolvedAt: number;
+}
+
 /** The Pip's current outing, if any (spec §6.1). Completion is derived
  * from `departedAt + durationMs` — no persisted timers (spec §6.1). */
 export interface ActiveExpedition {
@@ -109,6 +122,10 @@ export interface PipState {
   pendingSulk: boolean;
   /** Spec §4.6: glows and waits for the player's tap. A flag, not a state. */
   readyToEvolve: boolean;
+  /** Completed-evolution record; null until evolved (spec §4.6). The
+   * live `speciesId` above flips to the target species at the same
+   * moment; `genome` stays the immutable birth record. */
+  evolved: EvolvedRecord | null;
   /** Most recent Give Item — selects the evolution variant (spec §4.6). */
   lastGiftItemId: string | null;
   /** Non-null exactly while OnExpedition/Returning. */

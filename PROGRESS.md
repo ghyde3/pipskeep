@@ -11,7 +11,7 @@ Phase-gate log and decision journal, per spec §13–§15. Append entries; never
 | 2 — Care actions + first playable | **gate passed** | 2026-07-29 |
 | 3 — Save system hardening | **gate passed** | 2026-07-29 |
 | 4 — Expeditions + eggs | **gate passed** | 2026-07-29 |
-| 5 — The Keep | not started | — |
+| 5 — The Keep | **gate passed** | 2026-07-29 |
 | 6 — Polish, PWA, onboarding | not started | — |
 
 ## Gate log
@@ -49,6 +49,12 @@ Phase-gate log and decision journal, per spec §13–§15. Append entries; never
 - Manual check (browser): away sheet ("You were gone 13 minutes. The Keep kept busy.") with per-pip delta chips; focus view with personality blurbs, locked-expedition copy, live countdown; Send → status glyph → +1h skip → "Mosspip is back!" reveal auto-opened with staged cards → Collect landed loot. Egg spawn → Pipping wobble → tap-hatch → new Pipling with hello line (verified by builder QA + integrator).
 - Two real rendering bugs found and fixed during builder browser QA: Pixi v8 lazy worldTransform hit-testing (replaced with stage-level manual hit test) and a tab-hidden RAF pause leaving a dead tween target that killed the renderer.
 - Notes for Phase 5: wire upgraded roster cap into HATCH_EGG + add the §7.4 upgrade-prompt nudge to the roster-full message; add explicit ACKNOWLEDGE_REVEAL double-dispatch idempotency test.
+
+### Phase 5 — The Keep — 2026-07-29
+- Tests: `npm test` → 38 files, **632 passed**. Placement collision/bounds/move/remove + serialize round-trip; Keep level 2 exact-bundle deduction flips Forest legality; roster upgrade raises hatch cap 3→5 end-to-end; gathering 1/10min seeded weighted table with 12h offline cap (72h → exactly 72 resources); EVOLVE_PIP applies only via the action (grep-verified single call site), variant by lastGiftItemId; schema v2→v3 migration + fixture; ACKNOWLEDGE_REVEAL idempotency added (Phase 4 note closed).
+- Mutation: 9 mutations, 1 survived (AssignedJob guard removable from *live* production path — catch-up path was covered, live wasn't) → fixer added the live-path test; re-gate green.
+- Manual check (browser, mobile viewport): all pips wander the fake-iso grid with y-sorting; pipling strides shorter; active-pip accent ring; gathering station sprite placed; egg on tile; Build button + Keep Lv chip; away sheet still correct. Evolution ceremony, gravitation seats (bed/bowl/station/corner), placement ghost tints verified numerically by builder harness + integrator live QA.
+- Notes for Phase 6: dedupe Berry appearing as both inventory food chip and resource chip in top bar; a11y labels still pending on care buttons.
 
 <!-- One entry per completed phase:
 

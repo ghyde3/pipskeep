@@ -144,3 +144,46 @@ export function checkEvolution(
     variantId: giftVariant ?? evolution.defaultVariantId,
   };
 }
+
+/** Why applyEvolution declined. `notReady` = the flag isn't set (the UI
+ * should not have offered the tap); `noEvolution` = the species has no
+ * evolution entry (defensive — the flag is only ever set when one
+ * exists). */
+export type EvolveRefusalReason = "notReady" | "noEvolution";
+
+export type ApplyEvolutionResult =
+  | { readonly ok: true; readonly pip: PipState; readonly result: EvolutionResult }
+  | { readonly ok: false; readonly reason: EvolveRefusalReason };
+
+/**
+ * Apply the evolution a glowing Pip has been waiting for (spec §4.6).
+ * Legal ONLY when `readyToEvolve` — and by design this function's ONLY
+ * call site is the EVOLVE_PIP reducer arm (the player's tap): evolution
+ * is player-witnessed, NEVER applied by TICK or CATCHUP. Grep-proof:
+ * nothing else in the repo may call applyEvolution.
+ *
+ * Effect: the live `speciesId` flips to the target species; the variant
+ * selected by `lastGiftItemId` (default fallback) is recorded together
+ * with `evolvedAt = at` in `pip.evolved`; `readyToEvolve` clears. Needs,
+ * personality, age (`ageMs`/`happinessIntegral`/`hatchedAt`), activity,
+ * and the immutable birth `genome` are all KEPT untouched.
+ */
+export function applyEvolution(
+  pip: PipState,
+  registry: SpeciesEvolutionRegistry,
+  at: number,
+): ApplyEvolutionResult {
+  if (!pip.readyToEvolve) return { ok: false, reason: "notReady" };
+  const result = checkEvolution(pip, registry);
+  if (result === null) return { ok: false, reason: "noEvolution" };
+  return {
+    ok: true,
+    result,
+    pip: {
+      ...pip,
+      speciesId: result.targetSpeciesId,
+      readyToEvolve: false,
+      evolved: { variantId: result.variantId, evolvedAt: at },
+    },
+  };
+}

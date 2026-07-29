@@ -68,6 +68,7 @@ function makePip(id: string, overrides: Partial<PipState> = {}): PipState {
     activity: PipActivity.Idle,
     pendingSulk: false,
     readyToEvolve: false,
+    evolved: null,
     lastGiftItemId: null,
     expedition: null,
     needsUpdatedAt: T0,
@@ -86,11 +87,14 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
     resources: {},
     rngState: {},
     seed: 42,
-    keepLevel: 3,
+    keep: { level: 3, placements: {} },
+    jobs: {},
+    rosterUpgradePurchased: false,
     eggs: [],
     pendingReveals: [],
     nextPipNumber: Object.keys(pips).length + 1,
     nextEggNumber: 1,
+    nextPlacementNumber: 1,
     cooldowns: {},
     lastLineIndex: {},
     createdAt: 0,
@@ -99,6 +103,8 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
     lastCatchup: null,
     lastAssignOutcome: null,
     lastHatchOutcome: null,
+    lastJobOutcome: null,
+    lastEvolveOutcome: null,
     ...overrides,
   };
 }
@@ -412,7 +418,7 @@ describe("createNewGame integration", () => {
     const state = createNewGame(7, 0);
     expect(state.eggs).toEqual([]);
     expect(state.pendingReveals).toEqual([]);
-    expect(state.keepLevel).toBe(1);
+    expect(state.keep).toEqual({ level: 1, placements: {} });
     expect(state.nextPipNumber).toBe(2);
     expect(state.nextEggNumber).toBe(1);
   });

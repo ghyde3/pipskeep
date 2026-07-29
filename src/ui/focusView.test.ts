@@ -52,6 +52,7 @@ function makePip(overrides: Partial<PipState> = {}): PipState {
     activity: PipActivity.Idle,
     pendingSulk: false,
     readyToEvolve: false,
+    evolved: null,
     lastGiftItemId: null,
     expedition: null,
     needsUpdatedAt: 0,
@@ -71,11 +72,14 @@ function makeState(
     resources: {},
     rngState: {},
     seed: 42,
-    keepLevel: 1,
+    keep: { level: 1, placements: {} },
+    jobs: {},
+    rosterUpgradePurchased: false,
     eggs: [],
     pendingReveals: [],
     nextPipNumber: 2,
     nextEggNumber: 1,
+    nextPlacementNumber: 1,
     cooldowns: {},
     lastLineIndex: {},
     createdAt: 0,
@@ -84,6 +88,8 @@ function makeState(
     lastCatchup: null,
     lastAssignOutcome: null,
     lastHatchOutcome: null,
+    lastJobOutcome: null,
+    lastEvolveOutcome: null,
     ...overrides,
   };
 }
@@ -141,7 +147,7 @@ describe("buildExpeditionRow — unlock gating (spec §6.1/§9)", () => {
   });
 
   it("Keep level 3 unlocks everything", () => {
-    const state = makeState({ keepLevel: 3 });
+    const state = makeState({ keep: { level: 3, placements: {} } });
     for (const id of ["meadow", "forest", "shore"]) {
       expect(row(state, id).status, id).toBe("available");
     }
@@ -212,7 +218,7 @@ describe("buildExpeditionRow — occupancy and away states (spec §6.1)", () => 
     expect(meadow.sendable).toBe(false);
 
     // Other rows go quiet while this pip is away (level 2 keeps forest open).
-    const state2 = makeState({ pip, keepLevel: 2 });
+    const state2 = makeState({ pip, keep: { level: 2, placements: {} } });
     expect(row(state2, "forest", now).status).toBe("away");
     expect(row(state2, "forest", now).sendable).toBe(false);
   });

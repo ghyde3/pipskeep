@@ -123,8 +123,9 @@ export interface PendingReveal {
  */
 export interface ExpeditionStateSlice extends DialogueStateSlice {
   readonly rosterOrder: readonly PipId[];
-  /** Gates expedition unlocks (spec §9): meadow 1, forest 2, shore 3. */
-  readonly keepLevel: number;
+  /** The Keep's level gates expedition unlocks (spec §9): meadow 1,
+   * forest 2, shore 3. Only `level` is read here. */
+  readonly keep: { readonly level: number };
   readonly pendingReveals: readonly PendingReveal[];
   /** Deterministic egg-id counter (`egg-<n>`). */
   readonly nextEggNumber: number;
@@ -257,7 +258,7 @@ export function assignExpedition<S extends ExpeditionStateSlice>(
 
   const expedition = registry[expeditionId];
   if (expedition === undefined) return refuse("unknownExpedition");
-  if (expedition.unlockKeepLevel > state.keepLevel) return refuse("locked");
+  if (expedition.unlockKeepLevel > state.keep.level) return refuse("locked");
   if (expeditionOccupied(state, expeditionId, pipId)) return refuse("occupied");
 
   const durationMs = effectiveExpeditionDurationMs(

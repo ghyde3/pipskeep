@@ -202,6 +202,25 @@ export const tuning = {
     3: { wood: 20, shell: 12, driftwood: 6 },
   } satisfies Partial<Record<KeepLevel, ResourceBundle>>,
 
+  /**
+   * Keep grid (spec §9): 8×8 starting area; Level 2 adds a +4×8 plot,
+   * expressed as simple rows/cols growth per level (cumulative). Bounds
+   * math lives in core/keep `gridBounds`.
+   */
+  keepGrid: {
+    cols: 8,
+    rows: 8,
+    /** Extra cols/rows unlocked AT each Keep level (spec §9: L2 = +4×8,
+     * i.e. 4 more rows at the same 8-column width). */
+    growthPerLevel: {
+      2: { cols: 0, rows: 4 },
+    } satisfies Partial<Record<KeepLevel, { cols: number; rows: number }>>,
+  },
+
+  /** Roster upgrade cost (spec §7.4: Keep upgrade raises the cap 3 → 5;
+   * purchasable at Keep level 3). Referenced by content/keep.ts. */
+  rosterUpgradeCost: { wood: 10, shell: 8, driftwood: 4 } satisfies ResourceBundle,
+
   /** Food effects (spec §5/§6.3); referenced by content/foods.ts. */
   foods: {
     berry: { hunger: 25 },

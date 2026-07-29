@@ -115,6 +115,17 @@ export function createItemsSheet(deps: ItemsSheetDeps): ItemsSheet {
       });
 
       card.append(swatch, name, countEl, actions);
+
+      // Gifts are remembered (spec §4.6: the latest gift picks the
+      // evolution variant) — a soft nudge, no spoilers.
+      const activeName = state.pips[state.activePipId]?.name;
+      if (activeName !== undefined) {
+        const hint = document.createElement("div");
+        hint.className = "pk-item-hint";
+        hint.textContent = `Give it — ${activeName} will remember this.`;
+        card.appendChild(hint);
+      }
+
       grid.appendChild(card);
     }
   };

@@ -461,6 +461,8 @@
   position: absolute;
   /* Below the (selector-row-taller) top bar so toasts never cover bars. */
   top: calc(env(safe-area-inset-top, 0px) + 172px);
+  /* Toasts float above every overlay (focus 20, phase4 modals 44). */
+  z-index: 45;
   left: 50%;
   transform: translateX(-50%);
   display: flex;
@@ -621,6 +623,10 @@
 
 .pk-sheet-wrap--open {
   visibility: visible;
+  /* Same global competition note as .pk-focus-wrap--open (the Phase 5
+     build sheet reuses this class INSIDE the phase5 stacking context,
+     where the value only orders siblings). */
+  z-index: 20;
 }
 
 .pk-sheet-backdrop {
@@ -764,6 +770,9 @@
 
 .pk-focus-wrap--open {
   visibility: visible;
+  /* Above the Phase 5 chrome (keep bar z6): #ui is not a stacking
+     context, so this competes globally; phase4 modals (44) still win. */
+  z-index: 20;
 }
 
 .pk-focus-backdrop {
@@ -1197,4 +1206,464 @@
   to {
     transform: translateY(-7px) rotate(-3deg) scale(0.98, 1.02);
   }
+}
+
+/* ---------- Phase 5: Keep bar (Build button + Keep-level chip) ---------- */
+
+.pk-keepbar {
+  pointer-events: auto;
+  position: absolute;
+  left: 12px;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 118px);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  z-index: 5;
+}
+
+.pk-keep-chip,
+.pk-build-btn {
+  appearance: none;
+  border: 1.5px solid rgba(95, 138, 94, 0.25);
+  border-radius: 14px;
+  padding: 8px 14px;
+  background: rgba(255, 253, 246, 0.94);
+  color: #3d6b44;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 800;
+  cursor: pointer;
+  touch-action: manipulation;
+  box-shadow: 0 3px 10px rgba(61, 74, 61, 0.18);
+  transition: transform 90ms ease;
+}
+
+.pk-keep-chip:active,
+.pk-build-btn:active {
+  transform: scale(0.94);
+}
+
+.pk-build-btn {
+  background: #7cc283;
+  border-color: rgba(61, 107, 68, 0.35);
+  color: #fffdf6;
+}
+
+.pk-build-btn::before {
+  content: "⚒ ";
+  font-weight: 600;
+}
+
+/* Phase 5 chrome lives outside #ui, so it carries its own font stack.
+   overflow: hidden matters: the closed build sheet parks at
+   translateY(105%), and without the clip that transformed box would
+   grow the page's scrollable area (focus-scroll then shifts the whole
+   game off-screen). #ui clips for the same reason. */
+.pk-phase5 {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, sans-serif;
+  color: #3d4a3d;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  z-index: 6;
+}
+
+.pk-phase5 .pk-sheet-wrap,
+.pk-phase5 .pk-plan-wrap,
+.pk-phase5 .pk-upcard-wrap {
+  z-index: 8;
+}
+
+/* ---------- Phase 5: Build sheet ---------- */
+
+.pk-build-card {
+  appearance: none;
+  border: 1.5px solid rgba(95, 138, 94, 0.18);
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  transition: transform 90ms ease;
+}
+
+.pk-build-card:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.pk-build-card--short {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.pk-build-foot {
+  font-size: 11px;
+  opacity: 0.6;
+  font-weight: 600;
+}
+
+.pk-build-cost {
+  font-size: 12px;
+  font-weight: 700;
+  color: #3d6b44;
+}
+
+.pk-build-missing {
+  font-size: 11px;
+  font-weight: 700;
+  color: #a8622f;
+}
+
+.pk-build-rearrange-title {
+  margin-top: 16px;
+}
+
+.pk-build-rearrange {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pk-build-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: #ffffff;
+  border: 1.5px solid rgba(95, 138, 94, 0.18);
+  border-radius: 14px;
+  padding: 8px 10px;
+}
+
+.pk-build-row-name {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.pk-build-row-where {
+  font-size: 11px;
+  opacity: 0.6;
+  font-weight: 600;
+}
+
+.pk-build-row-actions {
+  flex: 0 0 auto;
+  width: 168px;
+}
+
+.pk-build-remove {
+  background: rgba(217, 106, 106, 0.16);
+  color: #a34848;
+}
+
+/* ---------- Phase 5: placement-mode pill (cancel affordance) ---------- */
+
+.pk-placebar {
+  pointer-events: auto;
+  position: absolute;
+  left: 50%;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 92px);
+  transform: translateX(-50%) translateY(8px);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(61, 74, 61, 0.9);
+  color: #fffdf6;
+  border-radius: 14px;
+  padding: 8px 10px 8px 14px;
+  /* Absolutely-positioned boxes shrink-to-fit from the left offset —
+     max-content keeps the pill one tidy line instead. */
+  width: max-content;
+  max-width: 94vw;
+  box-shadow: 0 4px 14px rgba(61, 74, 61, 0.3);
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 180ms ease,
+    transform 200ms cubic-bezier(0.22, 1, 0.36, 1);
+  z-index: 7;
+}
+
+/* The keep bar bows out while a ghost is live — placement mode owns the
+   bottom-left thumb zone. */
+.pk-keepbar--hide {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms ease;
+}
+
+.pk-placebar--in {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(0);
+}
+
+.pk-placebar-text {
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+.pk-placebar-cancel {
+  appearance: none;
+  border: none;
+  border-radius: 10px;
+  padding: 7px 12px;
+  background: rgba(255, 253, 246, 0.18);
+  color: #fffdf6;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.pk-placebar-cancel:active {
+  transform: scale(0.94);
+}
+
+/* ---------- Phase 5: Keep upgrade card ---------- */
+
+.pk-upcard-wrap {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.pk-upcard-wrap--open {
+  visibility: visible;
+}
+
+.pk-upcard-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(61, 74, 61, 0.3);
+  opacity: 0;
+  transition: opacity 200ms ease;
+}
+
+.pk-upcard-wrap--open .pk-upcard-backdrop {
+  pointer-events: auto;
+  opacity: 1;
+}
+
+.pk-upcard {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%) scale(0.96);
+  width: min(90vw, 360px);
+  max-height: 80vh;
+  overflow-y: auto;
+  background: #fffdf6;
+  border-radius: 20px;
+  box-shadow: 0 10px 34px rgba(61, 74, 61, 0.3);
+  padding: 18px;
+  opacity: 0;
+  transition:
+    opacity 200ms ease,
+    transform 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.pk-upcard-wrap--open .pk-upcard {
+  pointer-events: auto;
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+
+.pk-upcard-title {
+  font-size: 17px;
+  font-weight: 800;
+  margin-bottom: 10px;
+}
+
+.pk-upcard-section {
+  background: #ffffff;
+  border: 1.5px solid rgba(95, 138, 94, 0.18);
+  border-radius: 14px;
+  padding: 12px;
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pk-upcard-head {
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.pk-upcard-unlock {
+  font-size: 12.5px;
+  opacity: 0.75;
+  font-weight: 600;
+}
+
+.pk-upcard-cost {
+  font-size: 12.5px;
+  font-weight: 800;
+  color: #3d6b44;
+}
+
+.pk-upcard-buy {
+  align-self: flex-start;
+  appearance: none;
+  border: none;
+  border-radius: 12px;
+  padding: 9px 20px;
+  background: #7cc283;
+  color: #fffdf6;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: 0 2px 0 rgba(61, 107, 68, 0.4);
+  transition: transform 90ms ease;
+}
+
+.pk-upcard-buy:active:not(:disabled) {
+  transform: translateY(1px) scale(0.95);
+}
+
+.pk-upcard-buy:disabled {
+  opacity: 0.45;
+  cursor: default;
+  box-shadow: none;
+}
+
+.pk-upcard-missing {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #a8622f;
+}
+
+.pk-upcard-maxed {
+  margin-top: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  opacity: 0.8;
+}
+
+/* ---------- Phase 5: evolve confirm bubble (spec §4.6) ---------- */
+
+.pk-evolve {
+  pointer-events: auto;
+  position: absolute;
+  transform: translate(-50%, -100%) scale(0.9);
+  background: #fffdf6;
+  border: 2px solid rgba(124, 194, 131, 0.6);
+  border-radius: 14px;
+  box-shadow: 0 6px 20px rgba(61, 74, 61, 0.25);
+  padding: 10px 12px;
+  width: max-content;
+  max-width: 240px;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 180ms ease,
+    transform 200ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.pk-evolve--in {
+  opacity: 1;
+  visibility: visible;
+  transform: translate(-50%, -100%) scale(1);
+}
+
+.pk-evolve-text {
+  font-size: 13px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.pk-evolve-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.pk-evolve-yes,
+.pk-evolve-no {
+  appearance: none;
+  border: none;
+  border-radius: 10px;
+  padding: 7px 14px;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: transform 90ms ease;
+}
+
+.pk-evolve-yes {
+  background: #7cc283;
+  color: #fffdf6;
+  box-shadow: 0 2px 0 rgba(61, 107, 68, 0.4);
+}
+
+.pk-evolve-no {
+  background: rgba(95, 138, 94, 0.14);
+  color: #3d6b44;
+}
+
+.pk-evolve-yes:active,
+.pk-evolve-no:active {
+  transform: scale(0.94);
+}
+
+/* ---------- Phase 5: confetti + assorted bits ---------- */
+
+.pk-confetti {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 60;
+  overflow: hidden;
+}
+
+.pk-confetti i {
+  position: absolute;
+  top: 18%;
+  width: 8px;
+  height: 12px;
+  border-radius: 2px;
+  opacity: 0;
+  animation: pk-confetti-fall 1400ms ease-in forwards;
+}
+
+@keyframes pk-confetti-fall {
+  0% {
+    opacity: 1;
+    transform: translate(0, -20px) rotate(0deg);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(var(--pk-cf-x, 0px), 62vh) rotate(var(--pk-cf-r, 360deg));
+  }
+}
+
+/* Working pips' basket badge — same pill, softer green. */
+.pk-chip-status--assignedJob {
+  background: #e9f5e4;
+  font-size: 9px;
+}
+
+/* Items sheet: gifts-are-remembered microcopy (spec §4.6 nudge). */
+.pk-item-hint {
+  font-size: 10.5px;
+  font-weight: 600;
+  opacity: 0.55;
+  font-style: italic;
+}
+
+/* Focus view: the Take a break button reads calmer than Clock in. */
+.pk-job-break {
+  background: rgba(95, 138, 94, 0.18);
+  color: #3d6b44;
+  box-shadow: none;
 }

@@ -54,6 +54,7 @@ function makePip(id: string, overrides: Partial<PipState> = {}): PipState {
     activity: PipActivity.Idle,
     pendingSulk: false,
     readyToEvolve: false,
+    evolved: null,
     lastGiftItemId: null,
     expedition: null,
     needsUpdatedAt: SAVED_AT,
@@ -113,7 +114,22 @@ function richState(seed = SEED): GameState {
     resources: { moss: 5, pebble: 12 },
     rngState: rng.getState(),
     seed,
-    keepLevel: 2,
+    keep: {
+      level: 2,
+      placements: {
+        "place-1": { itemId: "gathering-station", x: 2, y: 3 },
+        "place-2": { itemId: "cozy-lantern", x: 0, y: 0 },
+      },
+    },
+    jobs: {
+      "pip-2": {
+        jobId: "gathering",
+        stationPlacementId: "place-1",
+        assignedAt: SAVED_AT - 1_200_000,
+        lastProducedAt: SAVED_AT - 600_000,
+      },
+    },
+    rosterUpgradePurchased: false,
     eggs: [
       {
         id: "egg-1",
@@ -153,6 +169,7 @@ function richState(seed = SEED): GameState {
     ],
     nextPipNumber: 4,
     nextEggNumber: 4,
+    nextPlacementNumber: 3,
     cooldowns: {
       "pip-1": { clean: SAVED_AT - 30_000, pet: SAVED_AT - 10_000 },
       "pip-3": { pet: SAVED_AT - 29_999 },
@@ -182,6 +199,8 @@ function richState(seed = SEED): GameState {
       returnAt: SAVED_AT + 1_200_000,
     },
     lastHatchOutcome: null,
+    lastJobOutcome: null,
+    lastEvolveOutcome: null,
   };
 }
 
@@ -360,8 +379,41 @@ describe("fromSaveBlob validation", () => {
       mustFail(corrupt((b) => { b["state"]["pendingReveals"][0]["items"] = [1]; })).path,
     ).toBe("state.pendingReveals[0].items[0]");
     expect(
-      mustFail(corrupt((b) => { delete b["state"]["keepLevel"]; })).path,
-    ).toBe("state.keepLevel");
+      mustFail(corrupt((b) => { delete b["state"]["keep"]; })).path,
+    ).toBe("state.keep");
+  });
+
+  it("rejects malformed keep/jobs slices (v3 fields, deep)", () => {
+    expect(
+      mustFail(corrupt((b) => { b["state"]["keep"]["level"] = 2.5; })).path,
+    ).toBe("state.keep.level");
+    expect(
+      mustFail(corrupt((b) => { b["state"]["keep"]["placements"]["place-1"]["x"] = "left"; })).path,
+    ).toBe("state.keep.placements.place-1.x");
+    expect(
+      mustFail(corrupt((b) => { delete b["state"]["keep"]["placements"]["place-1"]["itemId"]; })).path,
+    ).toBe("state.keep.placements.place-1.itemId");
+    expect(
+      mustFail(corrupt((b) => { b["state"]["jobs"]["pip-2"]["lastProducedAt"] = null; })).path,
+    ).toBe("state.jobs.pip-2.lastProducedAt");
+    // Referential integrity: the working pip and the station must exist.
+    expect(
+      mustFail(corrupt((b) => {
+        b["state"]["jobs"]["pip-99"] = b["state"]["jobs"]["pip-2"];
+        delete b["state"]["jobs"]["pip-2"];
+      })).path,
+    ).toBe("state.jobs.pip-99");
+    expect(
+      mustFail(corrupt((b) => {
+        b["state"]["jobs"]["pip-2"]["stationPlacementId"] = "place-99";
+      })).path,
+    ).toBe("state.jobs.pip-2.stationPlacementId");
+    expect(
+      mustFail(corrupt((b) => { b["state"]["rosterUpgradePurchased"] = "yes"; })).path,
+    ).toBe("state.rosterUpgradePurchased");
+    expect(
+      mustFail(corrupt((b) => { b["state"]["pips"]["pip-1"]["evolved"] = "verdant"; })).path,
+    ).toBe("state.pips.pip-1.evolved");
   });
 
   it("rejects transients that are neither null nor an object", () => {

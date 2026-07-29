@@ -71,6 +71,7 @@ function makePip(id: string, overrides: Partial<PipState> = {}): PipState {
     activity: PipActivity.Idle,
     pendingSulk: false,
     readyToEvolve: false,
+    evolved: null,
     lastGiftItemId: null,
     expedition: null,
     needsUpdatedAt: T0,
@@ -89,11 +90,14 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
     resources: {},
     rngState: {},
     seed: SEED,
-    keepLevel: 3,
+    keep: { level: 3, placements: {} },
+    jobs: {},
+    rosterUpgradePurchased: false,
     eggs: [],
     pendingReveals: [],
     nextPipNumber: Object.keys(pips).length + 1,
     nextEggNumber: 1,
+    nextPlacementNumber: 1,
     cooldowns: {},
     lastLineIndex: {},
     createdAt: 0,
@@ -102,6 +106,8 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
     lastCatchup: null,
     lastAssignOutcome: null,
     lastHatchOutcome: null,
+    lastJobOutcome: null,
+    lastEvolveOutcome: null,
     ...overrides,
   };
 }
@@ -475,7 +481,7 @@ describe("assignment legality (spec §6.1/§4.6/§4.7)", () => {
   });
 
   it("locked expeditions refuse until the Keep level unlocks them (spec §9)", () => {
-    const level1 = makeState({ keepLevel: 1 });
+    const level1 = makeState({ keep: { level: 1, placements: {} } });
     for (const locked of ["forest", "shore"]) {
       const refused = rootReducer(level1, {
         type: "ASSIGN_EXPEDITION",
@@ -494,7 +500,7 @@ describe("assignment legality (spec §6.1/§4.6/§4.7)", () => {
       at: T0,
     });
     expect(meadowOk.lastAssignOutcome).toMatchObject({ ok: true });
-    const level2 = makeState({ keepLevel: 2 });
+    const level2 = makeState({ keep: { level: 2, placements: {} } });
     expect(
       rootReducer(level2, {
         type: "ASSIGN_EXPEDITION",

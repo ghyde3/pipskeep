@@ -63,8 +63,9 @@ export interface StatusGlyph {
   readonly label: string;
 }
 
-/** Status glyph for a chip, or null when the pip is just around (Idle /
- * AssignedJob need no badge — present pips speak for themselves). */
+/** Status glyph for a chip, or null when the pip is just around (Idle
+ * needs no badge — a present, unbusy pip speaks for itself). A working
+ * pip wears the tiny basket (spec §6.2 — the Gathering job at a glance). */
 export function statusGlyph(activity: PipActivity): StatusGlyph | null {
   switch (activity) {
     case PipActivity.OnExpedition:
@@ -75,6 +76,8 @@ export function statusGlyph(activity: PipActivity): StatusGlyph | null {
       return { glyph: "z", label: "snoozing" };
     case PipActivity.Sulking:
       return { glyph: "…", label: "sulking" };
+    case PipActivity.AssignedJob:
+      return { glyph: "🧺", label: "gathering away" };
     default:
       return null;
   }

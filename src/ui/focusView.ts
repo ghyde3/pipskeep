@@ -29,7 +29,11 @@ import {
   effectiveExpeditionDurationMs,
 } from "../core/expeditions";
 import type { AssignExpeditionOutcome } from "../core/expeditions";
+import type { JobOutcome } from "../core/keep/jobs";
+import type { PlacementId } from "../core/keep";
 import { EXPEDITION_IDS, expeditions } from "../content/expeditions";
+import { jobs as contentJobs } from "../content/jobs";
+import { placeables } from "../content/placeables";
 import { personalities } from "../content/personalities";
 import type { PersonalityId } from "../content/personalities";
 import { species } from "../content/species";
@@ -132,6 +136,140 @@ export interface FocusModel {
   readonly mood: string;
   readonly needs: Readonly<Record<NeedId, number>>;
   readonly expeditions: readonly ExpeditionRowModel[];
+  /** Job rows (spec §6.2): one per placed station that hosts a job.
+   * Empty until a Gathering Station is placed — no station, no section. */
+  readonly jobs: readonly JobRowModel[];
+}
+
+/** Why a job row is (or isn't) workable right now (drives copy, not
+ * legality — core re-checks everything on ASSIGN_JOB, spec §4.7). */
+export type JobRowStatus =
+  | "assigned" // THIS pip works here — show the Take a break button
+  | "available" // Clock in!
+  | "occupied" // another pip works this station (one per, spec §6.2)
+  | "away" // this pip is out on an expedition
+  | "resting" // structural: asleep pips are not offered shifts
+  | "workingElsewhere"; // this pip already works another station
+
+export interface JobRowModel {
+  readonly stationPlacementId: PlacementId;
+  /** "Gathering Station" — the placeable's display name. */
+  readonly stationName: string;
+  /** "Gathering" — the job registry's display name. */
+  readonly jobName: string;
+  /** "every 10 min" cadence chip. */
+  readonly cadenceLabel: string;
+  readonly status: JobRowStatus;
+  /** Warm one-liner under the row; null when it speaks for itself. */
+  readonly note: string | null;
+  readonly assignable: boolean;
+  readonly unassignable: boolean;
+}
+
+/** Display name of the placeable hosting a job (registry lookup). */
+function stationDisplayName(itemId: string): string {
+  return placeables.find((def) => def.id === itemId)?.name ?? itemId;
+}
+
+/**
+ * Build the job rows for the focus view. Pure. One row per placed
+ * station whose item hosts a registry job (spec §6.2 registry seam —
+ * Crafting stations would appear here with zero UI changes). Sulking
+ * pips keep a live Clock in button: the refusal (with its personality
+ * line) is the pip's to deliver, not the UI's to pre-empt (spec §4.4).
+ */
+export function buildJobRows(state: GameState, pip: PipState): JobRowModel[] {
+  const rows: JobRowModel[] = [];
+  const myJob = state.jobs[pip.id];
+
+  for (const [placementId, placement] of Object.entries(
+    state.keep.placements,
+  )) {
+    const job = Object.values(contentJobs).find(
+      (def) => def.stationItemId === placement.itemId,
+    );
+    if (job === undefined) continue;
+
+    const base = {
+      stationPlacementId: placementId,
+      stationName: stationDisplayName(placement.itemId),
+      jobName: job.name,
+      cadenceLabel: `every ${formatDurationShort(job.intervalMs)}`,
+    };
+
+    if (myJob?.stationPlacementId === placementId) {
+      rows.push({
+        ...base,
+        status: "assigned",
+        note: `${pip.name} is gathering away — a little something ${base.cadenceLabel}.`,
+        assignable: false,
+        unassignable: true,
+      });
+      continue;
+    }
+
+    const worker = Object.entries(state.jobs).find(
+      ([workerId, assignment]) =>
+        workerId !== pip.id && assignment.stationPlacementId === placementId,
+    );
+    if (worker !== undefined) {
+      const workerName = state.pips[worker[0]]?.name ?? "Somepip";
+      rows.push({
+        ...base,
+        status: "occupied",
+        note: `${workerName} has this one covered — one Pip per station.`,
+        assignable: false,
+        unassignable: false,
+      });
+      continue;
+    }
+
+    if (myJob !== undefined) {
+      rows.push({
+        ...base,
+        status: "workingElsewhere",
+        note: "Already on the clock at another station.",
+        assignable: false,
+        unassignable: false,
+      });
+      continue;
+    }
+
+    if (
+      pip.activity === PipActivity.OnExpedition ||
+      pip.activity === PipActivity.Returning
+    ) {
+      rows.push({
+        ...base,
+        status: "away",
+        note: "Out adventuring — the station can wait.",
+        assignable: false,
+        unassignable: false,
+      });
+      continue;
+    }
+
+    if (pip.activity === PipActivity.Resting) {
+      rows.push({
+        ...base,
+        status: "resting",
+        note: "Fast asleep. The basket can wait; the dream cannot.",
+        assignable: false,
+        unassignable: false,
+      });
+      continue;
+    }
+
+    rows.push({
+      ...base,
+      status: "available",
+      note: null,
+      assignable: true,
+      unassignable: false,
+    });
+  }
+
+  return rows;
 }
 
 /** Some OTHER pip currently out (or back, loot uncollected) on this
@@ -203,7 +341,7 @@ export function buildExpeditionRow(
     };
   }
 
-  if (def.unlockKeepLevel > state.keepLevel) {
+  if (def.unlockKeepLevel > state.keep.level) {
     return {
       ...base,
       status: "locked",
@@ -273,6 +411,7 @@ export function buildFocusModel(
     mood: peekDisplayedMood(state, pip),
     needs: { ...pip.needs },
     expeditions: rows,
+    jobs: buildJobRows(state, pip),
   };
 }
 
@@ -318,6 +457,7 @@ export function createFocusView(deps: FocusViewDeps): FocusView {
   let viewedPipId: string | null = null;
   let lastState: GameState | null = null;
   let lastSeenOutcome: AssignExpeditionOutcome | null = null;
+  let lastSeenJobOutcome: JobOutcome | null = null;
   /** Countdown text node per expedition id, refreshed by tick(). */
   let countdownEls = new Map<string, HTMLElement>();
   let refusalEl: HTMLElement | null = null;
@@ -525,6 +665,76 @@ export function createFocusView(deps: FocusViewDeps): FocusView {
       expList.appendChild(card);
     }
 
+    // --- Work (spec §6.2): one row per placed job station ---
+    const workEls: HTMLElement[] = [];
+    if (model.jobs.length > 0) {
+      const workTitle = document.createElement("div");
+      workTitle.className = "pk-focus-section";
+      workTitle.textContent = "Work";
+      const workList = document.createElement("div");
+      workList.className = "pk-focus-expeditions";
+
+      for (const jobRow of model.jobs) {
+        const card = document.createElement("div");
+        card.className = `pk-exp pk-job pk-job--${jobRow.status}`;
+
+        const top = document.createElement("div");
+        top.className = "pk-exp-top";
+        const jobName = document.createElement("span");
+        jobName.className = "pk-exp-name";
+        jobName.textContent = jobRow.stationName;
+        const cadence = document.createElement("span");
+        cadence.className = "pk-exp-duration";
+        cadence.textContent = jobRow.cadenceLabel;
+        top.append(jobName, cadence);
+        card.appendChild(top);
+
+        const flavor = document.createElement("div");
+        flavor.className = "pk-exp-flavor";
+        flavor.textContent =
+          "Steady paws, steady snacks — the basket fills itself. Almost.";
+        card.appendChild(flavor);
+
+        if (jobRow.note !== null) {
+          const note = document.createElement("div");
+          note.className = "pk-exp-note";
+          note.textContent = jobRow.note;
+          card.appendChild(note);
+        }
+
+        if (jobRow.assignable) {
+          const assign = document.createElement("button");
+          assign.type = "button";
+          assign.className = "pk-exp-send";
+          assign.textContent = "Clock in";
+          assign.addEventListener("click", () => {
+            sound("ui.tap");
+            deps.dispatch({
+              type: "ASSIGN_JOB",
+              pipId: model.pipId,
+              stationPlacementId: jobRow.stationPlacementId,
+              at: deps.clock.now(),
+            });
+          });
+          card.appendChild(assign);
+        }
+        if (jobRow.unassignable) {
+          const unassign = document.createElement("button");
+          unassign.type = "button";
+          unassign.className = "pk-exp-send pk-job-break";
+          unassign.textContent = "Take a break";
+          unassign.addEventListener("click", () => {
+            sound("ui.tap");
+            deps.dispatch({ type: "UNASSIGN_JOB", pipId: model.pipId });
+          });
+          card.appendChild(unassign);
+        }
+
+        workList.appendChild(card);
+      }
+      workEls.push(workTitle, workList);
+    }
+
     panel.append(
       closeBtn,
       portrait,
@@ -533,6 +743,7 @@ export function createFocusView(deps: FocusViewDeps): FocusView {
       stats,
       expTitle,
       expList,
+      ...workEls,
     );
   };
 
@@ -552,6 +763,25 @@ export function createFocusView(deps: FocusViewDeps): FocusView {
     }
   };
 
+  /** React to a fresh ASSIGN_JOB/UNASSIGN_JOB outcome while open: the
+   * Sulking refusal line lands in-panel, in the pip's own voice (spec
+   * §4.4). Structural blocks are phase5's toast; success re-renders via
+   * the normal state diff. */
+  const watchJobOutcome = (state: GameState): void => {
+    const outcome = state.lastJobOutcome;
+    if (outcome === null || outcome === lastSeenJobOutcome) return;
+    lastSeenJobOutcome = outcome;
+    if (!isOpen || outcome.pipId !== viewedPipId) return;
+    if (
+      outcome.action === "assignJob" &&
+      !outcome.ok &&
+      outcome.reason === "sulking" &&
+      outcome.line !== undefined
+    ) {
+      showRefusalLine(outcome.line);
+    }
+  };
+
   return {
     el,
     get isOpen(): boolean {
@@ -564,6 +794,7 @@ export function createFocusView(deps: FocusViewDeps): FocusView {
       viewedPipId = state.activePipId;
       // Don't replay an outcome that predates this open.
       lastSeenOutcome = state.lastAssignOutcome;
+      lastSeenJobOutcome = state.lastJobOutcome;
       isOpen = true;
       sound("ui.sheet");
       rebuild(state);
@@ -576,19 +807,22 @@ export function createFocusView(deps: FocusViewDeps): FocusView {
       const prev = lastState;
       lastState = state;
       if (!isOpen) {
-        // Keep the outcome cursor moving while closed so a stale refusal
-        // never replays on the next open.
+        // Keep the outcome cursors moving while closed so a stale
+        // refusal never replays on the next open.
         lastSeenOutcome = state.lastAssignOutcome;
+        lastSeenJobOutcome = state.lastJobOutcome;
         return;
       }
       // Follow the selector: focus always shows the active pip.
       if (viewedPipId !== state.activePipId) {
         viewedPipId = state.activePipId;
         lastSeenOutcome = state.lastAssignOutcome;
+        lastSeenJobOutcome = state.lastJobOutcome;
         rebuild(state);
         return;
       }
       watchAssignOutcome(state);
+      watchJobOutcome(state);
       if (prev !== state) rebuild(state);
     },
 
