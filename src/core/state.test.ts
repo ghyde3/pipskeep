@@ -67,12 +67,19 @@ function makeState(
     resources: {},
     rngState: {},
     seed: 42,
+    keepLevel: 1,
+    eggs: [],
+    pendingReveals: [],
+    nextPipNumber: 2,
+    nextEggNumber: 1,
     cooldowns: {},
     lastLineIndex: {},
     createdAt: 0,
     lastTickAt: 0,
     lastCareOutcome: null,
     lastCatchup: null,
+    lastAssignOutcome: null,
+    lastHatchOutcome: null,
     ...overrides,
   };
 }
@@ -197,6 +204,51 @@ describe("rootReducer TICK — spec §4.1 needs advance + automatic evaluators",
     const next = rootReducer(state, { type: "TICK", at: 4_000 });
     expect(pip(next).needs).toEqual(p.needs);
     expect(next.lastTickAt).toBe(10_000);
+  });
+});
+
+describe("rootReducer SET_ACTIVE_PIP — top-bar selector (spec §10)", () => {
+  const twoPips = (): GameState => {
+    const first = makePip();
+    const second = makePip({ id: "pip-2", name: "Secondpip" });
+    return makeState({
+      pips: { [first.id]: first, [second.id]: second },
+      rosterOrder: [first.id, second.id],
+      activePipId: first.id,
+    });
+  };
+
+  it("switches activePipId to another roster pip and touches nothing else", () => {
+    const state = twoPips();
+    const next = rootReducer(state, { type: "SET_ACTIVE_PIP", pipId: "pip-2" });
+    expect(next.activePipId).toBe("pip-2");
+    expect(next.pips).toBe(state.pips); // structural sharing — pips untouched
+    expect(next.rngState).toBe(state.rngState); // zero rolls consumed
+    expect(next.rosterOrder).toBe(state.rosterOrder);
+  });
+
+  it("an away (OnExpedition) pip can still be selected — bars stay visible", () => {
+    const away = makePip({
+      id: "pip-2",
+      activity: PipActivity.OnExpedition,
+      expedition: { expeditionId: "meadow", departedAt: 0, durationMs: 1000 },
+    });
+    const state = makeState({
+      pips: { "pip-1": makePip(), [away.id]: away },
+      rosterOrder: ["pip-1", away.id],
+    });
+    const next = rootReducer(state, { type: "SET_ACTIVE_PIP", pipId: "pip-2" });
+    expect(next.activePipId).toBe("pip-2");
+  });
+
+  it("unknown pipId and already-active pipId are exact no-ops (same reference)", () => {
+    const state = twoPips();
+    expect(rootReducer(state, { type: "SET_ACTIVE_PIP", pipId: "pip-99" })).toBe(
+      state,
+    );
+    expect(rootReducer(state, { type: "SET_ACTIVE_PIP", pipId: "pip-1" })).toBe(
+      state,
+    );
   });
 });
 
@@ -334,6 +386,7 @@ describe("rootReducer LOAD_SAVE — validated-save replacement (debug import)", 
 describe("rootReducer purity — input state is never mutated", () => {
   const actions: GameAction[] = [
     { type: "TICK", at: HOUR_MS },
+    { type: "SET_ACTIVE_PIP", pipId: "pip-1" },
     { type: "FEED", pipId: "pip-1", foodId: "berry", at: 1 },
     { type: "CLEAN", pipId: "pip-1", at: 1 },
     { type: "PLAY", pipId: "pip-1", at: 1 },

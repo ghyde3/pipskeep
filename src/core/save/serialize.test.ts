@@ -113,6 +113,46 @@ function richState(seed = SEED): GameState {
     resources: { moss: 5, pebble: 12 },
     rngState: rng.getState(),
     seed,
+    keepLevel: 2,
+    eggs: [
+      {
+        id: "egg-1",
+        state: "incubating",
+        foundAt: SAVED_AT - 3_600_000,
+        rarity: "common",
+        incubationMs: 7_200_000,
+        incubationStartedAt: SAVED_AT - 3_500_000,
+        sourceExpeditionId: "forest",
+      },
+      {
+        id: "egg-2",
+        state: "pipping",
+        foundAt: SAVED_AT - 9_000_000,
+        rarity: "rare",
+        incubationMs: 7_200_000,
+        incubationStartedAt: SAVED_AT - 8_900_000,
+        sourceExpeditionId: null,
+      },
+    ],
+    pendingReveals: [
+      {
+        pipId: "pip-1",
+        expeditionId: "mossy-hollow",
+        completedAt: SAVED_AT - 60_000,
+        items: ["berry", "fiber", "berry"],
+        egg: {
+          id: "egg-3",
+          state: "found",
+          foundAt: SAVED_AT - 60_000,
+          rarity: "common",
+          incubationMs: 7_200_000,
+          incubationStartedAt: null,
+          sourceExpeditionId: "mossy-hollow",
+        },
+      },
+    ],
+    nextPipNumber: 4,
+    nextEggNumber: 4,
     cooldowns: {
       "pip-1": { clean: SAVED_AT - 30_000, pet: SAVED_AT - 10_000 },
       "pip-3": { pet: SAVED_AT - 29_999 },
@@ -133,6 +173,15 @@ function richState(seed = SEED): GameState {
       line: "placeholder",
     },
     lastCatchup: null,
+    lastAssignOutcome: {
+      ok: true,
+      pipId: "pip-1",
+      expeditionId: "mossy-hollow",
+      departedAt: SAVED_AT - 600_000,
+      durationMs: 1_800_000,
+      returnAt: SAVED_AT + 1_200_000,
+    },
+    lastHatchOutcome: null,
   };
 }
 
@@ -295,6 +344,24 @@ describe("fromSaveBlob validation", () => {
     expect(
       mustFail(corrupt((b) => { b["state"]["lastLineIndex"]["pip-1"]["angry"] = 0; })).code,
     ).toBe("invalid-field");
+  });
+
+  it("rejects malformed eggs and dangling reveal references (v2 fields)", () => {
+    expect(
+      mustFail(corrupt((b) => { b["state"]["eggs"][0]["state"] = "boiled"; })).path,
+    ).toBe("state.eggs[0].state");
+    expect(
+      mustFail(corrupt((b) => { b["state"]["eggs"][1]["incubationStartedAt"] = "soon"; })).path,
+    ).toBe("state.eggs[1].incubationStartedAt");
+    expect(
+      mustFail(corrupt((b) => { b["state"]["pendingReveals"][0]["pipId"] = "pip-99"; })).path,
+    ).toBe("state.pendingReveals[0].pipId");
+    expect(
+      mustFail(corrupt((b) => { b["state"]["pendingReveals"][0]["items"] = [1]; })).path,
+    ).toBe("state.pendingReveals[0].items[0]");
+    expect(
+      mustFail(corrupt((b) => { delete b["state"]["keepLevel"]; })).path,
+    ).toBe("state.keepLevel");
   });
 
   it("rejects transients that are neither null nor an object", () => {

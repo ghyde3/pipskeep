@@ -8,16 +8,14 @@
  * never throws — corrupt or unmigratable blobs come back as typed errors
  * so the §8 "Start Fresh + export the broken blob" flow gets data.
  *
- * v1 is current, so the step table is empty today. The harness and the
- * fixture test (fixtures/v1.json + migrate.test.ts) exist NOW so the
- * first real schema change (Phase 3) slots in as:
+ * Adding the NEXT schema version:
  *
  *   1. bump CURRENT_SCHEMA_VERSION in serialize.ts and update the
  *      validators for the new shape;
- *   2. add `1: (v1) => v2blob` to MIGRATIONS below (steps receive and
+ *   2. add `N: (vN) => vN+1blob` to MIGRATIONS below (steps receive and
  *      return plain unknown-shaped records — they must not assume the
  *      old shape was valid beyond what they touch);
- *   3. add fixtures/v2.json; migrate.test.ts already asserts a fixture
+ *   3. add fixtures/vN+1.json; migrate.test.ts already asserts a fixture
  *      exists AND migrates cleanly for every version 1..CURRENT.
  */
 
@@ -33,9 +31,49 @@ export type MigrationStep = (
   blob: Readonly<Record<string, unknown>>,
 ) => Record<string, unknown>;
 
+/**
+ * v1 pips could only ever be created by createNewGame (`pip-1`), but a
+ * migration must not assume validity: derive the next id counter from
+ * the largest `pip-<n>` key actually present, falling back to key count.
+ */
+function derivePipCounter(pips: unknown): number {
+  if (!isPlainRecord(pips)) return 1;
+  const keys = Object.keys(pips);
+  let max = 0;
+  for (const key of keys) {
+    const match = /^pip-(\d+)$/.exec(key);
+    if (match !== null) max = Math.max(max, Number(match[1]));
+  }
+  return Math.max(max, keys.length) + 1;
+}
+
 /** Keyed by the version a step upgrades FROM: `MIGRATIONS[n]` turns a
- * vN blob into a v(N+1) blob. Empty while v1 is current. */
-export const MIGRATIONS: Readonly<Record<number, MigrationStep>> = {};
+ * vN blob into a v(N+1) blob. */
+export const MIGRATIONS: Readonly<Record<number, MigrationStep>> = {
+  /**
+   * v1 → v2 (Phase 4, expeditions + eggs): pre-Phase-4 saves had no
+   * Keep level, no eggs, no reveal queue, and no id counters. Defaults
+   * are the "nothing has happened yet" values; the two new transient
+   * echoes start null like their v1 siblings.
+   */
+  1: (blob) => {
+    const out: Record<string, unknown> = { ...blob, schemaVersion: 2 };
+    const state = blob["state"];
+    if (isPlainRecord(state)) {
+      out["state"] = {
+        ...state,
+        keepLevel: 1,
+        eggs: [],
+        pendingReveals: [],
+        nextPipNumber: derivePipCounter(state["pips"]),
+        nextEggNumber: 1,
+        lastAssignOutcome: null,
+        lastHatchOutcome: null,
+      };
+    }
+    return out;
+  },
+};
 
 export type MigrateResult =
   | {

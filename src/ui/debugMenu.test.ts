@@ -288,3 +288,29 @@ describe("formatOffset (the clock readout)", () => {
     expect(formatOffset(1_500)).toBe("+1.5s");
   });
 });
+
+describe("spawn egg — instant Pipping for QA (spec §14)", () => {
+  it("spawnEgg lands one egg already in Pipping, waiting for its tap", () => {
+    const h = makeHarness();
+    h.controller.spawnEgg();
+
+    const eggs = h.store.getState().eggs;
+    expect(eggs).toHaveLength(1);
+    expect(eggs[0]?.state).toBe("pipping");
+    // Backdated spawn: incubation began one full incubation before now.
+    expect(eggs[0]?.incubationStartedAt).toBe(
+      h.clock.now() - eggs[0]!.incubationMs,
+    );
+    // No clock skew involved — the trick is all in the payload timestamps.
+    expect(h.controller.offsetMs()).toBe(0);
+  });
+
+  it("spawned eggs stack and keep deterministic ids", () => {
+    const h = makeHarness();
+    h.controller.spawnEgg();
+    h.controller.spawnEgg();
+    const eggs = h.store.getState().eggs;
+    expect(eggs.map((egg) => egg.id)).toStrictEqual(["egg-1", "egg-2"]);
+    expect(eggs.every((egg) => egg.state === "pipping")).toBe(true);
+  });
+});

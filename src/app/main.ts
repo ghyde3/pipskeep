@@ -28,13 +28,22 @@
 
 import { Application } from "pixi.js";
 import { validateContent } from "../content/validate";
+import { expeditions } from "../content/expeditions";
+import { resolvePipPalette } from "../content/palette";
 import type { Clock } from "../core/clock";
 import { createStore } from "../core/store";
 import { createNewGame, rootReducer } from "../core/state";
 import type { GameState } from "../core/state";
 import { NEED_IDS, PipActivity } from "../core/pips/types";
+import type { PipState } from "../core/pips/types";
 import { createKeepScene } from "../render/keepScene";
 import { initUi, notify } from "../ui";
+import { formatDurationShort } from "../ui/focusView";
+// Phase 4 UI (loot reveal + "While you were away" sheet) — the parallel
+// phase4 module. Intentionally a static import with NO fallback: if
+// src/ui/phase4.ts is missing, the build fails loudly right here rather
+// than silently shipping without the reveal moment.
+import { initPhase4Ui } from "../ui/phase4";
 import { showRecoveryModal } from "../ui/recovery";
 import { OffsetClock } from "./appClock";
 import { routeBoot } from "./bootRoute";
@@ -90,6 +99,37 @@ function watchAlerts(prev: GameState, next: GameState): void {
       });
     }
   }
+}
+
+/** Display name for an expedition id (registry, with a safe fallback). */
+function expeditionName(expeditionId: string): string {
+  return (
+    expeditions[expeditionId as keyof typeof expeditions]?.name ?? expeditionId
+  );
+}
+
+/**
+ * DOM-minimal send-off (spec §10.1.4 "trots off-screen with a wave"): a
+ * tiny palette-matched blob hops from mid-screen off the right edge and
+ * removes itself. The scene keeps rendering truth from state; this is a
+ * transient flourish layered on top, not scene state.
+ */
+function playDepartureTrot(pip: PipState): void {
+  const palette = resolvePipPalette(pip.speciesId, pip.genome.palette);
+  const trot = document.createElement("div");
+  trot.className = "pk-trot";
+  trot.style.setProperty("--pk-accent", palette.accent);
+  const blob = document.createElement("div");
+  blob.className = "pk-trot-blob";
+  blob.style.background = palette.body;
+  blob.style.borderColor = palette.outline;
+  trot.appendChild(blob);
+  trot.addEventListener("animationend", (event) => {
+    if (event.target === trot) trot.remove();
+  });
+  document.body.appendChild(trot);
+  // Belt and braces: if animations are disabled, still clean up.
+  window.setTimeout(() => trot.remove(), 4000);
 }
 
 /** Which inventory item a FEED/GIVE_ITEM consumed — colors the morsel. */
@@ -186,12 +226,18 @@ async function startGame(
     scene.resize(window.innerWidth, window.innerHeight);
   });
 
+  // --- Phase 4 UI (loot reveal + away sheet) ---
+  // Exactly ONE call, before the overlay so the reveal seam exists when
+  // the top bar's "!" chip and the return toast wire up to it.
+  const phase4 = initPhase4Ui(store, clock);
+
   // --- DOM UI overlay ---
   const ui = initUi({
     mount: document.body,
     store,
     clock,
     getBubbleAnchor: () => scene.getBubbleAnchor(),
+    openReveal: () => phase4.openLootReveal(),
   });
 
   // --- Store → scene/UI reactions ---
@@ -210,10 +256,33 @@ async function startGame(
       scene.playCareOutcome(state.lastCareOutcome, consumedItem(prev, state));
       ui.showOutcome(state.lastCareOutcome);
     }
+
+    // Send-off: a successful ASSIGN_EXPEDITION trots the pip off-screen
+    // (spec §10.1.4). The focus view closes itself on the same diff.
+    if (
+      state.lastAssignOutcome !== prev.lastAssignOutcome &&
+      state.lastAssignOutcome?.ok === true
+    ) {
+      const { pipId, expeditionId, durationMs } = state.lastAssignOutcome;
+      const pip = state.pips[pipId];
+      if (pip !== undefined) {
+        playDepartureTrot(pip);
+        notify({
+          kind: "info",
+          message: `${pip.name} trotted off to the ${expeditionName(expeditionId)} — back in ${formatDurationShort(durationMs)}!`,
+        });
+      }
+    }
+
+    // Expedition-return toasts live in the phase4 module (diffPhase4):
+    // it fires "X is back from the Y!" and auto-opens the loot reveal, so
+    // main.ts adds nothing here. The top bar's "!" chip is the persistent
+    // tap-to-open affordance for a still-waiting queue.
+
     if (state.lastCatchup !== prev.lastCatchup && state.lastCatchup !== null) {
-      // Phase 4 builds the "While you were away…" sheet from this. Skip
-      // sub-second absences (quick tab flicks fire a CATCHUP per §4.5,
-      // but a zero-length summary is console noise, not news).
+      // The "While you were away…" sheet (phase4 module) renders this.
+      // Keep the console echo for QA; skip sub-second absences (quick tab
+      // flicks fire a CATCHUP per §4.5 — noise, not news).
       if (state.lastCatchup.elapsedMs >= 1000) {
         console.info("PipsKeep — while you were away:", state.lastCatchup);
       }

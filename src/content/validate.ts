@@ -73,8 +73,15 @@ export function collectContentIssues(
   ]);
   const knownKeepLevels = new Set(content.keepLevels.map((l) => l.level));
 
-  // --- Species: broken evolution targets, missing item refs ---
+  // --- Species: broken evolution targets, missing item refs, and
+  // non-empty sprite variant lists (genome rolls pick from them) ---
   for (const s of Object.values(content.species)) {
+    if (s.sprite.palettes.length === 0) {
+      errors.push(`species "${s.id}": empty sprite palette list`);
+    }
+    if (s.sprite.patterns.length === 0) {
+      errors.push(`species "${s.id}": empty sprite pattern list`);
+    }
     if (s.evolution) {
       if (!(s.evolution.targetSpeciesId in content.species)) {
         errors.push(
@@ -132,6 +139,11 @@ export function collectContentIssues(
     }
     if (e.durationMs <= 0) {
       errors.push(`expedition "${e.id}": durationMs must be > 0`);
+    }
+    if (!Number.isInteger(e.lootRolls) || e.lootRolls <= 0) {
+      errors.push(
+        `expedition "${e.id}": lootRolls must be a positive integer, got ${e.lootRolls}`,
+      );
     }
     if (!knownKeepLevels.has(e.unlockKeepLevel)) {
       errors.push(

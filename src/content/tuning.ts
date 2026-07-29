@@ -10,6 +10,8 @@ import type { NeedId } from "../core/pips";
 import type { PersonalityId } from "./personalities";
 import type { KeepLevel } from "../core/keep";
 import type { ResourceBundle } from "../core/economy";
+// Type-only import from a sibling registry (erased at compile — no cycle).
+import type { Rarity } from "./species";
 
 export const SECOND_MS = 1_000;
 export const MINUTE_MS = 60 * SECOND_MS;
@@ -106,14 +108,38 @@ export const tuning = {
     lazyFlavorRefusalChance: 0.15,
   },
 
-  /** Expedition table (spec §6.1). Loot tables live in expeditions.ts. */
+  /**
+   * Expedition table (spec §6.1). Loot tables live in expeditions.ts.
+   * `lootRolls` = base weighted rolls per completed trip (the reveal's
+   * item count before Curious's bonus rolls).
+   */
   expeditions: {
-    meadow: { durationMs: 5 * MINUTE_MS, eggChance: 0.08, unlockKeepLevel: 1 },
-    forest: { durationMs: 15 * MINUTE_MS, eggChance: 0.12, unlockKeepLevel: 2 },
-    shore: { durationMs: 30 * MINUTE_MS, eggChance: 0.18, unlockKeepLevel: 3 },
+    meadow: {
+      durationMs: 5 * MINUTE_MS,
+      eggChance: 0.08,
+      unlockKeepLevel: 1,
+      lootRolls: 2,
+    },
+    forest: {
+      durationMs: 15 * MINUTE_MS,
+      eggChance: 0.12,
+      unlockKeepLevel: 2,
+      lootRolls: 3,
+    },
+    shore: {
+      durationMs: 30 * MINUTE_MS,
+      eggChance: 0.18,
+      unlockKeepLevel: 3,
+      lootRolls: 4,
+    },
   } satisfies Record<
     string,
-    { durationMs: number; eggChance: number; unlockKeepLevel: KeepLevel }
+    {
+      durationMs: number;
+      eggChance: number;
+      unlockKeepLevel: KeepLevel;
+      lootRolls: number;
+    }
   >,
 
   /** Gathering job (spec §6.2): 1 resource per interval from a weighted table. */
@@ -122,8 +148,34 @@ export const tuning = {
     table: { berry: 0.7, fiber: 0.3 },
   },
 
-  /** Egg incubation (spec §7.2). Never capped by offline rules. */
-  eggIncubationMs: 2 * HOUR_MS,
+  /** Eggs (spec §7). Incubation timers are never capped by offline rules. */
+  eggs: {
+    /** Incubation (spec §7.2): real-time, 2h default. */
+    incubationMsDefault: 2 * HOUR_MS,
+    /** Content-defined per-rarity overrides (spec §7.2); absent → default. */
+    incubationMsByRarity: {} satisfies Partial<Record<Rarity, number>>,
+    /** Rarity of eggs found on expeditions (spec §7.1 — the MVP source). */
+    expeditionEggRarity: "common" satisfies Rarity,
+    /**
+     * Species-roll weights by registry rarity at hatch (spec §7.3:
+     * "weighted by registry rarity"). Relative weights per species entry.
+     */
+    rarityWeights: {
+      common: 100,
+      uncommon: 25,
+      rare: 5,
+    } satisfies Record<Rarity, number>,
+  },
+
+  /**
+   * Breeding seam numbers (spec §7.3/§12 — `combineGenomes` only; nothing
+   * in gameplay reads these until the breeding UI phase).
+   */
+  breeding: {
+    /** Chance that an inherited palette/pattern mutates to a random
+     * variant of the child's species instead (per field). */
+    mutationChance: 0.05,
+  },
 
   /** Roster cap (spec §7.4): 3 active Pips; Keep upgrade raises to 5. */
   rosterCap: 3,

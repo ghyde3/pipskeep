@@ -18,9 +18,10 @@
  * day one), which upgrades then re-enters here for final validation.
  *
  * Validation depth: every field the simulation computes with is deeply
- * validated (pips, needs, rng cursors, cooldowns, roster referential
- * integrity). The two transient UI echoes (`lastCareOutcome`,
- * `lastCatchup`) are checked to be `null | plain object` only — a
+ * validated (pips, needs, eggs, pending reveals, rng cursors, cooldowns,
+ * roster referential integrity). The transient UI echoes
+ * (`lastCareOutcome`, `lastCatchup`, `lastAssignOutcome`,
+ * `lastHatchOutcome`) are checked to be `null | plain object` only — a
  * deliberate, permanent contract, not a stopgap: the sim never reads
  * them (they only feed UI diffing), and passing them through unchanged
  * is what keeps save→load deep-equal (the Phase 2 gate). Deep-validate
@@ -43,8 +44,13 @@ import { DIALOGUE_CONTEXTS } from "../pips/mood";
 import type { DialogueContext } from "../pips/mood";
 import type { LastLineIndexByPip, PipLastLines } from "../pips/dialogue";
 import type { CatchupSummary } from "../pips/catchup";
+import { EggState } from "../eggs";
+import type { Egg, HatchOutcome } from "../eggs";
+import type { AssignExpeditionOutcome, PendingReveal } from "../expeditions";
 
-export const CURRENT_SCHEMA_VERSION = 1;
+/** v2 (Phase 4): keepLevel, eggs, pendingReveals, id counters, and the
+ * two new transient outcome echoes. */
+export const CURRENT_SCHEMA_VERSION = 2;
 
 /** The on-disk envelope (spec §8). */
 export interface SaveBlob {
@@ -233,6 +239,60 @@ function validateStringArray(value: unknown, path: string): string[] {
 
 const LIFE_STAGES: readonly LifeStage[] = Object.values(LifeStage);
 const ACTIVITIES: readonly PipActivity[] = Object.values(PipActivity);
+const EGG_STATES: readonly EggState[] = Object.values(EggState);
+
+function expectNumberOrNull(value: unknown, path: string): number | null {
+  if (value === null) return null;
+  return expectFiniteNumber(value, path);
+}
+
+function validateEgg(value: unknown, path: string): Egg {
+  const rec = expectRecord(value, path);
+  return {
+    id: expectString(rec["id"], p(path, "id")),
+    state: expectOneOf(rec["state"], p(path, "state"), EGG_STATES),
+    foundAt: expectFiniteNumber(rec["foundAt"], p(path, "foundAt")),
+    rarity: expectString(rec["rarity"], p(path, "rarity")),
+    incubationMs: expectFiniteNumber(rec["incubationMs"], p(path, "incubationMs")),
+    incubationStartedAt: expectNumberOrNull(
+      rec["incubationStartedAt"],
+      p(path, "incubationStartedAt"),
+    ),
+    sourceExpeditionId: expectStringOrNull(
+      rec["sourceExpeditionId"],
+      p(path, "sourceExpeditionId"),
+    ),
+  };
+}
+
+function validateEggs(value: unknown, path: string): readonly Egg[] {
+  if (!Array.isArray(value)) {
+    fail("invalid-field", path, `expected an array, got ${describeValue(value)}`);
+  }
+  return value.map((egg, i) => validateEgg(egg, `${path}[${i}]`));
+}
+
+function validatePendingReveal(value: unknown, path: string): PendingReveal {
+  const rec = expectRecord(value, path);
+  const eggValue = rec["egg"];
+  return {
+    pipId: expectString(rec["pipId"], p(path, "pipId")),
+    expeditionId: expectString(rec["expeditionId"], p(path, "expeditionId")),
+    completedAt: expectFiniteNumber(rec["completedAt"], p(path, "completedAt")),
+    items: validateStringArray(rec["items"], p(path, "items")),
+    egg: eggValue === null ? null : validateEgg(eggValue, p(path, "egg")),
+  };
+}
+
+function validatePendingReveals(
+  value: unknown,
+  path: string,
+): readonly PendingReveal[] {
+  if (!Array.isArray(value)) {
+    fail("invalid-field", path, `expected an array, got ${describeValue(value)}`);
+  }
+  return value.map((reveal, i) => validatePendingReveal(reveal, `${path}[${i}]`));
+}
 
 function validateGenome(value: unknown, path: string): TraitGenome {
   const rec = expectRecord(value, path);
@@ -389,6 +449,22 @@ function validateGameState(value: unknown, path: string): GameState {
     );
   }
 
+  // Reveal pips must exist (same referential bar as rosterOrder — the
+  // acknowledge path resolves them).
+  const pendingReveals = validatePendingReveals(
+    rec["pendingReveals"],
+    p(path, "pendingReveals"),
+  );
+  pendingReveals.forEach((reveal, i) => {
+    if (pips[reveal.pipId] === undefined) {
+      fail(
+        "invalid-field",
+        `${p(path, "pendingReveals")}[${i}].pipId`,
+        `reveal references unknown pip ${JSON.stringify(reveal.pipId)}`,
+      );
+    }
+  });
+
   return {
     pips,
     rosterOrder,
@@ -399,6 +475,17 @@ function validateGameState(value: unknown, path: string): GameState {
     // reload produce the exact same future rolls.
     rngState: validateNumberRecord(rec["rngState"], p(path, "rngState")),
     seed: expectFiniteNumber(rec["seed"], p(path, "seed")),
+    keepLevel: expectFiniteNumber(rec["keepLevel"], p(path, "keepLevel")),
+    eggs: validateEggs(rec["eggs"], p(path, "eggs")),
+    pendingReveals,
+    nextPipNumber: expectFiniteNumber(
+      rec["nextPipNumber"],
+      p(path, "nextPipNumber"),
+    ),
+    nextEggNumber: expectFiniteNumber(
+      rec["nextEggNumber"],
+      p(path, "nextEggNumber"),
+    ),
     cooldowns: validateCooldowns(rec["cooldowns"], p(path, "cooldowns")),
     lastLineIndex: validateLastLineIndex(
       rec["lastLineIndex"],
@@ -414,6 +501,14 @@ function validateGameState(value: unknown, path: string): GameState {
       rec["lastCatchup"],
       p(path, "lastCatchup"),
     ) as CatchupSummary | null,
+    lastAssignOutcome: passThroughTransient(
+      rec["lastAssignOutcome"],
+      p(path, "lastAssignOutcome"),
+    ) as AssignExpeditionOutcome | null,
+    lastHatchOutcome: passThroughTransient(
+      rec["lastHatchOutcome"],
+      p(path, "lastHatchOutcome"),
+    ) as HatchOutcome | null,
   };
 }
 

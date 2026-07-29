@@ -10,7 +10,7 @@ Phase-gate log and decision journal, per spec §13–§15. Append entries; never
 | 1 — Pip core (logic only) | **gate passed** | 2026-07-29 |
 | 2 — Care actions + first playable | **gate passed** | 2026-07-29 |
 | 3 — Save system hardening | **gate passed** | 2026-07-29 |
-| 4 — Expeditions + eggs | not started | — |
+| 4 — Expeditions + eggs | **gate passed** | 2026-07-29 |
 | 5 — The Keep | not started | — |
 | 6 — Polish, PWA, onboarding | not started | — |
 
@@ -41,6 +41,14 @@ Phase-gate log and decision journal, per spec §13–§15. Append entries; never
 - Mutation: 7 mutations; 1 survived initially (boot silently creating a new game on corrupt blob — the exact §8-forbidden bug) → fixer added boot-level coverage; re-gate green (398→406 tests).
 - Manual check (browser): wrench menu opens; +6h skew live-verified the personality table (Food 57→21 = 6×6, Happy −24 = 6×5×0.8 Curious, Clean −28.8 = 6×4×1.2), clock badge +6h; corrupt-save flow QA'd — modal with warm copy, broken blob quarantined verbatim in idb, Start Fresh only on explicit click; export/import round-trip incl. bad-JSON rejection toast. Debug menu confirmed absent from prod bundle (grep dist clean).
 - Notes: `new Date(exportedAt)` in recovery.ts formats an injected timestamp (letter-vs-spirit of §2 rule 2 — acceptable, documented); transient echoes (lastCareOutcome/lastCatchup) remain shallow-validated.
+
+### Phase 4 — Expeditions + eggs — 2026-07-29
+- Tests: `npm test` → 29 files, **521 passed**. Full §13 Phase 4 gate mapped: seeded loot asserted item-by-item under FakeClock; egg completes during offline absence and waits in Pipping (never auto-hatches); roster-cap hatch refusal (friendly, egg intact, never expires); reload mid-expedition preserves remaining time to the ms; deferred Sulking with loot unaffected; Hardworking ×0.85 + Curious loot bonus; chronological RNG ordering across multi-pip returns; combineGenomes tested as a seam and verified uncalled by gameplay (§12).
+- Save schema bumped v1→v2 with migration + fixture — the Phase 2 migration harness's first real use; live browser save migrated cleanly.
+- Mutation: 9/9 killed. Verifiers all passed with minors only.
+- Manual check (browser): away sheet ("You were gone 13 minutes. The Keep kept busy.") with per-pip delta chips; focus view with personality blurbs, locked-expedition copy, live countdown; Send → status glyph → +1h skip → "Mosspip is back!" reveal auto-opened with staged cards → Collect landed loot. Egg spawn → Pipping wobble → tap-hatch → new Pipling with hello line (verified by builder QA + integrator).
+- Two real rendering bugs found and fixed during builder browser QA: Pixi v8 lazy worldTransform hit-testing (replaced with stage-level manual hit test) and a tab-hidden RAF pause leaving a dead tween target that killed the renderer.
+- Notes for Phase 5: wire upgraded roster cap into HATCH_EGG + add the §7.4 upgrade-prompt nudge to the roster-full message; add explicit ACKNOWLEDGE_REVEAL double-dispatch idempotency test.
 
 <!-- One entry per completed phase:
 

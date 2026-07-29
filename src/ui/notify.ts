@@ -20,6 +20,10 @@ export type NotifyKind =
 export interface NotifyEvent {
   readonly kind: NotifyKind;
   readonly message: string;
+  /** Optional tap action (e.g. an expedition-return toast opening the
+   * loot reveal). Tappable toasts get pointer-events and a pressed look;
+   * plain toasts stay pass-through. */
+  readonly onTap?: () => void;
 }
 
 const MAX_TOASTS = 4;
@@ -43,6 +47,14 @@ export function notify(event: NotifyEvent): void {
   const toast = document.createElement("div");
   toast.className = `pk-toast pk-toast--${event.kind}`;
   toast.textContent = event.message;
+  const onTap = event.onTap;
+  if (onTap !== undefined) {
+    toast.classList.add("pk-toast--tap");
+    toast.addEventListener("click", () => {
+      toast.remove();
+      onTap();
+    });
+  }
   stack.appendChild(toast);
   sound("notify.toast");
   // Slide in on the next frame so the transition runs.

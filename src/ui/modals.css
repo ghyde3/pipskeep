@@ -1,0 +1,513 @@
+/**
+ * Phase 4 overlays (spec §6.1 loot reveal, §4.5 away sheet): the loot
+ * reveal modal, the "While you were away…" sheet, and their particle
+ * flair. Lives beside ui.css (which owns bars/sheet/toasts) — same
+ * design language: cream cards, soft-green borders, springy pops.
+ * Mounted on document.body via ui/phase4.ts, so the root carries its own
+ * font stack.
+ */
+
+.pk-phase4 {
+  position: fixed;
+  inset: 0;
+  z-index: 44;
+  pointer-events: none;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, sans-serif;
+  color: #3d4a3d;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ---------- Loot reveal modal (spec §6.1 — the dopamine core) ---------- */
+
+.pk-reveal {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  visibility: hidden;
+}
+
+.pk-reveal--open {
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.pk-reveal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(61, 74, 61, 0.42);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  opacity: 0;
+  transition:
+    opacity 260ms ease,
+    background 500ms ease;
+}
+
+.pk-reveal--open .pk-reveal-backdrop {
+  opacity: 1;
+}
+
+/* Egg moment: the room goes dark, the egg gets the spotlight. */
+.pk-reveal--eggmoment .pk-reveal-backdrop {
+  background: rgba(28, 34, 30, 0.78);
+}
+
+.pk-reveal-card {
+  position: relative;
+  width: min(400px, 94vw);
+  background: #fffdf6;
+  border: 1.5px solid rgba(95, 138, 94, 0.25);
+  border-radius: 22px;
+  box-shadow: 0 12px 40px rgba(61, 74, 61, 0.3);
+  padding: 22px 20px calc(env(safe-area-inset-bottom, 0px) + 20px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+  overflow: hidden;
+  transform: translateY(18px) scale(0.92);
+  opacity: 0;
+  transition:
+    transform 340ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    opacity 220ms ease;
+}
+
+.pk-reveal--open .pk-reveal-card {
+  transform: translateY(0) scale(1);
+  opacity: 1;
+}
+
+.pk-reveal-title {
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.pk-reveal-sub {
+  font-size: 13px;
+  opacity: 0.65;
+  margin-top: -4px;
+}
+
+.pk-reveal-items {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+  padding: 8px 0 2px;
+  min-height: 0;
+}
+
+/* Item cards: face-down "?" until their beat, then a springy pop. */
+.pk-reveal-item {
+  position: relative;
+  width: 76px;
+  min-height: 86px;
+  border-radius: 14px;
+  background: rgba(95, 138, 94, 0.1);
+  border: 1.5px dashed rgba(95, 138, 94, 0.3);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 9px 4px;
+}
+
+.pk-reveal-item::before {
+  content: "?";
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26px;
+  font-weight: 800;
+  color: rgba(95, 138, 94, 0.5);
+}
+
+.pk-reveal-item > * {
+  opacity: 0;
+  transform: scale(0.2);
+}
+
+.pk-reveal-item--in {
+  background: #ffffff;
+  border-style: solid;
+  border-color: rgba(95, 138, 94, 0.25);
+}
+
+.pk-reveal-item--in::before {
+  content: none;
+}
+
+.pk-reveal-item--in > * {
+  opacity: 1;
+  transform: scale(1);
+  transition: transform 380ms cubic-bezier(0.34, 1.7, 0.64, 1);
+}
+
+/* Uncommon/rare flair: warm glow ring pulsing out of the card. */
+.pk-reveal-item--uncommon.pk-reveal-item--in,
+.pk-reveal-item--rare.pk-reveal-item--in {
+  border-color: rgba(246, 183, 60, 0.75);
+  box-shadow: 0 0 0 3px rgba(246, 183, 60, 0.25);
+  animation: pk-glow 1100ms ease-out 1;
+}
+
+.pk-reveal-item--rare.pk-reveal-item--in {
+  border-color: rgba(183, 159, 240, 0.9);
+  box-shadow: 0 0 0 3px rgba(183, 159, 240, 0.3);
+}
+
+@keyframes pk-glow {
+  0% {
+    box-shadow: 0 0 0 0 rgba(246, 183, 60, 0.55);
+  }
+  100% {
+    box-shadow: 0 0 0 14px rgba(246, 183, 60, 0);
+  }
+}
+
+.pk-reveal-swatch {
+  width: 30px;
+  height: 30px;
+  border-radius: 50% 45% 55% 50%;
+  box-shadow: inset 0 -5px 0 rgba(0, 0, 0, 0.12);
+}
+
+.pk-reveal-name {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+/* The egg showstopper. */
+.pk-reveal-eggstage {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding-top: 4px;
+  opacity: 0;
+  transform: scale(0.3);
+}
+
+.pk-reveal-eggstage--in {
+  opacity: 1;
+  transform: scale(1);
+  transition: transform 520ms cubic-bezier(0.34, 1.8, 0.64, 1);
+}
+
+.pk-reveal-eggstage--in svg {
+  animation: pk-eggwobble 900ms ease-in-out 200ms 3;
+  transform-origin: 50% 88%;
+  filter: drop-shadow(0 0 18px rgba(249, 212, 125, 0.9));
+}
+
+@keyframes pk-eggwobble {
+  0%,
+  100% {
+    transform: rotate(0deg);
+  }
+  20% {
+    transform: rotate(-7deg);
+  }
+  45% {
+    transform: rotate(6deg);
+  }
+  70% {
+    transform: rotate(-4deg);
+  }
+  85% {
+    transform: rotate(2.5deg);
+  }
+}
+
+.pk-reveal-eggcaption {
+  font-size: 15px;
+  font-weight: 800;
+  color: #b1782a;
+}
+
+/* Spotlight: everything else recedes during the egg moment. */
+.pk-reveal--eggmoment .pk-reveal-item {
+  opacity: 0.35;
+  transition: opacity 400ms ease;
+}
+
+.pk-reveal-summary {
+  font-size: 13.5px;
+  line-height: 1.45;
+  opacity: 0;
+  transform: translateY(6px);
+  min-height: 20px;
+  transition:
+    opacity 320ms ease,
+    transform 320ms ease;
+}
+
+.pk-reveal-summary--in {
+  opacity: 0.9;
+  transform: translateY(0);
+}
+
+.pk-reveal-collect {
+  appearance: none;
+  border: none;
+  border-radius: 14px;
+  min-height: 46px;
+  padding: 12px 40px;
+  background: #7cc283;
+  color: #fffdf6;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 800;
+  cursor: pointer;
+  touch-action: manipulation;
+  box-shadow: 0 2px 0 rgba(61, 107, 68, 0.4);
+  opacity: 0;
+  transform: scale(0.7);
+  pointer-events: none;
+  transition:
+    transform 300ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    opacity 180ms ease;
+}
+
+.pk-reveal-collect--in {
+  opacity: 1;
+  transform: scale(1);
+  pointer-events: auto;
+}
+
+.pk-reveal-collect:active {
+  transform: scale(0.95);
+}
+
+/* Particle layer over the card. */
+.pk-reveal-fx {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.pk-spark {
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--bg, #f9d47d);
+  animation: pk-spark var(--dur, 600ms) ease-out forwards;
+}
+
+@keyframes pk-spark {
+  0% {
+    opacity: 1;
+    transform: translate(0, 0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(var(--dx, 0), var(--dy, -30px)) scale(0.2);
+  }
+}
+
+.pk-confetti {
+  position: absolute;
+  top: -12px;
+  width: 8px;
+  height: 12px;
+  border-radius: 2px;
+  background: var(--bg, #f6a8b8);
+  animation: pk-confetti var(--dur, 1800ms) ease-in var(--delay, 0ms) forwards;
+}
+
+@keyframes pk-confetti {
+  0% {
+    opacity: 1;
+    transform: translate(0, 0) rotate(0deg);
+  }
+  100% {
+    opacity: 0.15;
+    transform: translate(var(--drift, 0), 105vh) rotate(var(--spin, 360deg));
+  }
+}
+
+/* Confined to the card, "105vh" overshoots — clip handles it. */
+.pk-reveal-fx .pk-confetti {
+  animation-name: pk-confetti-card;
+}
+
+@keyframes pk-confetti-card {
+  0% {
+    opacity: 1;
+    transform: translate(0, 0) rotate(0deg);
+  }
+  100% {
+    opacity: 0.1;
+    transform: translate(var(--drift, 0), 480px) rotate(var(--spin, 360deg));
+  }
+}
+
+/* ---------- "While you were away…" sheet (spec §4.5) ---------- */
+
+.pk-away {
+  position: absolute;
+  inset: 0;
+  z-index: 2; /* above the reveal inside .pk-phase4 */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  visibility: hidden;
+}
+
+.pk-away--open {
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.pk-away-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(61, 74, 61, 0.4);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  opacity: 0;
+  transition: opacity 240ms ease;
+}
+
+.pk-away--open .pk-away-backdrop {
+  opacity: 1;
+}
+
+.pk-away-card {
+  position: relative;
+  width: min(420px, 94vw);
+  max-height: 82vh;
+  overflow-y: auto;
+  background: #fffdf6;
+  border: 1.5px solid rgba(95, 138, 94, 0.25);
+  border-radius: 22px;
+  box-shadow: 0 12px 40px rgba(61, 74, 61, 0.3);
+  padding: 22px 20px calc(env(safe-area-inset-bottom, 0px) + 20px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transform: translateY(20px) scale(0.94);
+  opacity: 0;
+  transition:
+    transform 340ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    opacity 220ms ease;
+}
+
+.pk-away--open .pk-away-card {
+  transform: translateY(0) scale(1);
+  opacity: 1;
+}
+
+.pk-away-title {
+  font-size: 20px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.pk-away-elapsed {
+  font-size: 13px;
+  text-align: center;
+  opacity: 0.7;
+  margin-top: -4px;
+}
+
+.pk-away-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 4px;
+}
+
+.pk-away-pip {
+  background: rgba(95, 138, 94, 0.07);
+  border-radius: 14px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pk-away-pipname {
+  font-size: 13.5px;
+  font-weight: 800;
+}
+
+.pk-away-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+/* Arrows, not doom: both directions stay soft and friendly. */
+.pk-away-chip {
+  font-size: 11.5px;
+  font-weight: 700;
+  padding: 3px 9px;
+  border-radius: 9px;
+  background: rgba(232, 165, 75, 0.16);
+  color: #9c6f2e;
+  font-variant-numeric: tabular-nums;
+}
+
+.pk-away-chip--up {
+  background: rgba(124, 194, 131, 0.2);
+  color: #3d6b44;
+}
+
+.pk-away-note {
+  font-size: 12px;
+  font-style: italic;
+  opacity: 0.65;
+}
+
+.pk-away-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.4;
+  padding: 0 2px;
+}
+
+.pk-away-icon {
+  flex: none;
+  font-size: 14px;
+}
+
+.pk-away-dismiss {
+  appearance: none;
+  border: none;
+  border-radius: 14px;
+  min-height: 46px;
+  margin-top: 6px;
+  padding: 12px 16px;
+  background: #7cc283;
+  color: #fffdf6;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 800;
+  cursor: pointer;
+  touch-action: manipulation;
+  box-shadow: 0 2px 0 rgba(61, 107, 68, 0.4);
+  transition: transform 90ms ease;
+}
+
+.pk-away-dismiss:active {
+  transform: scale(0.97);
+}

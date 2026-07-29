@@ -20,12 +20,12 @@
  * future and §4.5 clamps the negative elapsed to 0. That is the desired
  * QA semantics (nothing double-decays).
  *
- * SEAM (spec §14, Phase 4): "spawn egg" belongs in this menu but the egg
- * lifecycle does not exist yet. When Phase 4 lands its egg actions, add
- * a `spawnEgg()` controller method dispatching the new action and a
- * button in the "grant" row below — nothing else here needs to change.
- * Deliberately absent until then (spec §12: seam only, nothing
- * speculative).
+ * Spawn egg (spec §14, Phase 4 — the seam, now filled): dispatches
+ * DEBUG_SPAWN_EGG with `at` BACKDATED by the full incubation length,
+ * then a TICK at now — settleDueEggs flips the brand-new egg straight to
+ * Pipping, so QA gets an instantly tappable hatch moment without touching
+ * the clock. (Timestamps are action payload data; backdating one is a
+ * pure QA trick, not a clock read.)
  */
 
 import type { Clock } from "../core/clock";
@@ -39,7 +39,8 @@ import { LATEST_SAVE_KEY } from "../app/persistence";
 import type { SaveStore } from "../app/persistence";
 import { domDownload } from "./recovery";
 import { notify } from "./notify";
-import { HOUR_MS, MINUTE_MS, SECOND_MS } from "../content/tuning";
+import { HOUR_MS, MINUTE_MS, SECOND_MS, tuning } from "../content/tuning";
+import { resolveIncubationMs } from "../core/eggs";
 
 /** Unique needle for the prod-bundle tree-shake check (`grep dist/`). */
 export const DEBUG_MENU_MARKER = "pipskeep-debug-menu";
@@ -89,6 +90,10 @@ export interface DebugMenuController {
   grantStew(): void;
   /** +GRANT_EACH_RESOURCE_COUNT of every base resource (§6.3). */
   grantAllResources(): void;
+  /** Spawn an instantly-Pipping egg (spec §14 "spawn egg"): the spawn is
+   * backdated by its full incubation and the follow-up TICK flips it to
+   * Pipping — tap it in the Keep to QA the hatch flow end to end. */
+  spawnEgg(): void;
   /** Download the current world as pipskeep-save.json. Returns the
    * exported blob (handy for tests). */
   exportSave(): SaveBlob;
@@ -132,6 +137,15 @@ export function createDebugMenuController(
         resources[id] = GRANT_EACH_RESOURCE_COUNT;
       }
       deps.store.dispatch({ type: "DEBUG_GRANT", resources });
+    },
+
+    spawnEgg(): void {
+      const now = deps.clock.now();
+      const incubationMs = resolveIncubationMs(tuning.eggs.expeditionEggRarity);
+      deps.store.dispatch({ type: "DEBUG_SPAWN_EGG", at: now - incubationMs });
+      // settleDueEggs is inclusive at the boundary, so this TICK flips the
+      // backdated egg straight to Pipping.
+      deps.store.dispatch({ type: "TICK", at: now });
     },
 
     exportSave(): SaveBlob {
@@ -332,9 +346,8 @@ export function initDebugMenu(deps: DebugMenuDeps): DebugMenu {
     button(`+${GRANT_EACH_RESOURCE_COUNT} of each resource`, () =>
       controller.grantAllResources(),
     ),
+    button("Spawn egg", () => controller.spawnEgg()),
   );
-  // SEAM (spec §14, Phase 4): the "Spawn egg" button joins grantRow here
-  // once the egg lifecycle and its action exist.
 
   const fileInput = document.createElement("input");
   fileInput.type = "file";

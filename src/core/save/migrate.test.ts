@@ -44,8 +44,8 @@ describe("migrate fixtures", () => {
     }
   });
 
-  it("passes a current-version (v1) blob through untouched", () => {
-    const raw = loadFixture(1);
+  it("passes a current-version blob through untouched", () => {
+    const raw = loadFixture(CURRENT_SCHEMA_VERSION);
     const migrated = migrate(raw);
     const direct = fromSaveBlob(raw);
     expect(migrated.ok).toBe(true);
@@ -55,8 +55,8 @@ describe("migrate fixtures", () => {
     }
   });
 
-  it("v1 fixture re-wraps to an identical envelope (fixture stays canonical)", () => {
-    const result = migrate(loadFixture(1));
+  it("current fixture re-wraps to an identical envelope (fixture stays canonical)", () => {
+    const result = migrate(loadFixture(CURRENT_SCHEMA_VERSION));
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     const rewrapped = toSaveBlob(result.save.state, result.save.savedAt);
@@ -64,11 +64,25 @@ describe("migrate fixtures", () => {
   });
 
   it("has a registered step for every historical version below CURRENT", () => {
-    // Empty today (v1 is current); fails the moment CURRENT bumps
-    // without its vN→vN+1 step.
+    // Fails the moment CURRENT bumps without its vN→vN+1 step.
     for (let version = 1; version < CURRENT_SCHEMA_VERSION; version++) {
       expect(MIGRATIONS[version], `MIGRATIONS[${version}] missing`).toBeDefined();
     }
+  });
+
+  it("v1 → v2 fills Phase 4 defaults and derives the pip counter", () => {
+    const result = migrate(loadFixture(1));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const state = result.save.state;
+    expect(state.keepLevel).toBe(1);
+    expect(state.eggs).toEqual([]);
+    expect(state.pendingReveals).toEqual([]);
+    // v1 fixture has pip-1 and pip-2 → the next id is pip-3.
+    expect(state.nextPipNumber).toBe(3);
+    expect(state.nextEggNumber).toBe(1);
+    expect(state.lastAssignOutcome).toBeNull();
+    expect(state.lastHatchOutcome).toBeNull();
   });
 });
 

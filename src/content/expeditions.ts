@@ -28,6 +28,8 @@ export interface ExpeditionDef {
   durationMs: number;
   /** Weighted loot table; rolls use the seeded expedition stream (§6.1). */
   lootTable: readonly LootTableEntry[];
+  /** Base weighted rolls per completed trip (items in the reveal). */
+  lootRolls: number;
   /** Probability [0, 1] that the expedition also returns an egg. */
   eggChance: number;
   flavor: string;
@@ -43,6 +45,7 @@ export const expeditions: Readonly<Record<ExpeditionId, ExpeditionDef>> = {
       { itemId: "berry", weight: 60 },
       { itemId: "fiber", weight: 40 },
     ],
+    lootRolls: tuning.expeditions.meadow.lootRolls,
     eggChance: tuning.expeditions.meadow.eggChance,
     flavor: "Sun-warmed grass, suspiciously friendly bees, snacks everywhere.",
   },
@@ -57,6 +60,7 @@ export const expeditions: Readonly<Record<ExpeditionId, ExpeditionDef>> = {
       { itemId: "fiber", weight: 15 },
       { itemId: "stew", weight: 10 },
     ],
+    lootRolls: tuning.expeditions.forest.lootRolls,
     eggChance: tuning.expeditions.forest.eggChance,
     flavor: "Tall trees, deep shadows, and something delicious simmering somewhere.",
   },
@@ -70,6 +74,7 @@ export const expeditions: Readonly<Record<ExpeditionId, ExpeditionDef>> = {
       { itemId: "driftwood", weight: 35 },
       { itemId: "stew", weight: 20 },
     ],
+    lootRolls: tuning.expeditions.shore.lootRolls,
     eggChance: tuning.expeditions.shore.eggChance,
     flavor: "Salt air, glittering tide pools, and treasures the sea forgot to keep.",
   },
