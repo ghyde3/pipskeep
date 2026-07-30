@@ -466,10 +466,15 @@
   }
 }
 
-/* Pattern overlays — a small, honest subset of the Pixi renderer's set
- * (content-bible §1.5); ember/flake/puff/glowdot collapse to "fleck". */
+/* Pattern overlays (content-bible §1.5), matching ui.css's
+ * .pk-portrait-blob--<pattern> rules and the Pixi resolver's patternKind
+ * switch (render/spriteResolver.ts) so a pip reads as the same motif in
+ * the Album as it does in the Keep and in its own focus-view portrait. */
 
-.pk-pipdex-blob--pattern-dots::after {
+/* speckled shares "dots" (patternKind("speckled") collapses to "dots" in
+ * the Pixi resolver too, so this is not a simplification — it's parity). */
+.pk-pipdex-blob--pattern-dots::after,
+.pk-pipdex-blob--pattern-speckled::after {
   content: "";
   position: absolute;
   inset: 14%;
@@ -479,18 +484,38 @@
   opacity: 0.5;
 }
 
+/* Moss swirl — ONE curl on the upper flank, matching both the Pixi resolver's
+   spiral polyline and ui.css's .pk-portrait-blob--swirl. A full-body
+   repeating-conic-gradient renders as a STARBURST over the pip's face (the
+   bug the owner reported in the Album). Keep all three in step. */
 .pk-pipdex-blob--pattern-swirl::after {
   content: "";
   position: absolute;
-  inset: 16%;
+  left: 16%;
+  top: 14%;
+  width: 38%;
+  height: 34%;
   border-radius: 50%;
-  background: repeating-conic-gradient(
-    var(--pk-pattern, #999) 0 14deg,
-    transparent 14deg 40deg
+  background: conic-gradient(
+    from -100deg,
+    var(--pk-pattern, #999),
+    transparent 62%
   );
-  opacity: 0.26;
-  -webkit-mask-image: radial-gradient(circle, black 55%, transparent 72%);
-  mask-image: radial-gradient(circle, black 55%, transparent 72%);
+  opacity: 0.5;
+  -webkit-mask-image: radial-gradient(
+    circle,
+    transparent 34%,
+    black 42%,
+    black 68%,
+    transparent 78%
+  );
+  mask-image: radial-gradient(
+    circle,
+    transparent 34%,
+    black 42%,
+    black 68%,
+    transparent 78%
+  );
 }
 
 .pk-pipdex-blob--pattern-banded::after {
@@ -519,6 +544,174 @@
   opacity: 0.3;
 }
 
+/* Rising embers — a thin trail of flecks up the gap between the eyes,
+   shrinking toward the crown; the top two carry a soft halo. Matches
+   ui.css's .pk-portrait-blob--ember and the Pixi resolver's ember overlay
+   (kind === "ember"). */
+.pk-pipdex-blob--pattern-ember::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background-repeat: no-repeat;
+  background-image:
+    radial-gradient(var(--pk-pattern, #999) 42%, transparent 46%),
+    radial-gradient(var(--pk-pattern, #999) 42%, transparent 46%),
+    radial-gradient(var(--pk-pattern, #999) 42%, transparent 46%),
+    radial-gradient(var(--pk-pattern, #999) 42%, transparent 46%),
+    radial-gradient(var(--pk-pattern, #999) 42%, transparent 46%),
+    radial-gradient(var(--pk-pattern, #999) 42%, transparent 46%),
+    radial-gradient(var(--pk-pattern, #999) 0%, transparent 68%),
+    radial-gradient(var(--pk-pattern, #999) 0%, transparent 68%);
+  background-size:
+    7px 7px,
+    6px 6px,
+    5.2px 5.2px,
+    4.4px 4.4px,
+    3.6px 3.6px,
+    3px 3px,
+    10px 10px,
+    8.5px 8.5px;
+  background-position:
+    50% 88%,
+    47% 76%,
+    53% 64%,
+    49% 52%,
+    46% 39%,
+    51% 26%,
+    46% 39%,
+    51% 26%;
+  opacity: 0.75;
+}
+
+/* Crystal specks — one large sparkle + five small glints along the crown,
+   matching ui.css's .pk-portrait-blob--flake and the Pixi resolver's flake
+   overlay (kind === "flake": six-point-starred specks). The pinwheel
+   wedges (non-repeating conic-gradient) stand in for the six-point stars
+   — never repeating-conic-gradient, which is the starburst bug. */
+.pk-pipdex-blob--pattern-flake::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background-repeat: no-repeat;
+  background-image:
+    conic-gradient(
+      var(--pk-pattern, #999) 0deg 12deg,
+      transparent 12deg 48deg,
+      var(--pk-pattern, #999) 48deg 60deg,
+      transparent 60deg 108deg,
+      var(--pk-pattern, #999) 108deg 120deg,
+      transparent 120deg 168deg,
+      var(--pk-pattern, #999) 168deg 180deg,
+      transparent 180deg 228deg,
+      var(--pk-pattern, #999) 228deg 240deg,
+      transparent 240deg 288deg,
+      var(--pk-pattern, #999) 288deg 300deg,
+      transparent 300deg 360deg
+    ),
+    radial-gradient(var(--pk-pattern, #999) 42%, transparent 48%),
+    radial-gradient(var(--pk-pattern, #999) 42%, transparent 48%),
+    radial-gradient(var(--pk-pattern, #999) 42%, transparent 48%),
+    radial-gradient(var(--pk-pattern, #999) 42%, transparent 48%),
+    radial-gradient(var(--pk-pattern, #999) 42%, transparent 48%);
+  background-size:
+    9px 9px,
+    4.2px 4.2px,
+    3.8px 3.8px,
+    3.4px 3.4px,
+    3.8px 3.8px,
+    3.4px 3.4px;
+  background-position:
+    50% 10%,
+    22% 20%,
+    38% 6%,
+    66% 12%,
+    80% 22%,
+    46% 24%;
+  opacity: 0.75;
+}
+
+/* Cloud lobes — overlapping scallops hugging the crown/shoulder edge,
+   matching ui.css's .pk-portrait-blob--puff and the Pixi resolver's puff
+   overlay (kind === "puff"). */
+.pk-pipdex-blob--pattern-puff::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background-repeat: no-repeat;
+  background-image:
+    radial-gradient(var(--pk-pattern, #999) 55%, transparent 62%),
+    radial-gradient(var(--pk-pattern, #999) 55%, transparent 62%),
+    radial-gradient(var(--pk-pattern, #999) 55%, transparent 62%),
+    radial-gradient(var(--pk-pattern, #999) 55%, transparent 62%);
+  background-size:
+    18px 14px,
+    21px 15px,
+    18px 14px,
+    14px 11px;
+  background-position:
+    20% 8%,
+    42% 3%,
+    64% 7%,
+    82% 12%;
+  opacity: 0.55;
+}
+
+/* Bioluminescent cluster — 5 dots in a loose arc with a soft halo in the
+   accent colour, matching ui.css's .pk-portrait-blob--glowdot and the Pixi
+   resolver's glowdot overlay (kind === "glowdot"). Sits low on the chest
+   so the glow never crosses the eyes. */
+.pk-pipdex-blob--pattern-glowdot::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background-repeat: no-repeat;
+  background-image:
+    radial-gradient(var(--pk-pattern, #999) 40%, transparent 46%),
+    radial-gradient(var(--pk-pattern, #999) 40%, transparent 46%),
+    radial-gradient(var(--pk-pattern, #999) 40%, transparent 46%),
+    radial-gradient(var(--pk-pattern, #999) 40%, transparent 46%),
+    radial-gradient(var(--pk-pattern, #999) 40%, transparent 46%),
+    radial-gradient(var(--pk-accent, #999) 0%, transparent 68%),
+    radial-gradient(var(--pk-accent, #999) 0%, transparent 68%),
+    radial-gradient(var(--pk-accent, #999) 0%, transparent 68%),
+    radial-gradient(var(--pk-accent, #999) 0%, transparent 68%),
+    radial-gradient(var(--pk-accent, #999) 0%, transparent 68%);
+  background-size:
+    5px 5px,
+    5.4px 5.4px,
+    4.6px 4.6px,
+    4.2px 4.2px,
+    4px 4px,
+    9px 9px,
+    10px 10px,
+    8.6px 8.6px,
+    8px 8px,
+    7.2px 7.2px;
+  background-position:
+    38% 60%,
+    46% 68%,
+    54% 74%,
+    62% 66%,
+    50% 80%,
+    38% 60%,
+    46% 68%,
+    54% 74%,
+    62% 66%,
+    50% 80%;
+  opacity: 0.7;
+}
+
+/* LEGACY — kept only because src/ui/pipdex.ts's domPatternKind() still
+ * buckets ember/flake/puff/glowdot down to "fleck" before setting the DOM
+ * class, so this is what the Album actually renders for those four today
+ * (see the parity-gap note above the pattern-overlays block). The four
+ * dedicated rules above satisfy the parity test and are ready for the day
+ * domPatternKind() passes the real id through instead of collapsing it;
+ * until then, do not delete this or those four patterns go blank again. */
 .pk-pipdex-blob--pattern-fleck::after {
   content: "";
   position: absolute;

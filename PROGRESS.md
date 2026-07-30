@@ -16,6 +16,18 @@ Phase-gate log and decision journal, per spec §13–§15. Append entries; never
 
 ## Gate log
 
+### Round 2E — Portrait render regressions — 2026-07-30
+Two owner-reported visual bugs, both traced to the same structural cause: **a pip's pattern is implemented three independent times** — the Pixi scene (`render/spriteResolver.ts`), the focus-view DOM portrait (`ui.css`), and the Album's DOM portrait (`pipdex.css`). Nothing kept them in step.
+
+- **Focus-view portrait collapsed to `height: 0px`.** `.pk-portrait` declares `height: 108px`, but every child is absolutely positioned, so it has zero in-flow content height — and it is a flex item with `flex-shrink: 1` inside the height-constrained focus panel. Once rounds 2B/2C grew that panel (six expeditions, mastery lines), it overflowed and the portrait was the one item free to shrink to nothing; the absolute eyes and blush then spilled over the pip's name. Fixed with `flex: 0 0 auto`.
+- **The "starburst" over the pip's face** was `repeating-conic-gradient(… 0 14deg, transparent 14deg 40deg)` — radiating pie-slices by construction — in BOTH stylesheets, while the Pixi scene draws `swirl` as a small off-center spiral. The same pip looked like a different creature in its portrait than in the Keep. Replaced with a bounded off-center curl in both.
+- **The real cause of "not fully rendered":** round 2B added six pattern primitives (banded, ripple, ember, flake, puff, glowdot) to the resolver and the species registry and **never added them to either stylesheet**; `speckled` was missing from the Album's CSS too. Most pips had been rendering with no pattern overlay at all. All 11 missing overlays authored, verified visually across all 9 patterns at portrait, Album and 58×48 thumbnail sizes.
+- **A second, subtler layer of the same bug, found during visual verification:** the Album's `domPatternKind()` bucketed ember/flake/puff/glowdot into one shared "fleck" class, which silently **discarded four of the newly-authored rules** — four species wore identical dots in the Album while looking distinct in the Keep. CSS-authored and TS-emits-it are separate acceptance criteria (spec §16 v1.3's standing rule, earned yet again).
+- **New guard:** `src/ui/portraitPatterns.test.ts` is data-driven off the species registry — every content pattern must have a rule in both stylesheets, the emitted class must exist, no two distinct patterns may collapse to one class, and neither stylesheet may use `repeating-conic-gradient`. Injectivity is the load-bearing assertion; mutation-verified by re-introducing the bucketing.
+- Tests: **1580 passing** (was 1553). Build clean.
+- Process note: this round's workflow died mid-flight to an expired OAuth token after its author agent had already completed the CSS work. The tree was left green but with an uncommitted temp harness, which I used for the visual pass and then removed.
+
+
 ### Round 2C — Full gamification stack — 2026-07-30
 Design-first again: `docs/retention-bible.md` planned every system with its numbers and its anti-dark-pattern justification before any feature code. **1553 tests** (was 1053). Save schema v5→v6 with migration + fixture.
 

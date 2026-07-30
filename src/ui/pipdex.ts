@@ -452,13 +452,34 @@ const SILHOUETTE_FRACTIONS: Readonly<Record<Silhouette, { w: number; h: number }
   tiny: { w: 0.78, h: 0.76 },
 };
 
-type PatternKind = "none" | "dots" | "swirl" | "banded" | "ripple" | "fleck";
+type PatternKind =
+  | "none"
+  | "dots"
+  | "swirl"
+  | "banded"
+  | "ripple"
+  | "ember"
+  | "flake"
+  | "puff"
+  | "glowdot"
+  | "fleck";
 
-/** Same fallback spirit as `spriteResolver.ts`'s `patternKind` (an unknown
- * or CSS-hard pattern id still renders as SOMETHING, never nothing) —
- * ember/flake/puff/glowdot collapse to one shared "fleck" treatment here
- * rather than four bespoke CSS recipes; the Pixi Keep is where their full
- * detail lives. */
+/**
+ * Raw pattern id → the Album's CSS class suffix.
+ *
+ * This used to bucket ember/flake/puff/glowdot into one shared "fleck"
+ * treatment, on the reasoning that the Pixi Keep was where their full detail
+ * lived. That stopped being true once every pattern got its own dedicated
+ * `.pk-pipdex-blob--pattern-<id>` rule: the bucketing silently DISCARDED four
+ * of those new rules, so four different species all wore identical dots in
+ * the Album while looking distinct in the Keep. Every id that has a rule now
+ * passes straight through.
+ *
+ * `fleck` survives as the fallback ONLY for ids with no rule at all, keeping
+ * `spriteResolver.ts`'s spirit: an unknown pattern renders as SOMETHING,
+ * never as nothing. `portraitPatterns.test.ts` pins the mapping against the
+ * stylesheet so a new content pattern cannot quietly land here.
+ */
 function domPatternKind(patternId: string): PatternKind {
   switch (patternId) {
     case "plain":
@@ -472,10 +493,23 @@ function domPatternKind(patternId: string): PatternKind {
       return "banded";
     case "ripple":
       return "ripple";
+    case "ember":
+      return "ember";
+    case "flake":
+      return "flake";
+    case "puff":
+      return "puff";
+    case "glowdot":
+      return "glowdot";
     default:
       return "fleck";
   }
 }
+
+/** Exported for the parity test: it asserts every content pattern maps to a
+ * class that actually exists in pipdex.css, closing the gap where the CSS was
+ * authored but the TS never emitted it. */
+export const albumPatternClassSuffix = domPatternKind;
 
 /** The full procedural portrait — Portrait tier only. `size` picks the box
  * (grid thumbnail vs. the big detail-page portrait); the shape inside it

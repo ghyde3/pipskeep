@@ -848,6 +848,13 @@
   height: 108px;
   position: relative;
   margin-top: 6px;
+  /* Every child here is absolutely positioned, so this box has ZERO in-flow
+     content height. As a flex item in the height-constrained .pk-focus
+     column, flex-shrink would collapse it to 0px and the eyes/blush would
+     spill over the name — which is exactly what happened once rounds 2B/2C
+     grew the panel (six expeditions, mastery lines) past its max-height.
+     Never let this box shrink. */
+  flex: 0 0 auto;
 }
 
 .pk-portrait-blob {
@@ -897,18 +904,241 @@
   opacity: 0.5;
 }
 
+/* Moss swirl — ONE small curl on the upper flank, matching the spiral
+   polyline the Pixi resolver draws (spriteResolver.ts, kind === "swirl").
+   It must not be a full-body radiating pattern: a repeating-conic-gradient
+   across the whole blob renders as a STARBURST over the pip's face, which
+   is what shipped and what the owner reported. A single conic sweep masked
+   to an annulus reads as a curl instead. */
 .pk-portrait-blob--swirl::after {
   content: "";
   position: absolute;
-  inset: 14%;
+  left: 16%;
+  top: 14%;
+  width: 38%;
+  height: 34%;
   border-radius: 50%;
-  background: repeating-conic-gradient(
-    var(--pk-pattern, rgba(0, 0, 0, 0.12)) 0 14deg,
-    transparent 14deg 40deg
+  background: conic-gradient(
+    from -100deg,
+    var(--pk-pattern, rgba(0, 0, 0, 0.12)),
+    transparent 62%
   );
-  opacity: 0.28;
-  -webkit-mask-image: radial-gradient(circle, black 55%, transparent 72%);
-  mask-image: radial-gradient(circle, black 55%, transparent 72%);
+  opacity: 0.5;
+  /* Annulus: keeps the sweep as a curl rather than filling a disc. */
+  -webkit-mask-image: radial-gradient(
+    circle,
+    transparent 34%,
+    black 42%,
+    black 68%,
+    transparent 78%
+  );
+  mask-image: radial-gradient(
+    circle,
+    transparent 34%,
+    black 42%,
+    black 68%,
+    transparent 78%
+  );
+}
+
+/* Sedimentary strata — 3 soft horizontal bands low on the flank, matching
+   the Pixi resolver's banded overlay (kind === "banded": three stacked
+   roundRects near the base — spriteResolver.ts). Bottom-anchored so it
+   never nears the eyes/blush. */
+.pk-portrait-blob--banded::after {
+  content: "";
+  position: absolute;
+  left: 12%;
+  right: 12%;
+  top: 64%;
+  bottom: 6%;
+  border-radius: 30%;
+  background: repeating-linear-gradient(
+    0deg,
+    var(--pk-pattern, rgba(0, 0, 0, 0.3)) 0 3px,
+    transparent 3px 11px
+  );
+  opacity: 0.45;
+}
+
+/* Tide marks — nested arcs hugging the lower flank, matching the Pixi
+   resolver's ripple overlay (kind === "ripple": 3 nested arcs swept low on
+   the body). Bottom-anchored, well clear of the eyes/blush. */
+.pk-portrait-blob--ripple::after {
+  content: "";
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  top: 56%;
+  bottom: 4%;
+  border-radius: 50%;
+  background: repeating-radial-gradient(
+    circle at 64% 100%,
+    var(--pk-pattern, rgba(0, 0, 0, 0.28)) 0 1.5px,
+    transparent 1.5px 9px
+  );
+  opacity: 0.5;
+}
+
+/* Rising embers — a thin trail of flecks up the gap between the eyes,
+   shrinking toward the crown; the top two carry a soft halo behind them.
+   Matches the Pixi resolver's ember overlay (kind === "ember"): flecks
+   scaled ~3:1 from feet to crown, top two haloed. The center gap between
+   the eyes (see .pk-portrait-eyes' gap below) keeps this clear of the
+   face at every step. */
+.pk-portrait-blob--ember::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-repeat: no-repeat;
+  background-image:
+    radial-gradient(var(--pk-pattern, rgba(0, 0, 0, 0.4)) 42%, transparent 46%),
+    radial-gradient(var(--pk-pattern, rgba(0, 0, 0, 0.4)) 42%, transparent 46%),
+    radial-gradient(var(--pk-pattern, rgba(0, 0, 0, 0.4)) 42%, transparent 46%),
+    radial-gradient(var(--pk-pattern, rgba(0, 0, 0, 0.4)) 42%, transparent 46%),
+    radial-gradient(var(--pk-pattern, rgba(0, 0, 0, 0.4)) 42%, transparent 46%),
+    radial-gradient(var(--pk-pattern, rgba(0, 0, 0, 0.4)) 42%, transparent 46%),
+    radial-gradient(var(--pk-pattern, rgba(0, 0, 0, 0.4)) 0%, transparent 68%),
+    radial-gradient(var(--pk-pattern, rgba(0, 0, 0, 0.4)) 0%, transparent 68%);
+  background-size:
+    9px 9px,
+    7.5px 7.5px,
+    6.5px 6.5px,
+    5.5px 5.5px,
+    4.5px 4.5px,
+    3.6px 3.6px,
+    13px 13px,
+    11px 11px;
+  background-position:
+    50% 88%,
+    47% 76%,
+    53% 64%,
+    49% 52%,
+    46% 39%,
+    51% 26%,
+    46% 39%,
+    51% 26%;
+  opacity: 0.75;
+}
+
+/* Crystal specks — one large sparkle + five small glints scattered along
+   the crown, matching the Pixi resolver's flake overlay (kind === "flake":
+   six-point-starred specks). The pinwheel wedges (non-repeating
+   conic-gradient — never repeating-conic-gradient, which is the starburst
+   bug) stand in for the six-point stars. Kept to the top band so the
+   scattered field never dips into the eyes. */
+.pk-portrait-blob--flake::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-repeat: no-repeat;
+  background-image:
+    conic-gradient(
+      var(--pk-pattern, rgba(0, 0, 0, 0.55)) 0deg 12deg,
+      transparent 12deg 48deg,
+      var(--pk-pattern, rgba(0, 0, 0, 0.55)) 48deg 60deg,
+      transparent 60deg 108deg,
+      var(--pk-pattern, rgba(0, 0, 0, 0.55)) 108deg 120deg,
+      transparent 120deg 168deg,
+      var(--pk-pattern, rgba(0, 0, 0, 0.55)) 168deg 180deg,
+      transparent 180deg 228deg,
+      var(--pk-pattern, rgba(0, 0, 0, 0.55)) 228deg 240deg,
+      transparent 240deg 288deg,
+      var(--pk-pattern, rgba(0, 0, 0, 0.55)) 288deg 300deg,
+      transparent 300deg 360deg
+    ),
+    radial-gradient(var(--pk-pattern, rgba(0, 0, 0, 0.5)) 42%, transparent 48%),
+    radial-gradient(var(--pk-pattern, rgba(0, 0, 0, 0.5)) 42%, transparent 48%),
+    radial-gradient(var(--pk-pattern, rgba(0, 0, 0, 0.5)) 42%, transparent 48%),
+    radial-gradient(var(--pk-pattern, rgba(0, 0, 0, 0.5)) 42%, transparent 48%),
+    radial-gradient(var(--pk-pattern, rgba(0, 0, 0, 0.5)) 42%, transparent 48%);
+  background-size:
+    13px 13px,
+    6px 6px,
+    5.4px 5.4px,
+    4.8px 4.8px,
+    5.4px 5.4px,
+    4.8px 4.8px;
+  background-position:
+    50% 10%,
+    22% 20%,
+    38% 6%,
+    66% 12%,
+    80% 22%,
+    46% 24%;
+  opacity: 0.7;
+}
+
+/* Cloud lobes — 3-4 overlapping scallops hugging the crown/shoulder edge,
+   matching the Pixi resolver's puff overlay (kind === "puff": overlapping
+   circles along the upper silhouette). Confined to the very top so the
+   scalloped edge reads without dropping onto the face. */
+.pk-portrait-blob--puff::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-repeat: no-repeat;
+  background-image:
+    radial-gradient(var(--pk-pattern, rgba(0, 0, 0, 0.28)) 55%, transparent 62%),
+    radial-gradient(var(--pk-pattern, rgba(0, 0, 0, 0.28)) 55%, transparent 62%),
+    radial-gradient(var(--pk-pattern, rgba(0, 0, 0, 0.28)) 55%, transparent 62%),
+    radial-gradient(var(--pk-pattern, rgba(0, 0, 0, 0.28)) 55%, transparent 62%);
+  background-size:
+    26px 20px,
+    30px 22px,
+    26px 20px,
+    20px 16px;
+  background-position:
+    20% 8%,
+    42% 3%,
+    64% 7%,
+    82% 12%;
+  opacity: 0.55;
+}
+
+/* Bioluminescent cluster — 5 dots in a loose arc, each with a soft halo in
+   the accent colour (the one place the accent tints the body itself),
+   matching the Pixi resolver's glowdot overlay (kind === "glowdot"). Sits
+   low on the chest so the glow never crosses the eyes. */
+.pk-portrait-blob--glowdot::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-repeat: no-repeat;
+  background-image:
+    radial-gradient(var(--pk-pattern, rgba(0, 0, 0, 0.4)) 40%, transparent 46%),
+    radial-gradient(var(--pk-pattern, rgba(0, 0, 0, 0.4)) 40%, transparent 46%),
+    radial-gradient(var(--pk-pattern, rgba(0, 0, 0, 0.4)) 40%, transparent 46%),
+    radial-gradient(var(--pk-pattern, rgba(0, 0, 0, 0.4)) 40%, transparent 46%),
+    radial-gradient(var(--pk-pattern, rgba(0, 0, 0, 0.4)) 40%, transparent 46%),
+    radial-gradient(var(--pk-accent, #ff8a5c) 0%, transparent 68%),
+    radial-gradient(var(--pk-accent, #ff8a5c) 0%, transparent 68%),
+    radial-gradient(var(--pk-accent, #ff8a5c) 0%, transparent 68%),
+    radial-gradient(var(--pk-accent, #ff8a5c) 0%, transparent 68%),
+    radial-gradient(var(--pk-accent, #ff8a5c) 0%, transparent 68%);
+  background-size:
+    7px 7px,
+    7.5px 7.5px,
+    6.5px 6.5px,
+    6px 6px,
+    5.5px 5.5px,
+    13px 13px,
+    14px 14px,
+    12px 12px,
+    11px 11px,
+    10px 10px;
+  background-position:
+    38% 60%,
+    46% 68%,
+    54% 74%,
+    62% 66%,
+    50% 80%,
+    38% 60%,
+    46% 68%,
+    54% 74%,
+    62% 66%,
+    50% 80%;
+  opacity: 0.7;
 }
 
 .pk-portrait-belly {
