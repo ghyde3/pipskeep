@@ -35,6 +35,7 @@ import type { NeedId } from "../core/pips";
 import { resolveKeepEffects } from "../core/keep/effects";
 import { isNextTierXpReady, tierBarProgress, xpRequiredForLevel } from "../core/progression/xp";
 import { buildCatalog, formatBundle, formatMissing, missingFor } from "./buildMode";
+import { buildXpBarModel } from "./xpBar";
 import { sound } from "../app/sound";
 import "./keepUpgrade.css";
 
@@ -123,6 +124,23 @@ export interface TierBarModel {
   /** `into / span`, clamped to 1 when `span` is 0 (top tier — the bar
    * reads full; Renown owns what happens next, bible §1.7). */
   readonly fraction: number;
+  /**
+   * The readout, from `xpBar.ts`'s own model — NOT formatted here.
+   *
+   * ROUND 2G REVIEW (hud-redesign.md N3): this card printed
+   * `${into} / ${span} Keep XP` itself, so once a tier went Ready and `into`
+   * kept climbing it read "2,970 / 2,300 Keep XP" — while the Keep strip,
+   * which the player had just TAPPED to open this card, read
+   * "2,300 / 2,300 · banked" from the same state. Two surfaces, one number,
+   * two answers, and the card's answer looked like a bug. Measured at three
+   * tiers (2,970 / 2,300 · 920 / 900 · 171 / 1,150).
+   *
+   * Six of the eleven tiers are resource-gated, so Ready-with-overflow is the
+   * NORMAL state for that whole stretch — this is not an edge case. Consuming
+   * `buildXpBarModel().numerals` verbatim means the two can never disagree
+   * again, because there is only one place that decides.
+   */
+  readonly numerals: string;
 }
 
 function buildTierBar(state: GameState): TierBarModel {
@@ -132,6 +150,7 @@ function buildTierBar(state: GameState): TierBarModel {
     into,
     span,
     fraction: span > 0 ? Math.min(1, into / span) : 1,
+    numerals: buildXpBarModel(state, contentTuning).numerals,
   };
 }
 
@@ -544,8 +563,10 @@ function renderTierBar(bar: TierBarModel): HTMLElement {
   track.appendChild(fill);
   const label = document.createElement("div");
   label.className = "pk-upcard-bar-label";
-  label.textContent =
-    bar.span > 0 ? `${bar.into.toLocaleString()} / ${bar.span.toLocaleString()} Keep XP` : "Keep XP";
+  // `bar.numerals` — the Keep strip's own string, never re-formatted here.
+  // See `TierBarModel.numerals` for the two-surfaces-one-number bug this
+  // closes.
+  label.textContent = bar.span > 0 ? `${bar.numerals} Keep XP` : "Keep XP";
   wrap.append(track, label);
   return wrap;
 }

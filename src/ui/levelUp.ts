@@ -214,6 +214,15 @@ export function createLevelUpBanner(onDismiss: () => void): LevelUpBanner {
       }
       showing = true;
       el.classList.add("pk-levelup--open");
+      // ROUND 2G (hud-redesign doc §4): the milestone ribbon's `:has()` rule
+      // steps down by this banner's REAL height, not a guessed constant —
+      // the banner's height varies with how many things a tier unlocked
+      // (one line at tier 10, four at tier 2). `getBoundingClientRect`
+      // forces the layout pass the fresh headline/flavor/unlock-list content
+      // needs before it is trustworthy; `transform`/`opacity` (how this
+      // banner animates in) affect neither layout nor this measurement.
+      const height = Math.round(el.getBoundingClientRect().height);
+      document.documentElement.style.setProperty("--pk-levelup-h", `${height}px`);
       sound("keep.levelup");
       burstConfetti();
       dismissTimer = window.setTimeout(() => {

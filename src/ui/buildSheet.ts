@@ -193,6 +193,25 @@ export function createBuildSheet(deps: BuildSheetDeps): BuildSheet {
   const setsWrap = document.createElement("div");
   setsWrap.className = "pk-build-sets";
 
+  /*
+   * LOCKED STATIONS GO BELOW THE SETS, BEHIND ONE COLLAPSIBLE HEADER.
+   *
+   * Locked-but-visible is deliberate (bible §5.5) and stays — a named future
+   * unlock with its price on it is how a player saves toward the Larder. But
+   * at Keep level 1 that is TEN of the thirteen station cards, each four
+   * lines tall, all of them things you cannot do yet, stacked between the
+   * three you can and the set groups: measured `scrollHeight` 2,778px in a
+   * 527px window, with the sets starting at scrollTop 1,943 — 70% of the way
+   * down. So the answer to "what are sets, and are they worth chasing" was
+   * behind three and a half phone screens of things that are not buyable.
+   *
+   * One header, collapsed by default, same per-instance (not persisted)
+   * convention the set groups use. The catalogue is still fully browsable;
+   * it just stops being the sheet's centre of gravity.
+   */
+  const lockedWrap = document.createElement("div");
+  lockedWrap.className = "pk-build-group";
+
   const rearrangeTitle = document.createElement("div");
   rearrangeTitle.className = "pk-sheet-title pk-build-rearrange-title";
   rearrangeTitle.textContent = "Rearrange";
@@ -207,6 +226,7 @@ export function createBuildSheet(deps: BuildSheetDeps): BuildSheet {
     stationsTitle,
     stationsGrid,
     setsWrap,
+    lockedWrap,
     rearrangeTitle,
     rearrangeList,
   );
@@ -238,6 +258,8 @@ export function createBuildSheet(deps: BuildSheetDeps): BuildSheet {
    * reopening the sheet starts tidy again, which is the point.
    */
   const expandedSets = new Set<string>();
+  /** Same convention, for the locked-station catalogue below the sets. */
+  let lockedExpanded = false;
 
   const renderSetGroup = (group: BuildSetGroupModel): HTMLElement => {
     const wrap = document.createElement("div");
@@ -298,6 +320,19 @@ export function createBuildSheet(deps: BuildSheetDeps): BuildSheet {
       wrap.appendChild(info);
     }
 
+    // WHICH ITEMS ACTUALLY COUNT. The header priced the bonus ("3 placed: a
+    // 2% better chance of an extra find… three more for the set bonus") but
+    // never said which seven decorations were in the set, so a set bonus
+    // could be evaluated and not shopped for — you had to open the group to
+    // discover what was even in it. One line of names, only while collapsed
+    // (open, the cards themselves say it).
+    if (!expanded && group.entries.length > 0) {
+      const members = document.createElement("div");
+      members.className = "pk-build-group-members";
+      members.textContent = group.entries.map((entry) => entry.name).join(" · ");
+      wrap.appendChild(members);
+    }
+
     // The cards themselves are only built when the group is open — 45 cards
     // collapsed to six headers is the whole scroll fix.
     if (expanded) {
@@ -318,13 +353,42 @@ export function createBuildSheet(deps: BuildSheetDeps): BuildSheet {
     keepsakesTitle.hidden = !hasKeepsakes;
     keepsakesGrid.hidden = !hasKeepsakes;
 
+    // Buildable stations lead; the locked catalogue moves below the sets
+    // (see `lockedWrap`'s note).
+    const openStations = model.stations.filter((entry) => !entry.locked);
+    const lockedStations = model.stations.filter((entry) => entry.locked);
+
     stationsGrid.replaceChildren();
-    for (const entry of model.stations) stationsGrid.appendChild(renderCard(entry, onTap));
+    for (const entry of openStations) stationsGrid.appendChild(renderCard(entry, onTap));
+    stationsTitle.hidden = openStations.length === 0;
+    stationsGrid.hidden = openStations.length === 0;
 
     setsWrap.replaceChildren();
     for (const group of model.sets) {
       if (group.entries.length === 0) continue;
       setsWrap.appendChild(renderSetGroup(group));
+    }
+
+    lockedWrap.replaceChildren();
+    lockedWrap.hidden = lockedStations.length === 0;
+    if (lockedStations.length > 0) {
+      const header = document.createElement("button");
+      header.type = "button";
+      header.className = "pk-build-group-title pk-build-group-toggle";
+      header.setAttribute("aria-expanded", lockedExpanded ? "true" : "false");
+      header.textContent = `${lockedExpanded ? "▾" : "▸"} Coming as the Keep grows · ${lockedStations.length}`;
+      header.addEventListener("click", () => {
+        sound("ui.tap");
+        lockedExpanded = !lockedExpanded;
+        if (lastState !== null) rebuild(lastState);
+      });
+      lockedWrap.appendChild(header);
+      if (lockedExpanded) {
+        const grid = document.createElement("div");
+        grid.className = "pk-sheet-grid";
+        for (const entry of lockedStations) grid.appendChild(renderCard(entry, onTap));
+        lockedWrap.appendChild(grid);
+      }
     }
 
     rearrangeList.replaceChildren();

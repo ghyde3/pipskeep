@@ -39,6 +39,26 @@ export interface GridLayoutOptions {
   readonly topFraction?: number;
   /** Bottom of the band, as a fraction of the view height. */
   readonly bottomFraction?: number;
+  /**
+   * Chrome height, in px, at the bottom of the view — subtracted from the
+   * band's bottom edge so the plot never draws underneath it.
+   *
+   * WHY A PX OPTION AND NOT A SMALLER `bottomFraction`. The bottom chrome is
+   * a fixed pixel stack (Keep strip + action bar ≈ 157px), not a share of
+   * the viewport, so any fraction that clears it on a phone over-reserves on
+   * a tall desktop. Expressing it as what it is keeps both correct.
+   *
+   * ROUND 2G REVIEW, measured at Keep level 4 on 375×812 with the chrome
+   * hidden: the plot drew y 365→690 while `.pk-keepstrip`'s top edge sat at
+   * y 655 — 35px (10.8%) of the plot permanently occluded, with the standing
+   * Pip's whole contact-shadow ellipse (y 655–680) inside that band. With
+   * the chrome restored the Pip looked sunk into the XP bar, and the
+   * celebratory level-4 screenshot cut it off at the chin. Level 1 (8×8)
+   * escaped by luck — its arithmetic landed the bottom at 657.4, 2.4px
+   * inside — so the defect got WORSE the more of the Keep you had built,
+   * which is exactly backwards.
+   */
+  readonly bottomInsetPx?: number;
   /** Max grid width as a fraction of the view width. */
   readonly widthFraction?: number;
   /** Floor on tile width so tiny viewports stay tappable. */
@@ -49,15 +69,32 @@ const DEFAULTS: Required<GridLayoutOptions> = {
   tileAspect: 0.62,
   topFraction: 0.3,
   bottomFraction: 0.97,
+  bottomInsetPx: 0,
   widthFraction: 0.94,
   minTileW: 18,
 };
 
 /**
+ * How much of the band's leftover vertical space goes ABOVE the grid. The
+ * plot sits low and the sky gets the slack — a Keep floating in the middle
+ * of the view reads as a diagram, not a place.
+ *
+ * ROUND 2G REVIEW: this was 0.6, tuned when the band ran all the way to
+ * `0.97 × viewH` — i.e. 133px underneath the bottom chrome. The overshoot and
+ * the bias cancelled out by luck at 375×812, landing the plot's bottom edge
+ * 2.4px above the Keep strip. Introducing `bottomInsetPx` (correctly) removed
+ * the overshoot, which un-cancelled the pair: at level 1 the plot bottom rose
+ * to 563 against chrome at 654, leaving 91px of empty ground under a plot
+ * that now floated. Raising the bias restores the composition on the honest
+ * band instead of the one that ran off-screen.
+ */
+const BAND_BOTTOM_BIAS = 0.88;
+
+/**
  * Fit a `cols × rows` grid into the view: constrained horizontally by
  * `widthFraction` and vertically by the `[topFraction, bottomFraction]`
- * band, whichever is tighter. Centered horizontally; biased slightly
- * toward the bottom of the band vertically (the sky gets the slack).
+ * band (less `bottomInsetPx`), whichever is tighter. Centered horizontally;
+ * biased toward the bottom of the band vertically — see `BAND_BOTTOM_BIAS`.
  */
 export function computeGridLayout(
   viewW: number,
@@ -68,7 +105,8 @@ export function computeGridLayout(
 ): GridLayout {
   const o = { ...DEFAULTS, ...options };
   const bandTop = viewH * o.topFraction;
-  const bandH = Math.max(0, viewH * o.bottomFraction - bandTop);
+  const bandBottom = viewH * o.bottomFraction - Math.max(0, o.bottomInsetPx);
+  const bandH = Math.max(0, bandBottom - bandTop);
   const byWidth = (viewW * o.widthFraction) / cols;
   const byHeight = bandH / (rows * o.tileAspect);
   const tileW = Math.max(o.minTileW, Math.min(byWidth, byHeight));
@@ -81,7 +119,7 @@ export function computeGridLayout(
     tileW,
     tileH,
     originX: (viewW - gridW) / 2,
-    originY: bandTop + Math.max(0, (bandH - gridH) * 0.6),
+    originY: bandTop + Math.max(0, (bandH - gridH) * BAND_BOTTOM_BIAS),
   };
 }
 

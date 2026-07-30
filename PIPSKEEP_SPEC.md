@@ -388,6 +388,40 @@ Onboarding flow, first-90-seconds sequence tuned, in-app notifications, PWA mani
 
 ## 16. Changelog
 
+**v1.6 (2026-07-30)** — **§12 (Scope Fence) is RETIRED by owner decision.** "Anything ruled out because of MVP we don't need to worry about anymore — if you find value in building a feature, just build it."
+
+§12 existed to stop an MVP sprawling. The MVP shipped (v1.0), and eight rounds have since built well past it, so the fence now only blocks value. It is void. The **seams it protected were well-designed and every one of them is now a door**:
+
+| Formerly fenced | Its seam | Status |
+|---|---|---|
+| Breeding UI | `combineGenomes()` | **Unfenced v1.5** — live in round 2H as the succession mechanic |
+| More species | Species registry | **Done** (round 2B — 14 forms) |
+| Sound | `sound(slotId)` no-ops | **Done** (round 2A — procedural WebAudio) |
+| Seasonal events | `availableWindow` | **Done** (round 2C — annually recurring, never exclusive) |
+| Web Push | `notify(event)` routes in-app only | **NOW OPEN** — the highest-value remaining item |
+| Attraction buildings | Keep-upgrade registry `effect: "attraction"` no-op | **NOW OPEN** |
+| Multiplayer / share codes | Save export/import (§8) | **NOW OPEN** |
+
+**What does NOT change:** the §1 dependency allowlist still requires a stop-and-ask before adding a runtime dependency; `core/` purity, seeded determinism, injected time, and content-as-data are architecture, not scope, and still bind; and every tone rule — including v1.5's five promises — still binds. Retiring the fence removes a ceiling, not the foundations.
+
+
+**v1.5 (2026-07-30)** — **§4.4 is amended by owner decision. Pips are now finite.** This reverses the project's oldest hard rule, so the replacement rule is written with equal force.
+
+The old rule ("Pips do not die. Ever… no lost Pips") produced a game with no stakes: nothing a player did could go wrong, so nothing they did felt weighty. Pips are now closer to livestock than to furniture — some last a long time, none last forever. **What replaces the old rule is not permission to punish; it is a set of promises about how loss may happen.**
+
+**The five promises (hard rules, not tuning values):**
+1. **Loss is never a surprise.** A Pip never simply fails to return. Danger arrives as an **ailment with a visible countdown**, and the player always gets a real, actionable chance to save them.
+2. **Loss is never caused by absence.** Ailment progression obeys the same offline rate cap as needs (§4.5). A player who closes the app for a week must never come back to a Pip who died *because they were away*. This preserves round 2C's guardrail: reward showing up, never punish absence.
+3. **Old age is peaceful, not a death.** A Pip who reaches the end of a full life **retires to the Long Meadow** — still named, still visitable, still in the Album, never deleted. Only danger can truly take a Pip.
+4. **Every loss leaves a thread to pull.** A Pip lost to an ailment **leaves an egg in the biome that took them**, findable on later expeditions there, carrying their lineage. Loss is a quest, not a dead end.
+5. **The Keep is never empty.** At least one Pip always remains active; a player can never return to an unplayable Keep.
+
+**Companions to the amendment:**
+- **Pips level individually** (§4.6 extended). Earned levels improve that Pip: slower need decay, faster expeditions, better resilience. Capped so a veteran Pip shortens the care *chore* without trivializing care (the `balance.test.ts` guard still binds).
+- **Breeding is UNFENCED** (§12 amended). `combineGenomes()` — implemented and tested since Phase 4, deliberately uncalled — is now live. Lineage is the succession mechanic: descendants inherit traits and a share of earned progress.
+- **The Album is permanent.** A Pip lost or retired keeps its page forever. Collection progress can never regress.
+
+
 **v1.3 (2026-07-29)** — content expansion (round 2B).
 
 - **§3 holds, with one named exception.** Species, foods, decorations, expeditions and even a new *job* were all added as pure content. The exception is deliberate: `HATCH_EGG` now reads an egg's `sourceExpeditionId` so eggs hatch their biome's species. Per-biome pools are a **feature** (the collection engine), not content addition, so §3 is not violated — but any such change must preserve the RNG cursor contract exactly, and that is now tested.

@@ -14,7 +14,14 @@
   pointer-events: auto;
   position: absolute;
   right: 12px;
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 178px);
+  /* ROUND 2G INTEGRATE: keyed to `--pk-hud-bottom` (xpBar.ts's
+     ResizeObserver) rather than the old `178px` literal. 178px happened to
+     clear round 2G's Keep strip by 21px, but only by luck — it was tuned
+     against the pre-2G layout, and the next change to the strip's height
+     would have walked this button back into it. No `env()` term: the
+     variable is measured from the true viewport bottom, so the safe-area
+     inset is already counted (adding it again double-counts). */
+  bottom: calc(var(--pk-hud-bottom, 157px) + 21px);
   z-index: 5;
 
   appearance: none;

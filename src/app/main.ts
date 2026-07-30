@@ -333,6 +333,15 @@ async function startGame(
   // --- Phase 5 UI (Build/placement, Keep upgrades, jobs, evolution) ---
   // Drives the scene's placement mode (enterPlacementMode/
   // exitPlacementMode) and registers the render/pipTap.ts seam handler.
+  //
+  // `setChromeHidden` forwards to the Keep strip's own `setHidden` — but the
+  // strip (`xpBar`, below) is created AFTER phase5 (it needs `phase5.
+  // openUpgrades`/`openBuild` to wire its own taps), so this is a forward
+  // reference through a mutable binding rather than a circular constructor
+  // dependency. `?? (() => {})` covers the brief window before `xpBar`
+  // exists (nothing calls `setChromeHidden` synchronously during either
+  // constructor, so this never actually fires against the no-op).
+  let hideKeepStrip: ((hidden: boolean) => void) | null = null;
   const phase5 = initPhase5Ui({
     mount: document.body,
     store,
@@ -340,6 +349,7 @@ async function startGame(
     scene,
     getBubbleAnchor: () => scene.getBubbleAnchor(),
     openFocus: () => ui.openFocus(),
+    setChromeHidden: (hidden) => hideKeepStrip?.(hidden),
   });
 
   // --- Round 2C dailies (streak/bounties/milestones, docs/retention-
@@ -364,27 +374,28 @@ async function startGame(
     mountEntry: false,
   });
 
-  // --- Round 2F: the Keep XP bar (docs/progression-bible.md §0.2) ---
+  // --- The Keep strip (docs/progression-bible.md §0.2; round 2G hud-
+  // redesign doc §2.4) ---
   //
-  // WHERE IT LIVES, and why: the last row of the persistent top bar, under
-  // the active Pip's need bars. `ui/xpBar.ts` deliberately picks no home of
-  // its own, so the choice is made here — and the top bar is the only
-  // surface that is on screen in every state the player can act from, which
-  // is the whole point of a spine ("no session feels wasted, the bar always
-  // moves"). ROUND 2G OWNS THE FINAL PLACEMENT and may move it; the seam it
-  // moves is `ui.mountInTopBar` plus the `xpBar.sync` line in the store
-  // subscription below — nothing else knows where the bar is.
+  // WHERE IT LIVES, and why: `ui/xpBar.ts`'s `createXpBar` now returns the
+  // whole fixed, bottom-anchored `.pk-keepstrip` (bar + Build button) —
+  // round 2G is the round that decided the final placement, so the module
+  // owns its own position and `main.ts` just appends it via `ui.
+  // mountChrome`. Before this round it was a "mountable anywhere" bar
+  // living inside the TOP bar, 489px from the Feed button that filled it.
   //
   // Synced from main.ts's own subscription (below) rather than `initXpBar`'s
   // convenience wrapper, so it uses the SAME single store subscription every
   // other view here does and cannot fall out of order with them.
-  // ROUND 2F: the bar's own level chip opens the Keep upgrade card (bible §1.2:
-  // "the level chip… Tapping it opens the upgrade card"). Before this the gold
-  // pulsing `Lv 5 ▸ Ready` chip was inert while the actual tap target was a
-  // SECOND Keep-level chip in the opposite corner — two competing readouts, and
-  // the loud one did nothing.
-  const xpBar = createXpBar({ onOpenUpgrades: () => phase5.openUpgrades() });
-  ui.mountInTopBar(xpBar.el);
+  // The bar's own tap opens the Keep upgrade card (bible §1.2: "Tapping it
+  // opens the upgrade card"); the folded-in Build icon opens the Build
+  // sheet (round 2G — it used to float on its own, built inside phase5.ts).
+  const xpBar = createXpBar({
+    onOpenUpgrades: () => phase5.openUpgrades(),
+    onOpenBuild: () => phase5.openBuild(),
+  });
+  hideKeepStrip = (hidden) => xpBar.setHidden(hidden);
+  ui.mountChrome(xpBar.el);
 
   // The tier-up banner. Trigger is `state.lastLevelUp`, set once per
   // successful PURCHASE_KEEP_LEVEL tap; the module queues behind the

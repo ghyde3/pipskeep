@@ -71,6 +71,16 @@ import { isMilestoneMet, metricValue } from "../core/progression/milestones";
 import type { MilestoneMetricContext } from "../core/progression/milestones";
 import { masteryTier } from "../core/progression/mastery";
 import { resolveActiveEvents } from "../core/progression/events";
+// ROUND 2G (docs/hud-redesign.md #2 / progression-bible.md §1.3 rows 27/
+// 30/31): the streak-day reward, a completed bounty and a cleared bounty
+// day all grant Keep XP that this file's own copy never named — the bar
+// flies a `+N` chip for every grant (xpBar.ts's `xpGainSinceLast`), but the
+// SPECIFIC moment's own toast/line stayed silent about its share of it,
+// which is exactly the "written to state, invisible in play" gap spec §16
+// v1.3 calls out. These are the SAME pure formulas `core/state.ts` sums
+// into `keepXp` — reading them here can never disagree with what actually
+// landed.
+import { bountyCompleteXp, bountyDayClearXp, streakDayXp } from "../core/progression/xp";
 import { tuning as contentTuning } from "../content/tuning";
 import type { Tuning } from "../content/tuning";
 import { MILESTONES as contentMilestones } from "../content/milestones";
@@ -197,6 +207,15 @@ export interface StreakDisplayModel {
   /** What today's ladder day pays (already banked by the time this
    * renders — `initDailiesUi` claims eagerly, bible §3.5 "auto-bank"). */
   readonly todaysRewardLabel: string;
+  /**
+   * ROUND 2G — the Keep XP the streak day itself pays (`streakDayXp`),
+   * shown alongside `todaysRewardLabel` so the moment states BOTH halves
+   * of its payout. Granted every day regardless of whether the reward is
+   * a plain grant or a pending CHOICE (`core/state.ts`'s CLAIM_STREAK_REWARD
+   * arm keys the XP off `rewardedForDay` alone, never off `reward.kind`),
+   * so this is never null/hidden the way `bannerRewardLine` is.
+   */
+  readonly rewardXp: number;
   readonly pendingChoices: readonly StreakPendingChoiceModel[];
 }
 
@@ -277,6 +296,7 @@ export function buildStreakModel(
     welcomeBackActive: tier > natural,
     headline: streakHeadline(streak, tuning),
     todaysRewardLabel: formatLadderReward(reward),
+    rewardXp: streakDayXp(tier, tuning),
     pendingChoices: streak.pendingChoices.map((choice) => ({
       kind: choice.kind,
       forDay: choice.forDay,
@@ -326,8 +346,20 @@ export function detectStreakRewardToast(
   if (next.streak.rewardedForDay !== next.streak.current) return null;
   if (prev.streak.rewardedForDay === next.streak.rewardedForDay) return null;
   const reward = resolveLadderReward(next.streak.current, tuning, ladderContentFor(next));
-  if (reward.kind !== "grant") return null; // choice rewards get their own picker, not a toast
-  return `Day ${next.streak.current}: ${formatLadderReward(reward)}!`;
+  // ROUND 2G (docs/hud-redesign.md #2, progression-bible.md §1.3 row 27):
+  // the streak day's Keep XP is granted the instant `rewardedForDay`
+  // advances regardless of `reward.kind` — `core/state.ts`'s
+  // CLAIM_STREAK_REWARD arm keys the grant off `rewardedForDay` alone, and
+  // a CHOICE day (the day-5 Keepsake pick, the day-7 egg pick) pays it
+  // exactly like a plain grant day. It used to be silent, both text-wise
+  // AND xp-wise, on the choice branch below — the picker card was the only
+  // acknowledgment, so that XP was invisible everywhere but the bar's
+  // generic `+N` chip.
+  const xp = streakDayXp(effectiveStreakTier(next.streak, tuning), tuning);
+  if (reward.kind !== "grant") {
+    return `Day ${next.streak.current}: +${xp} XP — and a choice waiting for you.`;
+  }
+  return `Day ${next.streak.current}: +${xp} XP · ${formatLadderReward(reward)}!`;
 }
 
 // ---------------------------------------------------------------------------
@@ -343,6 +375,12 @@ export interface BountyCardModel {
   readonly complete: boolean;
   readonly stale: boolean;
   readonly rewardLabel: string;
+  /** ROUND 2G (progression-bible.md §1.3 row 30) — the Keep XP ONE
+   * completed bounty pays, so "the bounty tick-off" states it instead of
+   * leaving it to the bar's generic `+N` chip. Constant per card (every
+   * bounty pays the same `bountyComplete` XP — the resource/item bundle is
+   * what varies by template, not the XP). */
+  readonly xpReward: number;
   readonly canReroll: boolean;
 }
 
@@ -352,6 +390,7 @@ export function buildBountyCards(
 ): readonly BountyCardModel[] {
   const canRerollAtAll =
     state.bounties.rerollsUsed < tuning.retention.bounties.freeRerollsPerDay;
+  const xpReward = bountyCompleteXp(1, tuning);
   return state.bounties.slots.map((slot) => {
     const template = contentBountyTemplates.find((t) => t.id === slot.templateId);
     const target = Math.max(1, slot.target);
@@ -365,6 +404,7 @@ export function buildBountyCards(
       stale: slot.stale,
       rewardLabel:
         template !== undefined ? formatBountyReward(template.reward) : "a little something",
+      xpReward,
       canReroll: canRerollAtAll && slot.completedAt === null && !slot.stale,
     };
   });
@@ -372,6 +412,22 @@ export function buildBountyCards(
 
 export function bountiesClearedToday(state: GameState): boolean {
   return state.bounties.dayBonusGranted;
+}
+
+/** ROUND 2G (progression-bible.md §1.3 row 31) — the Keep XP the WHOLE
+ * day's bounty trio pays once all three clear, on top of each bounty's own
+ * `bountyComplete` XP. Exported so the day-clear celebration's copy and
+ * `initDailiesUi`'s detector read the same number. */
+export function bountyDayClearXpAmount(tuning: Tuning = contentTuning): number {
+  return bountyDayClearXp(1, tuning);
+}
+
+/** Fires exactly once, the moment `dayBonusGranted` flips false → true —
+ * the day-clear celebration (bible row 31), which previously had no
+ * celebration at all: only the static "Whole round cleared" note, with no
+ * mention of the +25 XP that moment actually pays. */
+export function detectBountyDayClearCelebration(prev: GameState, next: GameState): boolean {
+  return !prev.bounties.dayBonusGranted && next.bounties.dayBonusGranted;
 }
 
 /** Bounty slots that just completed on this transition (progress reached
@@ -683,7 +739,9 @@ export function createDailiesSheet(deps: DailiesSheetDeps): DailiesSheet {
 
     const ladder = document.createElement("div");
     ladder.className = "pk-daily-reward-line";
-    ladder.textContent = `Day ${model.ladderDay} of ${model.ladderLength}: ${model.todaysRewardLabel}`;
+    // ROUND 2G: state BOTH halves of the day's payout — the XP was granted
+    // silently before (visible only as a generic `+N` chip on the bar).
+    ladder.textContent = `Day ${model.ladderDay} of ${model.ladderLength}: +${model.rewardXp} XP · ${model.todaysRewardLabel}`;
     wrap.appendChild(ladder);
 
     for (const choice of model.pendingChoices) {
@@ -734,7 +792,7 @@ export function createDailiesSheet(deps: DailiesSheetDeps): DailiesSheet {
     if (bountiesClearedToday(state)) {
       const cleared = document.createElement("div");
       cleared.className = "pk-daily-note";
-      cleared.textContent = "Whole round cleared — an egg is waiting on you to choose its biome.";
+      cleared.textContent = `Whole round cleared — +${bountyDayClearXpAmount()} XP, and an egg is waiting on you to choose its biome.`;
       wrap.appendChild(cleared);
     }
 
@@ -764,7 +822,12 @@ export function createDailiesSheet(deps: DailiesSheetDeps): DailiesSheet {
 
       const reward = document.createElement("div");
       reward.className = "pk-daily-bounty-reward";
-      reward.textContent = card.complete ? `Banked: ${card.rewardLabel}` : card.rewardLabel;
+      // ROUND 2G: name the Keep XP alongside the resource/item bundle — the
+      // bounty tick-off used to state only the latter, leaving the +15 XP
+      // (bible row 30) to the bar's generic flight chip.
+      reward.textContent = card.complete
+        ? `Banked: +${card.xpReward} XP · ${card.rewardLabel}`
+        : `+${card.xpReward} XP · ${card.rewardLabel}`;
       row.appendChild(reward);
 
       if (card.canReroll) {
@@ -1046,7 +1109,26 @@ export function initDailiesUi(deps: DailiesUiDeps): DailiesUi {
     for (const card of detectBountyCelebrations(before, state)) {
       sound("reveal.collect");
       burstConfetti();
-      notify({ kind: "info", message: `Bounty done: ${card.title}! +${card.rewardLabel}` });
+      // ROUND 2G: name the Keep XP too (bible row 30) — it used to be
+      // silent here, the same way the reveal was before this round fixed
+      // that moment.
+      notify({
+        kind: "info",
+        message: `Bounty done: ${card.title}! +${card.xpReward} XP · +${card.rewardLabel}`,
+      });
+    }
+
+    // ROUND 2G (progression-bible.md §1.3 row 31) — the WHOLE round clearing
+    // is its own celebration, separate from the individual bounty tick-offs
+    // above: it used to be a static note ("Whole round cleared…") with no
+    // toast and no mention of the +25 XP that moment pays.
+    if (detectBountyDayClearCelebration(before, state)) {
+      sound("reveal.collect");
+      burstConfetti();
+      notify({
+        kind: "info",
+        message: `Today's round cleared! +${bountyDayClearXpAmount()} XP — and an egg is waiting on you to choose its biome.`,
+      });
     }
 
     // Milestones: BANK them. Nothing is ever waiting on a tap (bible

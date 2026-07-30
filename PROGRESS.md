@@ -14,6 +14,38 @@ Phase-gate log and decision journal, per spec §13–§15. Append entries; never
 | 5 — The Keep | **gate passed** | 2026-07-29 |
 | 6 — Polish, PWA, onboarding | **gate passed** | 2026-07-29 |
 
+## ⏸ PAUSED MID-ROUND — resume here (2026-07-30)
+
+Two workflows were stopped mid-flight at the owner's request. **The tree is GREEN — 2285 tests, clean build, `tsc` clean** — so this is a safe stopping point, but two rounds are functionally complete and *unverified*.
+
+### Round 2G — HUD legibility — BUILD DONE, FIX STAGE NEVER RAN
+Reached: Oracle design ✅ → both builders ✅ → integrate ✅ (2230 tests green at that point) → all three verifiers ✅ → **stopped before the fixer**.
+- `docs/hud-redesign.md` (702 lines) is the Oracle's spec; the HUD, XP bar, Doorstep, loot-reveal and build-sheet work is IN the tree and passing.
+- **Its verifiers reported 4 blockers and 11 majors that are NOT yet fixed.** They are listed below verbatim; they are the resume work-list.
+
+**Blockers (2G):**
+1. `src/ui/xpBar.ts` — the Ready affordance's click handler can be gutted to an inert `return` with zero test failures; `createXpBar` has no DOM tests at all. (This is the *same inert-chip bug* 2G existed to fix, now untested rather than unfixed.)
+2. `src/ui/lootReveal.ts` — the `+N Keep XP` chip is never asserted in the DOM, so it can be blanked and hidden with the suite fully green.
+3. `src/ui/progression.css:49` — the "why is this bar grey" pill is completely hidden under the Keep strip; when a Pip is away the player sees six dead buttons with no explanation.
+4. `src/ui/welcome.ts:398` — the day-2 return still reports only decay for a new player; its one gain-shaped number is a forecast that never reaches the XP bar.
+
+**Notable majors (2G):** starter Pip is camouflaged against its own field (1.05:1 body-vs-ground contrast, `content/palette.ts:59`); speech bubbles run up to 71.5px off the left edge; the +XP flight chip is 15×13px at 2.08:1 contrast and lands on the numerals; cooldown counter at 2.26:1; onboarding Skip overlaps the sound toggle; upgrade-card title runs under its close button; the bottom 35px of the Keep plot sits permanently behind the Keep strip; no build card names its decoration set; three of five headline DOM factories (`createTopBar`, `createDoorstep`, `createLootRevealModal`) have no tests at all.
+
+### Round 2H — Pip lifecycle — DESIGN ONLY
+Reached: **lifecycle bible ✅ only.** Stopped before any core builder ran.
+- `docs/lifecycle-bible.md` (1,195 lines) + an additive `tuning.lifecycle` block in `content/tuning.ts` are in the tree.
+- **No lifecycle code exists yet** — no per-pip levels, no aging, no ailments, no breeding wiring, no lineage eggs. Spec §16 v1.5 already commits to the design (the five promises), so the spec is ahead of the code here.
+- Resume by re-running the round; the design agent replays from cache.
+
+### To resume
+Both runs are resumable with their cached prefixes intact:
+- 2G: `Workflow({scriptPath: ".../round2g-legible-progression-wf_e832b17e-aca.js", resumeFromRunId: "wf_e832b17e-aca"})`
+- 2H: `Workflow({scriptPath: ".../round2h-lifecycle-lineage-risk-wf_14b65b1c-64f.js", resumeFromRunId: "wf_14b65b1c-64f"})`
+Scripts live under `~/.claude/projects/-Users-gary-dev-pipskeep/<session>/workflows/scripts/`. **Caution:** 2G and 2H were deliberately given disjoint file ownership; resume them one at a time, not concurrently, since 2H's UI phase needs seams in files 2G owns.
+
+### Queued and not started
+2D (Pip identity: individual names — every Pip is still literally named after its species — three distinct starter species, real accessories), 2I (Web Push), 2J (fifth resource + crafting), 2K (attractions + living Keep).
+
 ## Gate log
 
 ### Round 2F — The progression spine — 2026-07-30

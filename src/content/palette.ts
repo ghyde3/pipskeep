@@ -55,25 +55,61 @@ export const speciesPalettes: Readonly<Record<string, SpeciesPaletteDef>> = {
     accent: "#ff8a5c", // vibrant coral — the one loud note per spec §11
     fallbackVariantId: "fern",
     variants: {
+      /*
+       * THE STARTER PIP MUST NOT BE CAMOUFLAGED AGAINST ITS OWN FIELD.
+       *
+       * All three variants shipped at roughly 1.05 : 1 against BOTH of the
+       * Keep's ground tones (`keepPalette.ground` #b7dda1 and `groundNear`
+       * #a8d492) — fern 1.05, lichen 1.09/1.02, clover 1.07/1.04. Their only
+       * separation was a 2px outline at ~2.4 : 1. Meanwhile the loudest
+       * pixels on a cold-landing screen are the XP fill (#f2b705) and six
+       * pure-white action cards, so a first-time player's eye went chrome →
+       * chrome → chrome and the actual living Pip — a ~58×55px pale blob, and
+       * the entire point of the game — was the last thing they found.
+       *
+       * ALL THREE, not just `fallbackVariantId`. The review reported this
+       * against `fern` because that is the variant its save happened to roll;
+       * `createNewGame`'s genesis roll picks freely among a species' variants,
+       * so a fix scoped to one of them leaves two players in three meeting a
+       * camouflaged Pip. Verified by reproducing it: the save this was
+       * re-measured on rolled `clover`.
+       *
+       * Now: body ≥ 1.95 (vs `ground`) / 1.76 (vs `groundNear`), outline
+       * ≥ 4.75 / 4.28 — so the silhouette reads crisply even where the fill
+       * runs closest to the grass. `palette.test.ts` pins the floor for every
+       * starter variant so this cannot drift back.
+       *
+       * belly/pattern/outline follow the same derivation rule the round-2B
+       * species use (belly = body lightened 55% toward white, pattern = body
+       * darkened 22%, outline = body darkened 42%), so the three still read
+       * as one family — a mossy green, a sage grey-green and a mint.
+       *
+       * THE WIDER FINDING IS NOT CLOSED: all 14 species' birth variants sat
+       * between 1.00 and 1.69 against the ground, because the whole palette
+       * is pastel-on-pastel. Repainting thirteen more species (or the
+       * diorama's ground, which would fix every one of them at once) is an
+       * art-direction call, not a review fix — recorded here rather than
+       * done quietly.
+       */
       fern: {
-        body: "#aed9a4",
-        belly: "#e4f3d9",
-        pattern: "#7fb371",
-        outline: "#5f8a5e",
+        body: "#66a45c",
+        belly: "#bad6b6",
+        pattern: "#508048",
+        outline: "#3b5f35",
         blush: "#f2b8bd",
       },
       lichen: {
-        body: "#b9cfc0",
-        belly: "#e8f1e7",
-        pattern: "#8aab97",
-        outline: "#6c8878",
+        body: "#79988a",
+        belly: "#c3d1ca",
+        pattern: "#5e776c",
+        outline: "#465850",
         blush: "#f0bfc0",
       },
       clover: {
-        body: "#a2d7ba",
-        belly: "#dcf2e4",
-        pattern: "#6fbd90",
-        outline: "#568f70",
+        body: "#5ba57c",
+        belly: "#b5d7c4",
+        pattern: "#478161",
+        outline: "#356048",
         blush: "#f4b9c4",
       },
     },

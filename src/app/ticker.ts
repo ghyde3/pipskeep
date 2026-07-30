@@ -59,9 +59,35 @@ export function startTicker(
       pause();
       return;
     }
-    // Catch up over the hidden window before live ticking resumes.
-    const savedAt = store.getState().lastTickAt;
-    store.dispatch({ type: "CATCHUP", savedAt, now: clock.now() });
+    // Catch up over the hidden window before live ticking resumes — but
+    // ONLY when the window is actually big enough to be an absence.
+    //
+    // ROUND 2G (docs/hud-redesign.md §5.2 row 10 / brief failure #10):
+    // this used to dispatch CATCHUP unconditionally on every
+    // `visibilitychange`, so a half-second alt-tab or a notification
+    // swipe-down ran the full segmented catch-up pass (job production,
+    // mastery, bounties, Keep XP, the streak's day-boundary check) and a
+    // full re-sync of every subscribed view for a window the live ticker
+    // above had already covered by the time this fires. The Doorstep
+    // itself was already guarded against showing for a trivial absence
+    // (`isTrivialAbsence`/`AWAY_SHEET_MIN_ELAPSED_MS` in ui/welcome.ts —
+    // see there for why), but the reducer pass and the resync still ran
+    // for nothing every single time, and CATCHUP is still what an open
+    // sheet reacts to (a fresh `lastCatchup` reference) even when nothing
+    // in it changes the story worth telling.
+    //
+    // The guard: skip CATCHUP when less than two TICK intervals have
+    // elapsed since the last live tick — that window is exactly what the
+    // rAF loop (`loop`, above) already ticks through once `resume()` fires,
+    // so nothing is lost; `TICK`'s own decay math is continuous, not
+    // segmented, and needs stay exactly correct either way. Long absences
+    // (a closed tab, a backgrounded PWA for real time) are always well
+    // past this floor and dispatch CATCHUP exactly as before.
+    const state = store.getState();
+    const now = clock.now();
+    if (now - state.lastTickAt >= TICK_INTERVAL_MS * 2) {
+      store.dispatch({ type: "CATCHUP", savedAt: state.lastTickAt, now });
+    }
     resume();
   };
 

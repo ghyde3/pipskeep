@@ -5,7 +5,7 @@
  * ACKNOWLEDGE_REVEAL. The DOM shell is chrome around these.
  */
 
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { PendingReveal } from "../core/expeditions";
 import type { GameAction } from "../core/state";
 import { createEgg } from "../core/eggs";
@@ -18,10 +18,13 @@ import {
   REVEAL_TIER_HOLD_MS,
   REVEAL_TIER_LEAD_MS,
   buildRevealScript,
+  createLootRevealModal,
   createRevealQueueController,
   itemLabel,
 } from "./lootReveal";
-import type { RevealQueueStateView } from "./lootReveal";
+import type { RevealQueueStateView, RevealScript } from "./lootReveal";
+import { asHtml, installFakeDom } from "./fakeDom";
+import type { FakeDomHandle, FakeElement } from "./fakeDom";
 import { tuning } from "../content/tuning";
 import { EXPEDITION_IDS } from "../content/expeditions";
 
@@ -290,5 +293,108 @@ describe("buildRevealScript — the trip's Keep XP (bible §1.3 row 10)", () => 
     });
     expect(script.xpAward).toBe(tuning.progression.xp.revealBase);
     expect(Number.isFinite(script.xpAward)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE MODAL — the surface, not just the script
+// ---------------------------------------------------------------------------
+
+/**
+ * ROUND 2G REVIEW, MUTATION 4 (survived 2,230 tests): `play`'s
+ *
+ *     xpChip.textContent = `+${script.xpAward} Keep XP`;
+ *     xpChip.hidden = script.xpAward <= 0;
+ *
+ * replaced with `xpChip.textContent = ""; xpChip.hidden = true;`. Everything
+ * stayed green, because this file tested `buildRevealScript(...).xpAward` nine
+ * ways — base value, duration scaling, xpBonus scaling, every expedition id,
+ * finiteness — and never asserted the number reached a pixel. `.pk-reveal-xp`
+ * appeared in exactly two files in the repo, `lootReveal.ts` and `modals.css`,
+ * and in no test.
+ *
+ * That matters more here than anywhere: `RevealScript.xpAward`'s own doc
+ * records that this exact defect already shipped once — the bible calls the
+ * reveal "the dopamine core", and it displayed NO XP at all, a returning
+ * Meadow trip granting +27 while the card said nothing. Round 2F restored the
+ * chip; nothing pinned it there. A bulletproof model behind an unguarded
+ * surface is the precise shape of a silently-dead feature.
+ */
+describe("createLootRevealModal — the card actually says what the trip paid", () => {
+  let dom: FakeDomHandle;
+
+  beforeEach(() => {
+    dom = installFakeDom();
+  });
+  afterEach(() => {
+    dom.uninstall();
+  });
+
+  function open(script: RevealScript): {
+    readonly modal: ReturnType<typeof createLootRevealModal>;
+    readonly root: FakeElement;
+  } {
+    const modal = createLootRevealModal({
+      mount: asHtml(dom.ui),
+      onCollect: () => {},
+    });
+    modal.play(script);
+    return { modal, root: modal.el as unknown as FakeElement };
+  }
+
+  it("renders the +N Keep XP chip with the script's own award", () => {
+    const script = buildRevealScript(reveal(), PIPS);
+    expect(script.xpAward).toBeGreaterThan(0);
+
+    const { root } = open(script);
+    const chip = root.querySelector(".pk-reveal-xp") as FakeElement;
+    expect(chip.hidden).toBe(false);
+    expect(chip.textContent).toBe(`+${script.xpAward} Keep XP`);
+  });
+
+  it("hides the chip — rather than printing '+0 Keep XP' — when a trip pays none", () => {
+    const script: RevealScript = { ...buildRevealScript(reveal(), PIPS), xpAward: 0 };
+    const { root } = open(script);
+    const chip = root.querySelector(".pk-reveal-xp") as FakeElement;
+    expect(chip.hidden).toBe(true);
+  });
+
+  it("re-shows the chip on a later trip that DOES pay (the guard is not one-way)", () => {
+    const modal = createLootRevealModal({
+      mount: asHtml(dom.ui),
+      onCollect: () => {},
+    });
+    const root = modal.el as unknown as FakeElement;
+    const chip = root.querySelector(".pk-reveal-xp") as FakeElement;
+
+    const paying = buildRevealScript(reveal(), PIPS);
+    modal.play({ ...paying, xpAward: 0 });
+    expect(chip.hidden).toBe(true);
+
+    modal.play(paying);
+    expect(chip.hidden).toBe(false);
+    expect(chip.textContent).toBe(`+${paying.xpAward} Keep XP`);
+  });
+
+  it("Collect only fires once the beats have finished — juice first, then the seam", () => {
+    let collected = 0;
+    const modal = createLootRevealModal({
+      mount: asHtml(dom.ui),
+      onCollect: () => (collected += 1),
+    });
+    const root = modal.el as unknown as FakeElement;
+    const script = buildRevealScript(reveal(), PIPS);
+    modal.play(script);
+
+    const collect = root.querySelector(".pk-reveal-collect") as FakeElement;
+    collect.click();
+    expect(collected).toBe(0);
+
+    // A tap anywhere else fast-forwards every remaining beat…
+    const card = root.querySelector(".pk-reveal-card") as FakeElement;
+    card.dispatch("click", { target: card });
+    // …after which Collect is live.
+    collect.click();
+    expect(collected).toBe(1);
   });
 });

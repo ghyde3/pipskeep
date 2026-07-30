@@ -1,22 +1,23 @@
 /**
- * The Nook menu (round 2C integrate stage) — one floating button in the
- * bottom-left thumb zone plus the popover it opens. Own stylesheet, own
- * class prefix (`pk-nav-*`), edits nothing in ui.css: the same
- * self-containment rule soundToggle.css and dailies.css follow.
+ * The Nook menu (round 2C integrate stage) — one floating button plus the
+ * popover it opens. Own stylesheet, own class prefix (`pk-nav-*`), edits
+ * nothing in ui.css: the same self-containment rule soundToggle.css and
+ * dailies.css follow.
  *
  * LAYERING — see src/ui/layers.test.ts, which pins the whole ladder:
  *   button  z 5  (`--pk-z-float`)  above the world, UNDER every sheet, so
  *                an open surface covers it instead of floating on top.
  *   popover z 12 (`--pk-z-nav`)    above the Phase 5 chrome's stacking
- *                context (z 6, which clamps the Keep bar with it) and
- *                below every full-screen surface (20+).
+ *                context (z 6) and below every full-screen surface (20+).
  *
- * GEOMETRY — the reason this module exists. The bottom-left column at
- * 375px is: care bar (bottom), Keep bar `left:12px` rising from
- * `bottom + 118px` (Keep chip + Build, ~88px tall → it reaches ~+206px).
- * This button therefore sits at `bottom + 224px`, clear of the Keep bar's
- * top edge, and the popover grows UPWARD from there so it never covers its
- * own trigger or the care bar.
+ * GEOMETRY (round 2G hud-redesign doc §2.9): the button used to sit in the
+ * bottom-left thumb zone, stacked above the old Keep bar. Round 2G gave
+ * that whole zone to the Keep strip, so the button now sits just under the
+ * cast strip instead — `top: calc(var(--pk-hud-top, 96px) + 10px)`, a
+ * MEASURED offset (topBar.ts's ResizeObserver), not a guess. It reads as
+ * chrome there and clears the world's centre; the popover keeps growing
+ * UPWARD from the bottom-left so it never covers its own trigger or the
+ * care bar.
  */
 
 .pk-nav {
@@ -29,7 +30,7 @@
   pointer-events: auto;
   position: absolute;
   left: 12px;
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 224px);
+  top: calc(var(--pk-hud-top, 96px) + 10px);
   z-index: 5;
 
   appearance: none;

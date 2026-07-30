@@ -2,15 +2,25 @@
  * THE LAYER LADDER — the round-2C integrate stage's regression guard for
  * this project's one recurring UI bug.
  *
- * The bug, on the record: `.pk-keepbar` (the Keep chip + Build button) lives
- * inside `.pk-phase5`, which declares `z-index: 6` and therefore opens its
- * OWN stacking context. Every z-index inside it is relative to that 6, so
- * the keep bar could not be pushed under a sheet by raising the sheet's
- * z-index — it had to be HIDDEN instead (`onOpenChange` in buildSheet.ts /
- * phase5.ts). Round 2C then added five more overlays, three of them
- * reachable from each other, and the shipped values had them TIED at 20
- * with the focus view — a tie that CSS resolves by DOM order, i.e. by
- * main.ts's mount sequence, i.e. by accident.
+ * The bug, on the record: the OLD `.pk-keepbar` (the Keep chip + Build
+ * button, deleted in round 2G — see ui.css) lived inside `.pk-phase5`,
+ * which declares `z-index: 6` and therefore opens its OWN stacking
+ * context. Every z-index inside it is relative to that 6, so the keep bar
+ * could not be pushed under a sheet by raising the sheet's z-index — it
+ * had to be HIDDEN instead (`onOpenChange` in buildSheet.ts / phase5.ts).
+ * Round 2C then added five more overlays, three of them reachable from
+ * each other, and the shipped values had them TIED at 20 with the focus
+ * view — a tie that CSS resolves by DOM order, i.e. by main.ts's mount
+ * sequence, i.e. by accident.
+ *
+ * ROUND 2G moved the Keep XP bar + Build button OUT of `.pk-phase5`
+ * entirely, into a root-level float (`.pk-keepstrip`, z 5 — same rung as
+ * the sound toggle / Nook button) — the stacking-context trick this file
+ * guards no longer applies to them at all, because they no longer live
+ * inside the context that trick was needed for. What remains inside
+ * `.pk-phase5` (the placement pill at z 7, the Build sheet / upgrade card
+ * wraps at z 8) still needs the clamp, so invariant A below now checks
+ * `.pk-placebar` instead of the deleted `.pk-keepbar`.
  *
  * So the ladder is written down here, once, and asserted against the actual
  * stylesheets. This test is deliberately not clever: it reads the CSS as
@@ -20,11 +30,12 @@
  * Two invariants matter more than the individual numbers:
  *
  *   A. `.pk-phase5` MUST keep declaring a z-index. That is what makes it a
- *      stacking context, which is what clamps the keep bar (9) and the
- *      Phase 5 sheets (8) beneath every full-screen surface. If someone
- *      "cleans up" that declaration, the keep bar escapes to the root
- *      stacking context at 9 — still under the sheets at 20, but now
- *      ABOVE the Nook popover at 12, and the bug is back in a new costume.
+ *      stacking context, which is what clamps its remaining internal chrome
+ *      (the placement pill at 7, the Phase 5 sheets at 8) beneath every
+ *      full-screen surface. If someone "cleans up" that declaration, that
+ *      chrome escapes to the root stacking context — still under the
+ *      sheets at 20, but now ABOVE the Nook popover at 12, and the bug is
+ *      back in a new costume.
  *
  *   B. No two overlays that can be open at the same time may share a rung.
  *      Peers that are mutually exclusive by construction (the items sheet
@@ -130,11 +141,13 @@ const LADDER: readonly Rung[] = [
   {
     layer: "float",
     file: "progression.css",
-    selector: ".pk-xpbar",
+    selector: ".pk-keepstrip",
     z: 5,
     why:
-      "ROUND 2F: the always-visible Keep XP bar — mountable anywhere " +
-      "(round 2G decides where), so like every other float it sits UNDER " +
+      "ROUND 2G: the Keep strip (XP bar + Build button) — round 2G moved " +
+      "this rung here from `.pk-xpbar` (now a plain flex child of the " +
+      "strip, needing no z-index of its own) when it fixed the bar's " +
+      "final home in the layout. Like every other float it sits UNDER " +
       "any real overlay rather than floating on top of one",
     peer: true,
   },
@@ -297,20 +310,26 @@ describe("the UI layer ladder", () => {
     }
   });
 
-  /** Invariant A — the named bug's actual mechanism. */
-  it("keeps .pk-phase5 a stacking context, so the keep bar stays clamped", () => {
+  /**
+   * Invariant A — the named bug's actual mechanism, now checked against
+   * `.pk-placebar` (round 2G moved the Keep chip + Build button OUT of
+   * `.pk-phase5` entirely — see this file's module doc — so the deleted
+   * `.pk-keepbar` is no longer the right selector to prove the clamp with;
+   * the placement pill is the internal chrome that still needs it).
+   */
+  it("keeps .pk-phase5 a stacking context, so its internal chrome stays clamped", () => {
     const phase5 = zIndexOf("ui.css", ".pk-phase5");
     expect(
       phase5,
-      ".pk-phase5 must declare a z-index — it is what clamps .pk-keepbar",
+      ".pk-phase5 must declare a z-index — it is what clamps its internal chrome",
     ).not.toBeNull();
 
-    // The keep bar's 9 and the phase5 sheets' 8 are relative to that
-    // context, so BOTH are painted at the phase5 root's rung. The bar
-    // therefore cannot cover the Nook popover, any sheet, or any screen.
-    const keepbar = zIndexOf("ui.css", ".pk-keepbar");
-    expect(keepbar).not.toBeNull();
-    expect(keepbar as number).toBeGreaterThan(0);
+    // The placement pill's 7 and the phase5 sheets' 8 are relative to that
+    // context, so BOTH are painted at the phase5 root's rung. Neither can
+    // cover the Nook popover, any sheet, or any screen.
+    const placebar = zIndexOf("ui.css", ".pk-placebar");
+    expect(placebar).not.toBeNull();
+    expect(placebar as number).toBeGreaterThan(0);
 
     const overlayRungs = LADDER.filter((r) =>
       ["nav-popover", "sheet", "dailies-sheet", "screen", "confirm"].includes(r.layer),
@@ -319,7 +338,7 @@ describe("the UI layer ladder", () => {
     for (const rung of overlayRungs) {
       expect(
         rung.z,
-        `${rung.selector} must outrank the .pk-phase5 root (${phase5 as number}) to cover the keep bar`,
+        `${rung.selector} must outrank the .pk-phase5 root (${phase5 as number}) to cover its internal chrome`,
       ).toBeGreaterThan(phase5 as number);
     }
   });
@@ -361,6 +380,66 @@ describe("the UI layer ladder", () => {
   });
 
   /**
+   * ROUND 2G INTEGRATE — THE TWO HUD STRIPS, and the surfaces that must
+   * clear them.
+   *
+   * The redesign replaced one growing top bar with two fixed strips: the
+   * cast strip (`.pk-hud-top`, top-anchored, no z-index — it is the FLOOR,
+   * so every real surface covers it) and the Keep strip (`.pk-keepstrip`,
+   * bottom-anchored at the float rung 5). Both are registered here because
+   * "which strip is the floor" is a cross-file invariant exactly like the
+   * ladder itself, and because the Keep strip introduced a NEW band of
+   * chrome that other stylesheets did not know about — see the sibling
+   * describe block below for the regression that caused.
+   */
+  it("keeps the cast strip the floor: it declares no z-index of its own", () => {
+    expect(
+      zIndexOf("ui.css", ".pk-hud-top"),
+      ".pk-hud-top must NOT declare a z-index — it is the bottom of the " +
+        "stack, so `.pk-phase5` (6) and every sheet/screen above it cover " +
+        "it for free. Giving it one would let it punch through overlays.",
+    ).toBeNull();
+
+    // The Keep strip sits at the float rung, i.e. UNDER `.pk-phase5` (6).
+    // That is what makes round 2G's escape from the documented stacking
+    // trap real: the Build sheet and upgrade card live INSIDE phase5 and
+    // now cover this strip by ordinary z-index, instead of needing it
+    // hidden. (`--hide` is still wired, belt-and-braces, for placement mode.)
+    const keepstrip = zIndexOf("progression.css", ".pk-keepstrip") as number;
+    const phase5 = zIndexOf("ui.css", ".pk-phase5") as number;
+    expect(keepstrip).toBeLessThan(phase5);
+  });
+
+  /**
+   * `.pk-phase5`'s internal surfaces, all clamped by its z 6 context. The
+   * Build sheet is the one that is easy to miss: it reuses the items
+   * sheet's `.pk-sheet-wrap` class but is mounted inside `.pk-phase5`,
+   * where a later, equal-specificity rule re-scopes it from 20 to 8.
+   */
+  it("clamps every .pk-phase5 internal surface beneath the context root", () => {
+    const phase5 = zIndexOf("ui.css", ".pk-phase5") as number;
+    const internal: readonly (readonly [string, string, number])[] = [
+      ["ui.css", ".pk-placebar", 7],
+      // The Build sheet + the plan/upgrade wraps share this declaration.
+      ["ui.css", ".pk-phase5 .pk-sheet-wrap", 8],
+      ["keepUpgrade.css", ".pk-phase5 .pk-upcard-wrap.pk-upcard-wrap--open", 10],
+    ];
+    for (const [file, selector, z] of internal) {
+      expect(zIndexOf(file, selector), `${file} ${selector}`).toBe(z);
+    }
+    // Every one of them is painted at the phase5 root's rung, so the Nook
+    // popover (12) and everything above still covers them.
+    const nav = LADDER.find((r) => r.layer === "nav-popover") as Rung;
+    expect(nav.z).toBeGreaterThan(phase5);
+  });
+
+  /** The ribbon's flying `+N XP` chip must ride at its parent's rung. */
+  it("keeps the ribbon fly-chip on the ribbon's own rung", () => {
+    const ribbon = LADDER.find((r) => r.layer === "milestone-ribbon") as Rung;
+    expect(zIndexOf("progression.css", ".pk-ribbon-flychip")).toBe(ribbon.z);
+  });
+
+  /**
    * The dev debug menu (its CSS is injected from debugMenu.ts, not a .css
    * file) floats at 60 so the time slider stays reachable over any surface
    * — including the Doorstep it is used to trigger. Asserted so a future
@@ -393,6 +472,165 @@ describe("the UI layer ladder", () => {
  * Every panel that sizes itself in `vw` therefore has to opt into
  * border-box explicitly, and that is what this asserts.
  */
+/**
+ * CLEARING THE HUD STRIPS. The round-2G counterpart to the ladder: the
+ * ladder governs what paints OVER what, this governs what OVERLAPS what.
+ *
+ * The bug this guards, measured at 375x812 during the round-2G integrate
+ * pass: round 2G moved the Keep XP bar + Build button into a new
+ * bottom-anchored strip occupying 84px→157px above the viewport bottom.
+ * Three surfaces in two *other* files were still anchored with pixel
+ * literals tuned when the 84px action bar was the only bottom chrome:
+ *
+ *   - `.pk-onboard-cue`  (108px) covered 62.7% of the XP bar
+ *   - `.pk-onboard-skip` (108px) covered 64% of the Build button and WON
+ *                                its hit-test
+ *   - `.pk-debug-root`   (132px) covered 30% of the Build button
+ *
+ * Nobody owned the interaction: each builder stayed inside their files and
+ * the strip's new band was invisible from outside them. So the fix is the
+ * same one round 2G already applied at the top — publish the measurement
+ * (`--pk-hud-bottom`, written by xpBar.ts's ResizeObserver, mirroring
+ * topBar.ts's `--pk-hud-top`) and make every consumer key off it.
+ *
+ * These tests read the stylesheets as text for the same reason the ladder
+ * does: the failure mode is someone typing a plausible-looking number in
+ * one file without knowing what occupies that band in another.
+ */
+describe("surfaces clear the HUD strips by measurement, not by literal", () => {
+  const tsFiles = import.meta.glob("./*.ts", {
+    query: "?raw",
+    import: "default",
+    eager: true,
+  }) as Record<string, string>;
+
+  it("anchors every below-the-top-bar surface to --pk-hud-top", () => {
+    const consumers: readonly (readonly [string, string])[] = [
+      ["ui.css", ".pk-toasts"],
+      ["progression.css", ".pk-levelup"],
+      ["progression.css", ".pk-ribbon"],
+    ];
+    for (const [file, selector] of consumers) {
+      const top = declOf(file, selector, "top");
+      expect(top, `${selector} must declare a top`).not.toBeNull();
+      expect(
+        top as string,
+        `${selector} must clear the cast strip via var(--pk-hud-top) — a ` +
+          "pixel literal here is the round-2F bug that printed the tier " +
+          "banner straight through the top bar",
+      ).toContain("--pk-hud-top");
+    }
+  });
+
+  it("anchors every above-the-action-bar surface to --pk-hud-bottom", () => {
+    for (const selector of [".pk-onboard-cue", ".pk-onboard-skip"]) {
+      const bottom = declOf("onboarding.css", selector, "bottom");
+      expect(bottom, `${selector} must declare a bottom`).not.toBeNull();
+      expect(
+        bottom as string,
+        `${selector} must clear the Keep strip via var(--pk-hud-bottom)`,
+      ).toContain("--pk-hud-bottom");
+    }
+    // debugMenu.ts injects its CSS from a template string, so it is read
+    // here as TypeScript source rather than through the .css glob.
+    const debugSrc = tsFiles["./debugMenu.ts"];
+    expect(debugSrc, "debugMenu.ts not found").toBeDefined();
+    const rootRule = /\.pk-debug-root\s*\{([^}]*)\}/.exec(debugSrc as string);
+    expect(rootRule, ".pk-debug-root rule not found").not.toBeNull();
+    expect(
+      (rootRule as RegExpExecArray)[1] as string,
+      ".pk-debug-root must clear the Keep strip too — it is the tool used " +
+        "to TEST that strip, and at bottom:132px it covered the Build button",
+    ).toContain("--pk-hud-bottom");
+  });
+
+  /**
+   * ROUND 2G REVIEW — THE ACTION BAR IS NOT A FIXED HEIGHT, AND THE KEEP
+   * STRIP MUST NOT ASSUME IT IS.
+   *
+   * `.pk-keepstrip` shipped at `bottom: calc(env(safe-area-inset-bottom) +
+   * 84px)` under a comment asserting "the action bar is a fixed 84px tall by
+   * design". It is not: `.pk-actionbar-reason` is `grid-column: 1 / -1` and
+   * grows the bar to 124px whenever the active Pip cannot take care — the
+   * ordinary day-2 state. Measured at 375×812 with the Pip on a trip, the
+   * bar's top moved 729→688 while the strip stayed at 655, so the reason
+   * pill and `.pk-xpbar-next` painted on the same 351×14 band. And because
+   * the strip carries `z-index: 5` and the action bar carries none,
+   * `elementFromPoint` at the pill's centre returned `.pk-xpbar-next`: the
+   * documented one-tap escape from a fully greyed-out care bar was not
+   * hit-testable.
+   *
+   * `--pk-actionbar-h` (actionBar.ts's ResizeObserver) is the fix; this
+   * pins it, because the next author to "simplify" it back to a literal
+   * will reintroduce exactly this bug.
+   */
+  it("anchors the Keep strip to the action bar's MEASURED height, never a literal", () => {
+    const css = cssFiles["./progression.css"];
+    expect(css, "progression.css not found").toBeDefined();
+    const rule = /\.pk-keepstrip\s*\{([^}]*)\}/.exec(
+      (css as string).replace(/\/\*[\s\S]*?\*\//g, ""),
+    );
+    expect(rule, ".pk-keepstrip rule not found").not.toBeNull();
+    const bottom = /(?:^|[;\s])bottom:\s*([^;]+)/.exec(
+      (rule as RegExpExecArray)[1] as string,
+    );
+    expect(bottom, ".pk-keepstrip must declare a bottom").not.toBeNull();
+    expect(
+      ((bottom as RegExpExecArray)[1] ?? "").trim(),
+      "the action bar grows to 124px when the reason pill shows — a literal " +
+        "here puts the strip on top of it, and the strip wins the hit-test",
+    ).toContain("--pk-actionbar-h");
+  });
+
+  /**
+   * The catch-all, and the one that will actually fire on the next author:
+   * no bottom-anchored surface may use a pixel literal that lands inside
+   * the Keep strip's band. `.pk-keepstrip` is exempt only because the test
+   * above pins its anchor more strictly than this one could.
+   */
+  it("lets no bottom-anchored surface park a literal inside the Keep strip", () => {
+    const BAND_TOP = 157; // strip top edge, measured at 375x812
+    const BAND_FLOOR = 84; // action-bar height the strip sits on
+    const EXEMPT = new Set([".pk-keepstrip", ".pk-actionbar"]);
+    const offenders: string[] = [];
+
+    for (const [path, raw] of Object.entries(cssFiles)) {
+      const text = raw.replace(/\/\*[\s\S]*?\*\//g, "");
+      const ruleRe = /([^{}]+)\{([^{}]*)\}/g;
+      let match: RegExpExecArray | null;
+      while ((match = ruleRe.exec(text)) !== null) {
+        const selectors = (match[1] ?? "")
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean);
+        if (selectors.some((s) => EXEMPT.has(s))) continue;
+        const body = match[2] ?? "";
+        const decl = /(?:^|[;\s])bottom:\s*([^;]+)/.exec(body);
+        if (decl === null) continue;
+        const value = (decl[1] ?? "").trim();
+        if (value.includes("--pk-hud-bottom")) continue;
+        for (const px of value.matchAll(/(\d+(?:\.\d+)?)px/g)) {
+          const n = Number(px[1]);
+          if (n > BAND_FLOOR && n < BAND_TOP) {
+            offenders.push(
+              `${path.replace("./", "")} ${selectors.join(", ")} → bottom: ${value}`,
+            );
+          }
+        }
+      }
+    }
+
+    expect(
+      offenders,
+      "these surfaces sit INSIDE the Keep strip's band " +
+        `(${BAND_FLOOR}px–${BAND_TOP}px above the viewport bottom) and will ` +
+        "overlap the XP bar or the Build button at 375px. Anchor them to " +
+        "calc(var(--pk-hud-bottom) + N) instead:\n" +
+        offenders.join("\n"),
+    ).toEqual([]);
+  });
+});
+
 describe("overlay panels fit the narrowest supported viewport", () => {
   const VW_SIZED_PANELS: readonly { readonly file: string; readonly selector: string }[] = [
     { file: "pipdex.css", selector: ".pk-pipdex" },

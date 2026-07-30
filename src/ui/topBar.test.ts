@@ -1,21 +1,38 @@
 /**
- * Top-bar controller tests (spec §10 active Pip selector) — the pure
- * helpers only: status glyph mapping per activity and the identity-row
- * subtitle. Selector switching itself is a reducer concern, covered by
- * the SET_ACTIVE_PIP tests in core/state.test.ts; the DOM shell here is
- * untested chrome (same pattern as debugMenu.test.ts).
+ * Cast-strip controller tests (spec §10 active Pip selector; round 2G's
+ * hud-redesign doc §2.7's N1 fix) — the pure helpers only: status glyph
+ * mapping (sulking-first, per the standing spec rule), the who-line
+ * builder, the lowest-need clause, the alert-ring level, and the
+ * aria-label builders. Selector switching itself is a reducer concern,
+ * covered by the SET_ACTIVE_PIP tests in core/state.test.ts.
+ *
+ * ROUND 2G REVIEW: the DOM shell is no longer "untested chrome". See the
+ * `createTopBar` block at the bottom of this file for why that framing cost
+ * the round two silently-dead features elsewhere.
  */
 
-import { describe, expect, it } from "vitest";
-import { LifeStage, PipActivity } from "../core/pips/types";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { LifeStage, NEED_IDS, PipActivity } from "../core/pips/types";
 import type { PipNeeds, PipState } from "../core/pips/types";
-import { identitySubtitle, satchelChips, statusGlyph } from "./topBar";
+import {
+  buildHudWhoLine,
+  castChipAlertLevel,
+  castChipAriaLabel,
+  identitySubtitle,
+  createTopBar,
+  lowestNeedClause,
+  statusGlyph,
+} from "./topBar";
+import type { GameAction, GameState } from "../core/state";
+import { installFakeDom } from "./fakeDom";
+import type { FakeDomHandle, FakeElement } from "./fakeDom";
 
-const needs = (): PipNeeds => ({
+const needs = (overrides: Partial<PipNeeds> = {}): PipNeeds => ({
   hunger: 80,
   cleanliness: 80,
   happiness: 80,
   energy: 80,
+  ...overrides,
 });
 
 function makePip(overrides: Partial<PipState> = {}): PipState {
@@ -50,16 +67,36 @@ function makePip(overrides: Partial<PipState> = {}): PipState {
 
 describe("statusGlyph — tiny selector badges (spec §10)", () => {
   it("badges exactly the away/resting/sulking states", () => {
-    expect(statusGlyph(PipActivity.OnExpedition)?.glyph).toBe("»");
-    expect(statusGlyph(PipActivity.Returning)?.glyph).toBe("!");
-    expect(statusGlyph(PipActivity.Resting)?.glyph).toBe("z");
-    expect(statusGlyph(PipActivity.Sulking)?.glyph).toBe("…");
+    expect(statusGlyph(makePip({ activity: PipActivity.OnExpedition }))?.glyph).toBe("»");
+    expect(statusGlyph(makePip({ activity: PipActivity.Returning }))?.glyph).toBe("!");
+    expect(statusGlyph(makePip({ activity: PipActivity.Resting }))?.glyph).toBe("z");
+    expect(statusGlyph(makePip({ activity: PipActivity.Sulking }))?.glyph).toBe("…");
   });
 
   it("Idle pips carry no badge; working pips wear the basket (spec §6.2)", () => {
-    expect(statusGlyph(PipActivity.Idle)).toBeNull();
-    expect(statusGlyph(PipActivity.AssignedJob)?.glyph).toBe("🧺");
-    expect(statusGlyph(PipActivity.AssignedJob)?.label).toBe("gathering away");
+    expect(statusGlyph(makePip({ activity: PipActivity.Idle }))).toBeNull();
+    expect(statusGlyph(makePip({ activity: PipActivity.AssignedJob }))?.glyph).toBe("🧺");
+    expect(statusGlyph(makePip({ activity: PipActivity.AssignedJob }))?.label).toBe(
+      "gathering away",
+    );
+  });
+
+  /**
+   * THE N1 REGRESSION TEST (hud-redesign doc §1.6/§2.7 — the "highest-value
+   * item" in the round). A Pip can nap through a sulk: `sulking: true` while
+   * `activity` still reads "idle" or "resting". `statusGlyph` MUST check
+   * `isSulking(pip)` before it ever looks at `pip.activity`, or this Pip
+   * gets no badge at all while a DIFFERENT Pip whose bare `activity` happens
+   * to equal "sulking" gets one — the same fact, reported inconsistently.
+   */
+  it("badges sulking EVEN when activity is idle or resting (a Pip can nap through a sulk)", () => {
+    const idleButSulking = makePip({ activity: PipActivity.Idle, sulking: true });
+    expect(statusGlyph(idleButSulking)?.glyph).toBe("…");
+    expect(statusGlyph(idleButSulking)?.label).toBe("sulking");
+    expect(statusGlyph(idleButSulking)?.kind).toBe("sulking");
+
+    const restingButSulking = makePip({ activity: PipActivity.Resting, sulking: true });
+    expect(statusGlyph(restingButSulking)?.label).toBe("sulking");
   });
 });
 
@@ -77,48 +114,317 @@ describe("identitySubtitle — the active pip's one-line readout", () => {
     );
   });
 
+  it("appends sulking even when napping through it (N1)", () => {
+    expect(
+      identitySubtitle(makePip({ activity: PipActivity.Resting, sulking: true })),
+    ).toBe("Curious — sulking");
+  });
+
   it("falls back to the raw id for an unknown personality", () => {
     expect(identitySubtitle(makePip({ personalityId: "moody" }))).toBe("moody");
   });
 });
 
-describe("satchelChips — one unambiguous chip per item id", () => {
-  it("merges inventory and resources so the same id can never twin", () => {
-    // The Phase 5 bug: 'Berry ×7' (inventory food) AND 'Berry ×20'
-    // (resource residue) as twin chips. Merged: one Berry chip, summed.
-    const chips = satchelChips({
-      inventory: { berry: 7, stew: 1 },
-      resources: { berry: 20, wood: 4 },
-    });
-    expect(chips.filter((c) => c.id === "berry")).toHaveLength(1);
-    expect(chips.find((c) => c.id === "berry")).toEqual({
-      id: "berry",
-      label: "Berry",
-      count: 27,
-    });
+describe("lowestNeedClause — the who-line's / aria-label's single named need", () => {
+  it("is null while every need is comfortable", () => {
+    expect(lowestNeedClause(makePip())).toBeNull();
   });
 
-  it("names foods from the registry and capitalizes plain resource ids", () => {
-    const chips = satchelChips({
-      inventory: { stew: 2 },
-      resources: { wood: 3, driftwood: 1 },
-    });
-    expect(chips.map((c) => c.label)).toEqual(["Stew", "Wood", "Driftwood"]);
+  it("names the lowest need as 'low' between 15 and 40", () => {
+    expect(lowestNeedClause(makePip({ needs: needs({ happiness: 30 }) }))).toBe(
+      "Happy is low",
+    );
   });
 
-  it("drops zero and negative counts", () => {
-    const chips = satchelChips({
-      inventory: { berry: 0 },
-      resources: { wood: -2, fiber: 1 },
-    });
-    expect(chips).toEqual([{ id: "fiber", label: "Fiber", count: 1 }]);
+  it("names the lowest need as 'empty' below 15", () => {
+    expect(lowestNeedClause(makePip({ needs: needs({ cleanliness: 5 }) }))).toBe(
+      "Clean is empty",
+    );
   });
 
-  it("keeps inventory (food) chips ahead of resource chips", () => {
-    const chips = satchelChips({
-      inventory: { berry: 1 },
-      resources: { wood: 1 },
+  it("breaks ties in NEED_IDS order (hunger, cleanliness, happiness, energy)", () => {
+    expect(
+      lowestNeedClause(makePip({ needs: needs({ happiness: 10, energy: 10 }) })),
+    ).toBe("Happy is empty");
+  });
+});
+
+describe("buildHudWhoLine — the pinned example lines (hud-redesign doc §2.3)", () => {
+  // The doc's own examples name "Bold", a personality this registry does not
+  // (yet) define (PERSONALITY_IDS: lazy/curious/hardworking/chaotic/clingy —
+  // round 2D, still pending, is where a roster expansion like that would
+  // land). Substituted with a real id; the assertion is about the FORMAT
+  // (name, then "· Personality", nothing else), not this specific word.
+  it("Pipsqueak · Hardworking (no status, no low need)", () => {
+    const pip = makePip({ name: "Pipsqueak", personalityId: "hardworking" });
+    const line = buildHudWhoLine(pip);
+    expect(`${line.name} ${line.rest}`).toBe("Pipsqueak · Hardworking");
+  });
+
+  it("Marigold · Curious · gathering away · Clean is empty", () => {
+    const pip = makePip({
+      name: "Marigold",
+      personalityId: "curious",
+      activity: PipActivity.AssignedJob,
+      needs: needs({ cleanliness: 5 }),
     });
-    expect(chips.map((c) => c.id)).toEqual(["berry", "wood"]);
+    const line = buildHudWhoLine(pip);
+    expect(`${line.name} ${line.rest}`).toBe(
+      "Marigold · Curious · gathering away · Clean is empty",
+    );
+  });
+
+  it("Thistledown · Chaotic · sulking · Clean is empty (napping through a sulk — N1)", () => {
+    const pip = makePip({
+      name: "Thistledown",
+      personalityId: "chaotic",
+      activity: PipActivity.Idle,
+      sulking: true,
+      needs: needs({ cleanliness: 5 }),
+    });
+    const line = buildHudWhoLine(pip);
+    expect(`${line.name} ${line.rest}`).toBe(
+      "Thistledown · Chaotic · sulking · Clean is empty",
+    );
+  });
+
+  it("Bramblewick · Lazy · off exploring · Happy is low", () => {
+    const pip = makePip({
+      name: "Bramblewick",
+      personalityId: "lazy",
+      activity: PipActivity.OnExpedition,
+      needs: needs({ happiness: 30 }),
+    });
+    const line = buildHudWhoLine(pip);
+    expect(`${line.name} ${line.rest}`).toBe(
+      "Bramblewick · Lazy · off exploring · Happy is low",
+    );
+  });
+});
+
+describe("castChipAlertLevel — the roster-wide 'does anything need me' ring", () => {
+  it("is null while every need is comfortable and the pip isn't sulking", () => {
+    expect(castChipAlertLevel(makePip())).toBeNull();
+  });
+
+  it("is 'care' once any need drops below 40", () => {
+    expect(castChipAlertLevel(makePip({ needs: needs({ energy: 35 }) }))).toBe("care");
+  });
+
+  it("is 'urgent' once any need drops below 15", () => {
+    expect(castChipAlertLevel(makePip({ needs: needs({ energy: 10 }) }))).toBe("urgent");
+  });
+
+  it("is 'urgent' whenever the pip is sulking, however comfortable its needs read (N1)", () => {
+    expect(
+      castChipAlertLevel(makePip({ activity: PipActivity.Idle, sulking: true })),
+    ).toBe("urgent");
+  });
+});
+
+describe("castChipAriaLabel — extends the shape with mood, status, low need", () => {
+  it("matches the redesign doc's worked example", () => {
+    const pip = makePip({
+      name: "Thistledown",
+      activity: PipActivity.Idle,
+      sulking: true,
+      needs: needs({ cleanliness: 5 }),
+    });
+    expect(castChipAriaLabel(pip, "miserable", true)).toBe(
+      "Thistledown — miserable, sulking, Clean is empty",
+    );
+  });
+
+  it("appends '. Select' only when the chip isn't the active one", () => {
+    const pip = makePip();
+    expect(castChipAriaLabel(pip, "content", false)).toBe("Mosspip — content. Select");
+    expect(castChipAriaLabel(pip, "content", true)).toBe("Mosspip — content");
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// THE STRIP ITSELF — 218 lines of DOM that had no test at all
+// ---------------------------------------------------------------------------
+
+/**
+ * ROUND 2G REVIEW, the systemic finding behind the two surviving mutations:
+ * of the round's five headline DOM factories, only `createLevelUpBanner` and
+ * `createRibbon` were exercised by any test. `createTopBar` — the round's
+ * headline rewrite — had none, and this file grew by 182 lines in round 2G
+ * without acquiring a single `document.` reference.
+ *
+ * The recommendation was to treat "every DOM factory gets at least one
+ * construct-sync-assert test" as this round's gate, the way `layers.test.ts`
+ * is the gate for the z-index ladder. This is that test for the cast strip,
+ * and it deliberately asserts the things a mutation could quietly delete: the
+ * comb heights, the alert ring, the status badge, the tap wiring, and the
+ * structural-rebuild key (whose whole purpose is NOT rebuilding, which is
+ * exactly the kind of behaviour a "looks fine in the browser" pass misses).
+ */
+describe("createTopBar — the cast strip", () => {
+  let dom: FakeDomHandle;
+
+  beforeEach(() => {
+    dom = installFakeDom();
+  });
+  afterEach(() => {
+    dom.uninstall();
+  });
+
+  interface Calls {
+    dispatched: GameAction[];
+    focus: number;
+    reveal: number;
+  }
+
+  function mount(): {
+    readonly bar: ReturnType<typeof createTopBar>;
+    readonly root: FakeElement;
+    readonly calls: Calls;
+  } {
+    const calls: Calls = { dispatched: [], focus: 0, reveal: 0 };
+    const bar = createTopBar({
+      dispatch: (action) => calls.dispatched.push(action),
+      openFocus: () => (calls.focus += 1),
+      openReveal: () => (calls.reveal += 1),
+    });
+    const root = bar.el as unknown as FakeElement;
+    dom.ui.appendChild(root);
+    return { bar, root, calls };
+  }
+
+  function stateWith(pips: readonly PipState[], overrides: Partial<GameState> = {}): GameState {
+    const byId: Record<string, PipState> = {};
+    for (const pip of pips) byId[pip.id] = pip;
+    return {
+      pips: byId,
+      rosterOrder: pips.map((p) => p.id),
+      activePipId: pips[0]?.id ?? "",
+      pendingReveals: [],
+      seed: 42,
+      rngState: {},
+      ...overrides,
+    } as unknown as GameState;
+  }
+
+  it("renders one chip per roster pip, each with a four-bar need comb", () => {
+    const { bar, root } = mount();
+    bar.sync(
+      stateWith([
+        makePip({ id: "a", name: "Aster" }),
+        makePip({ id: "b", name: "Bram" }),
+        makePip({ id: "c", name: "Clove" }),
+      ]),
+    );
+
+    expect(root.querySelectorAll(".pk-castchip")).toHaveLength(3);
+    expect(root.querySelectorAll(".pk-comb-fill")).toHaveLength(3 * NEED_IDS.length);
+    // The chip width formula keys off this, which is what makes the roster
+    // cap fit BY CONSTRUCTION rather than by a special case.
+    const cast = root.querySelector(".pk-cast") as FakeElement;
+    expect(cast.style.getPropertyValue("--pk-cast-n")).toBe("3");
+  });
+
+  it("an empty need paints a visible 1% slot, never a missing bar", () => {
+    const { bar, root } = mount();
+    bar.sync(stateWith([makePip({ id: "a", needs: needs({ cleanliness: 0 }) })]));
+
+    const fills = root.querySelectorAll(".pk-comb-fill");
+    const cleanlinessAt = NEED_IDS.indexOf("cleanliness");
+    expect(fills[cleanlinessAt]?.style.getPropertyValue("height")).toBe("1%");
+    expect(fills[NEED_IDS.indexOf("hunger")]?.style.getPropertyValue("height")).toBe("80%");
+  });
+
+  it("tapping an INACTIVE chip selects that pip; tapping the ACTIVE one opens the focus view", () => {
+    const { bar, root, calls } = mount();
+    bar.sync(stateWith([makePip({ id: "a" }), makePip({ id: "b" })]));
+
+    const chips = root.querySelectorAll(".pk-castchip");
+    chips[1]?.click();
+    expect(calls.dispatched).toEqual([{ type: "SET_ACTIVE_PIP", pipId: "b" }]);
+    expect(calls.focus).toBe(0);
+
+    chips[0]?.click(); // "a" is the active pip
+    expect(calls.focus).toBe(1);
+    expect(calls.dispatched).toHaveLength(1);
+  });
+
+  it("the who-line is a button that opens the focus view, and names the active pip", () => {
+    const { bar, root, calls } = mount();
+    bar.sync(stateWith([makePip({ id: "a", name: "Aster" })]));
+
+    const who = root.querySelector(".pk-hud-who") as FakeElement;
+    expect(who.textContent).toContain("Aster");
+    expect(who.getAttribute("aria-label")).toBe("Aster, Curious — open details");
+    who.click();
+    expect(calls.focus).toBe(1);
+  });
+
+  it("a Pip sulking through a nap gets the badge, the urgent ring and the words (N1)", () => {
+    const { bar, root } = mount();
+    // The exact shape the spec rule exists for: `sulking: true` while
+    // `activity` reads something else entirely.
+    bar.sync(
+      stateWith([
+        makePip({ id: "a", name: "Thistledown", activity: PipActivity.Idle, sulking: true }),
+      ]),
+    );
+
+    const chip = root.querySelector(".pk-castchip") as FakeElement;
+    expect(chip.classList.contains("pk-castchip--urgent")).toBe(true);
+    expect(chip.getAttribute("aria-label")).toContain("sulking");
+    expect((root.querySelector(".pk-chip-status") as FakeElement).textContent).toBe("…");
+    expect((root.querySelector(".pk-hud-who") as FakeElement).textContent).toContain("sulking");
+  });
+
+  it("drops the status badge again when the state that earned it clears", () => {
+    const { bar, root } = mount();
+    bar.sync(stateWith([makePip({ id: "a", activity: PipActivity.Resting })]));
+    expect(root.querySelectorAll(".pk-chip-status")).toHaveLength(1);
+
+    bar.sync(stateWith([makePip({ id: "a", activity: PipActivity.Idle })]));
+    expect(root.querySelectorAll(".pk-chip-status")).toHaveLength(0);
+  });
+
+  it("the reveal chip appears only with pending reveals, OUTSIDE .pk-cast so nothing reflows (N5)", () => {
+    const { bar, root, calls } = mount();
+    const pips = [makePip({ id: "a" }), makePip({ id: "b" })];
+    bar.sync(stateWith(pips));
+    expect(root.querySelectorAll(".pk-hud-alert")).toHaveLength(0);
+
+    bar.sync(
+      stateWith(pips, {
+        pendingReveals: [{ pipId: "a" }, { pipId: "b" }] as unknown as GameState["pendingReveals"],
+      }),
+    );
+    const alert = root.querySelector(".pk-hud-alert") as FakeElement;
+    expect(alert.textContent).toBe("!2");
+    // A returning Pip must never shove every other portrait sideways.
+    expect((root.querySelector(".pk-cast") as FakeElement).children).toHaveLength(2);
+    expect(alert.parentNode?.className).toContain("pk-cast-row");
+
+    alert.click();
+    expect(calls.reveal).toBe(1);
+  });
+
+  it("live-updates needs WITHOUT rebuilding the chips — the comb's transition must not restart every tick", () => {
+    const { bar, root } = mount();
+    bar.sync(stateWith([makePip({ id: "a" })]));
+    const before = root.querySelector(".pk-castchip");
+
+    bar.sync(stateWith([makePip({ id: "a", needs: needs({ hunger: 12 }) })]));
+    expect(root.querySelector(".pk-castchip")).toBe(before); // same node
+    expect(root.querySelector(".pk-comb-fill")?.style.getPropertyValue("height")).toBe("12%");
+    expect(before?.classList.contains("pk-castchip--urgent")).toBe(true);
+  });
+
+  it("rebuilds when the roster's SHAPE changes", () => {
+    const { bar, root } = mount();
+    bar.sync(stateWith([makePip({ id: "a" })]));
+    expect(root.querySelectorAll(".pk-castchip")).toHaveLength(1);
+
+    bar.sync(stateWith([makePip({ id: "a" }), makePip({ id: "b" })]));
+    expect(root.querySelectorAll(".pk-castchip")).toHaveLength(2);
   });
 });

@@ -1357,6 +1357,375 @@ export const tuning = {
     placementPerfBudget: 60,
   },
 
+  /**
+   * ROUND 2H — THE LIFECYCLE (docs/lifecycle-bible.md). Spec §16 v1.5 makes
+   * Pips finite. Every number below is an answer to ONE question, and they
+   * must be read together:
+   *
+   *   "can a player be surprised, punished for being away, or left with
+   *    nothing?"
+   *
+   * The FIVE PROMISES are hard rules, not tuning values. Three of them are
+   * enforced by RELATIONSHIPS between numbers in this block and numbers
+   * elsewhere in this file, so those relationships are stated here and
+   * asserted in `core/pips/lifecycle.promises.test.ts`:
+   *
+   *   1. `ailments.minDurationMs (36h) > offlineRateCapMs (16h)` — a Pip
+   *      that is HEALTHY when the app closes can never be critical when it
+   *      opens, however long the absence.
+   *   2. Ailment countdowns are stored as REMAINING time, not as an end
+   *      timestamp: they are a RATE, so §4.5's cap governs them ("rates are
+   *      capped, timers are not"), and `ailments.vigilFloorMs` means an
+   *      absence can never itself be the final straw.
+   *   3. The `lost` transition exists ONLY in the live TICK arm. No
+   *      catch-up pass may remove a Pip. The loss moment is always
+   *      witnessed.
+   *
+   * ⚠️ THE FRAGILE INVARIANT OF THIS ROUND (the equivalent of round 2B's
+   * level-1 wood ceiling, 2C's isolation rule and 2F's
+   * `comfortReductionMax`): `level.seasoning` DOES NOT GET ITS OWN CAP. A
+   * Pip's seasoning and the Keep's building comfort are ONE channel, summed
+   * once and clamped once at `progression.effectCaps.comfortReductionMax`.
+   * The arithmetic that forces this, in full: the binding personality is
+   * Curious, whose worst window drop is `3.7 × 1.15 × 16h = 68.08`, and
+   * "still Grumpy from a 90 save" requires `68.08 × (1 − r) > 50`, i.e.
+   * `r < 0.26557`. Comfort already spends 0.25 of that. **There are 1.557
+   * percentage points of decay-reduction headroom in the entire game**, so a
+   * second independent channel is not unwise, it is arithmetically
+   * unavailable. Guarded by `core/pips/level.balance.test.ts`.
+   *
+   * ⚠️ THE ISOLATION RULE STILL BINDS (see `retention`'s doc comment).
+   * Nothing here edits `needDecayPerHour`, `personalityDecayMultipliers`,
+   * `care.*`, `foods.*`, `offlineRateCapMs`, `sulkExitThreshold` or
+   * `playRefusal`. Seasoning is a subtraction INSIDE round 2F's existing
+   * fifth factor, clamped against that factor's remaining headroom, and is
+   * exactly 0 at level 1 — so `core/pips/balance.test.ts` and
+   * `core/keep/effects.balance.test.ts` both stay green BYTE-IDENTICAL.
+   */
+  lifecycle: {
+    /**
+     * PER-PIP LEVELS (bible §1). A second, smaller ladder that belongs to
+     * the PIP; `keepXp` remains THE bar (progression bible §0.1 is
+     * satisfied, not overturned — see bible §1.0's four-row table).
+     *
+     * Cumulative XP to reach each level, indexed by level − 1. Deltas are
+     * 40 · 70 · 110 · 160 · 220 · 300 · 400 · 550 · 750. At ~180 pip XP/day
+     * (engaged) that is level 2 in the first session, level 6 on day 3, and
+     * level 10 at day 14.4 — DELIBERATELY past a typical 11-day lifespan.
+     * Most Pips retire at 8–9; level 10 belongs to a Pip whose life was
+     * extended, or (far more often) to a descendant who hatched at level 5.
+     * The LINE maxes out; the individual usually does not.
+     *
+     * Bar movement, the round-2F contract applied to the shorter ladder:
+     * one care action at the top level is 3/750 = 0.40 %, a Meadow
+     * round-trip 1.33 % — both clear `progression.barVisibility`'s floors.
+     */
+    level: {
+      maxLevel: 10,
+      levelXp: [
+        0, 40, 110, 220, 380, 600, 900, 1300, 1850, 2600,
+      ] as readonly number[],
+
+      /**
+       * XP a PIP earns for what IT did. Every row is already rate-capped by
+       * a shipped mechanism (cooldowns and full bars for care, one-Pip-per-
+       * trip for expeditions, `offlineRateCapMs` for job ticks), which is
+       * the same structural rule `progression.xp` encodes.
+       *
+       * `jobTick: 1` is deliberate and is the row to read twice. One capped
+       * absence with a Pip on a station is 96 XP; an engaged day of care and
+       * quick trips is ~100. THE WORKHORSE AND THE ADVENTURER LEVEL AT THE
+       * SAME PACE — that is the answer to "the casual player's Pips never
+       * develop", and active play is already protected by the Keep bar, the
+       * mastery ladder and the loot economy.
+       *
+       * `tripBase + tripPer5Min × ⌊durationMs / 5min⌋` gives Meadow 10,
+       * Forest 14, Shore 20, Bramblewick 24, Snowdrift 32, Grotto 44 — per
+       * MINUTE the Meadow still wins (2.0 vs 0.49), so round 2B's
+       * "active play beats idle play" shape survives into a third XP table.
+       */
+      xp: {
+        care: 3,
+        tripBase: 8,
+        tripPer5Min: 2,
+        jobTick: 1,
+        ailmentSurvived: 60,
+        evolve: 60,
+        masteryTierPerTier: 20,
+      },
+
+      /**
+       * WHAT A LEVEL BUYS, indexed by level − 1. Six channels; only the
+       * first is shared (see the block header).
+       *
+       * `seasoning` — decay reduction, summed into round 2F's comfort
+       * channel and clamped with it at `comfortReductionMax`. At 0.12 on an
+       * UNBUILT Keep every personality still comes home Grumpy from a 90
+       * save (worst: Chaotic cleanliness 74.0 × 0.88 = 65.12 → 24.88), which
+       * is inside `core/pips/balance.test.ts`'s own shipped [15, 45]
+       * personality-sweep band. The leave-safe margin only ever WIDENS:
+       * the tightest shipped pair (Hardworking/happiness, 6.64) becomes
+       * 14.24 at level 10 unbuilt and 22.48 on a maxed Keep.
+       *
+       * `expeditionSpeed` composes with buildings AND Hardworking's quirk
+       * and is floored by the SHIPPED
+       * `progression.effectCaps.expeditionSpeedFloorWithQuirk` (0.75) — an
+       * authorised TIGHTENING of that value's meaning (it now binds on
+       * three factors instead of two, i.e. on strictly more combinations).
+       * `reachability.test.ts` measures a level-1 save, so it measures the
+       * SLOWER economy: the safe direction, exactly as round 2F argued.
+       */
+      seasoning: [0, 0.01, 0.02, 0.03, 0.05, 0.06, 0.08, 0.09, 0.11, 0.12],
+      expeditionSpeed: [1, 0.99, 0.98, 0.97, 0.97, 0.96, 0.96, 0.95, 0.95, 0.94],
+      contractReduction: [0, 0.04, 0.08, 0.12, 0.16, 0.2, 0.25, 0.3, 0.35, 0.4],
+      countdownExtend: [1, 1.03, 1.06, 1.09, 1.12, 1.15, 1.2, 1.25, 1.3, 1.35],
+      cureBonus: [0, 0.02, 0.04, 0.06, 0.08, 0.1, 0.12, 0.14, 0.16, 0.18],
+      lifespanBonus: [0, 0.04, 0.08, 0.12, 0.16, 0.2, 0.24, 0.28, 0.32, 0.36],
+
+      /** Granted to EVERY Pip (active and resident) by the v8 → v9
+       * migration, with `pipXp` set to `levelXp[1]`: a veteran's Pips arrive
+       * with a season already behind them. 0.01 seasoning — no guard moves. */
+      migrationGrantLevel: 2,
+    },
+
+    /**
+     * LIFESPAN (bible §2). THE AGEING RULE, stated once: a Pip's life is
+     * measured in `lifeMs`, a NEW clock that advances with RATED time only —
+     * live ticks 1:1, an absence by `min(elapsed, offlineRateCapMs)`. Ageing
+     * is a RATE, not a timer.
+     *
+     * This is not a stylistic choice, it is promise 2 and promise 5 in the
+     * same line of code. `ageMs` accrues across the ENTIRE absence window
+     * (catchup.ts's `accrueFrozenTime`, because the lifetime happiness
+     * average needs it), so a lifespan keyed off `ageMs` would retire a
+     * whole roster over one three-week holiday and hand the player back an
+     * empty Keep. With this rule, three weeks away ages a Pip by 16 hours.
+     *
+     * `ageMs` keeps its two existing jobs — evolution readiness at 72h and
+     * the happiness average — UNCHANGED. Two clocks is a real cost, paid
+     * down by never displaying either as a number: `ageMs` shows as a hatch
+     * date, `lifeMs` shows as a named season and nothing else. There is no
+     * lifespan bar and no countdown anywhere in this system.
+     *
+     * `baseMs` 7 days, multiplied by care quality (×0.85 … ×1.35),
+     * `level.lifespanBonus` (up to +36 %) and building `longevity` (up to
+     * +25 %): a neglected Pip lives 6.4 days, an ordinary one 10.7, a
+     * devoted player's 15.6. "Roughly 1–2 weeks of active play", with CARE
+     * QUALITY worth ~59 % of a lifetime — which is the whole point.
+     *
+     * Because the multiplier is derived live, a lifespan can GROW after the
+     * fact and a Pip can leave the Elder season again. That is deliberate
+     * and is the kindest reading available.
+     */
+    lifespan: {
+      baseMs: 7 * 24 * HOUR_MS,
+      /** Lifetime avg happiness (`happinessIntegral / ageMs`) → multiplier.
+       * Evaluated highest-`min`-first, like every band table in this file. */
+      careQualityBands: [
+        { min: 80, multiplier: 1.35 },
+        { min: 65, multiplier: 1.2 },
+        { min: 50, multiplier: 1.05 },
+        { min: 30, multiplier: 0.95 },
+        { min: 0, multiplier: 0.85 },
+      ] as readonly { readonly min: number; readonly multiplier: number }[],
+      /** Cap on the summed building `longevity` effect. Three ALREADY-
+       * SHIPPED placeables carry it (nest-warmer 0.06, sun-bunks 0.10,
+       * larder 0.05 = 0.21), so the round adds no build item for this. */
+      buildingBonusMax: 0.25,
+      /** Season boundaries as a fraction of `lifeMs / lifespanMs`. Derived,
+       * never stored — retuning re-grades every Pip with no migration, the
+       * same discipline 2C's mastery tiers use. */
+      seasons: { young: 0.2, prime: 0.55, seasoned: 0.8 },
+    },
+
+    /**
+     * AILMENTS (bible §3). The ONLY thing in PipsKeep that can take a Pip,
+     * and it can only ever be contracted by completing a DEEP expedition.
+     *
+     * Explicitly and permanently absent, because each would be caused by
+     * absence and promise 2 forbids it: illness from neglect (needs at 0 is
+     * still Sulking, forever, exactly as §4.4 has always said), illness at
+     * home, illness from a job or a nap. And nothing anywhere may ever RAISE
+     * a contract chance — not an event (2C: an event may only make something
+     * easier), not a building, not a setting, not a broken streak.
+     *
+     * Quick trips are safe; deep trips carry risk. That maps exactly onto
+     * round 2B's shipped quick/deep identity and gives the player one
+     * sentence to remember. NO LEVEL-1 EXPEDITION CHANGES, so the level-1
+     * wood ceiling is untouched.
+     *
+     * Per-biome chance and countdown live in `content/ailments.ts`; the
+     * numbers here are the ones that make the promises true.
+     */
+    ailments: {
+      /**
+       * ⚠️ MUST EXCEED `offlineRateCapMs` (16h). Asserted directly. This one
+       * inequality is why a Pip that is healthy when the app closes can
+       * never be critical when it opens. The shortest shipped ailment
+       * (Lanternfever) is exactly this.
+       */
+      minDurationMs: 36 * HOUR_MS,
+      /**
+       * THE VIGIL FLOOR. Within a CATCH-UP pass, `remainingMs` may be
+       * reduced to no less than this; live time has no floor. So a returning
+       * player always finds at least four hours of visible countdown and
+       * every cure still on the table — an absence can never itself be the
+       * final straw.
+       */
+      vigilFloorMs: 4 * HOUR_MS,
+      /** Stage boundaries as a fraction of `remainingMs / totalMs`:
+       * ≥ 0.60 settling, 0.25–0.60 worsening, < 0.25 grave. Derived. */
+      stages: { settling: 0.6, worsening: 0.25 },
+
+      /** Cure rolls. No cooldown gate — the limiter is poultices and the
+       * day boundary, which are legible things the player already has. */
+      poulticeCureChance: 0.55,
+      devotedCareCureChance: 0.35,
+      /** All four needs ≥ this while ailing earns the free daily roll. */
+      devotedCareNeedFloor: 70,
+      /** Each failed attempt makes the next likelier — visible, and the
+       * same pity shape `retention.eggPity` already ships. */
+      cureEscalationPerAttempt: 0.1,
+      /** ONE summed channel (escalation + level + buildings), clamped once.
+       * Worst realistic case — level 1, no buildings, no poultices, free
+       * daily roll only, shortest ailment — survives at 83.9 %; three
+       * poultices take it to 96.1 %; a level-6 Pip with a Poultice Shelf
+       * clears 99 %. */
+      cureBonusMax: 0.45,
+      /** Summed contract reduction (level + buildings), clamped once. */
+      contractReductionMax: 0.6,
+      /** A cured Pip can NEVER contract that ailment again (the scar is an
+       * immunity, not a debuff) and passes this fraction of that immunity to
+       * its children. Lineage doing mechanical work, not just flavour. */
+      inheritedResistance: 0.25,
+    },
+
+    /**
+     * THE ANTI-BRUTALITY SHIELDS (bible §7). The owner's fear, in their
+     * words: it "can't be brutal that a player loses their star too quickly
+     * and are disappointed." Six independent shields; these are the four
+     * that are numbers. The other two are structural (`minActivePips`, which
+     * already ships, and the Quiet Keep toggle).
+     */
+    shields: {
+      /**
+       * A Pip whose `lifeMs` is under this cannot be LOST — its countdown
+       * resolving to zero fires the Loyal Turn instead (it pulls through,
+       * keeps the scar, keeps the immunity).
+       *
+       * 3 days, not 7: seven would be half a typical life and would drain
+       * the stakes entirely, leaving the weight only on Pips who were about
+       * to retire anyway. Three protects the attachment phase and the whole
+       * of week one for the starter, and leaves 4–13 days of genuine
+       * vulnerability.
+       *
+       * Shielded Pips CAN still contract ailments, on purpose: a player's
+       * first ailment is then a frightening story with a guaranteed happy
+       * ending that teaches the cure UI and hands out the first scar.
+       */
+      noLossBeforeLifeMs: 3 * 24 * HOUR_MS,
+      /** The first time in a save's life that an ailment would take a Pip,
+       * it doesn't. Once ever, keyed on `counters["ailment.graceUsed"]`,
+       * never refilled, never mentioned to the player. NO PLAYER WILL EVER
+       * LOSE THEIR FIRST PIP. */
+      firstLossGrace: true,
+      /**
+       * THE CAREFUL ROUTE — risk is opt-in per trip ("Take the long way
+       * round"), offered only where `ailmentChance > 0`. One universal,
+       * legible opt-out of all danger at an honest cost: half the yield per
+       * minute. `reachability.test.ts` measures the NORMAL route and so
+       * measures the faster economy — the safe direction.
+       *
+       * After this, every loss in PipsKeep is downstream of a choice the
+       * player made twice: once to take a deep trail, once to take it fast.
+       */
+      carefulRouteDurationMultiplier: 1.5,
+      carefulRouteLootMultiplier: 0.75,
+    },
+
+    /**
+     * LINEAGE (bible §5–§6) — promise 4, and the succession mechanic.
+     *
+     * A lost Pip's egg is found on the FIRST trip back to the biome that
+     * took them at 0.40, and is GUARANTEED on the second. Expected 1.6
+     * trips. Two numbers a player can hold in their head — "go back; she'll
+     * be there the first or second time" — and NO TAIL. This deliberately
+     * breaks the codebase's pity-ladder habit: a long shoulder is what makes
+     * a chase feel unfair, and this chase begins in grief.
+     *
+     * BREEDING IS UNFENCED (spec §12 amended). `combineGenomes(a, b, rng)`
+     * has been implemented, tested and called by nothing since Phase 4; it
+     * goes live UNCHANGED, at its exact 6-roll contract. A lineage egg calls
+     * it with the SAME genome twice — every parent-pick is degenerate while
+     * the mutation branch still fires, so the child is the parent give or
+     * take a freckle, and `genome.test.ts` does not move.
+     *
+     * THE ALBUM CANNOT BE TRIVIALISED, and it is the shipped function that
+     * guarantees it: `combineGenomes` picks `speciesId` from one of the two
+     * PARENTS, consulting no rarity table and no biome pool, and
+     * `genome.speciesId` is always the BIRTH species. So breeding can never
+     * produce a species the player does not already own, and never an
+     * evolved form. Evolution stays earned (v1.3's standing rule); the
+     * 14-form Album is still walked by expeditions alone.
+     *
+     * `shiny` is rolled by the CALLER from the `lineage` stream, OUTSIDE
+     * `combineGenomes` (which hard-codes `shiny: false` and must keep its
+     * 6-roll contract) — losing a shiny Pip must not quietly delete a
+     * 1-in-40 thing.
+     */
+    lineage: {
+      findChanceFirstTrip: 0.4,
+      guaranteedAfterTrips: 2,
+      /** A descendant hatches at `1 + floor((parent − 1) × share)`. A parent
+       * lost at level 9 leaves a child at level 5 — the line does not start
+       * over. Breeding's share is LOWER on purpose (below): a lost parent's
+       * legacy should be the stronger inheritance, thematically and to stop
+       * breeding becoming the efficient way to manufacture levels. */
+      lostParentLevelShare: 0.5,
+      bredLevelShare: 0.35,
+      shinyInheritChance: 0.5,
+
+      breedMinLevel: 3,
+      /** All four needs, both parents. The only gate that is really a care
+       * check — no bond stat is invented; a second relationship system in a
+       * round that already adds two clocks would be one too many. */
+      breedMinNeed: 60,
+      /** Wall-clock, not rated: an absent player's cooldown ticks for free. */
+      breedCooldownMs: 24 * HOUR_MS,
+      /** Lifetime, per Pip. Stops a two-Pip factory filling every roster
+       * slot with hatchlings and turning `rosterCap` into the only real
+       * constraint. Three reads as natural rather than as a quota. */
+      maxClutchesPerPip: 3,
+      /** Twice a found egg (`eggs.incubationMsDefault`). A clutch is a
+       * bigger thing. */
+      breedingIncubationMs: 4 * HOUR_MS,
+    },
+
+    /**
+     * KEEP XP for the new moments (bible §9.3), sized against
+     * `progression.xp`'s own atom. Adding sources only ever makes the bar
+     * move MORE, which is the safe direction for
+     * `core/progression/levelCurve.test.ts`'s floors, and none of these is a
+     * milestone so `content/milestones.test.ts`'s < 30 % ratio is untouched.
+     *
+     * `pipLevel` is the only compounding-adjacent loop and is bounded twice:
+     * `level.maxLevel` per Pip, and idempotence on
+     * `counters["pipLevel.<pipId>.<level>"]` so roster churn re-grants
+     * nothing (progression bible §0.1's fourth reason, preserved).
+     *
+     * A LOSS GRANTS ZERO, and costs zero. Grief is never monetised, in
+     * either direction. `progression.xp.sanctuaryFirstArrival` must
+     * therefore be gated on `reason !== "lost"`.
+     */
+    keepXp: {
+      ailmentCured: 30,
+      pipLevel: 10,
+      retirementWitnessed: 40,
+      lineageEggFound: 50,
+      breedEgg: 20,
+    },
+  },
+
   /** New saves are seeded with 3 Berries so the guided first Feed works
    * (§6.3). Item counts, not a cost bundle — Berries are food (inventory),
    * not a resource, so ResourceBundle deliberately does not apply here. */

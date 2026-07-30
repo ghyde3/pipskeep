@@ -78,6 +78,7 @@ import {
   resolvePipPalette,
 } from "../content/palette";
 import { retireRefusal } from "../core/sanctuary";
+import { isSulking } from "../core/pips/machine";
 import { peekDisplayedMood } from "./topBar";
 import { sound } from "../app/sound";
 
@@ -207,6 +208,12 @@ export interface FocusModel {
    * this round's fix. An honourific, never a rank or a score. */
   readonly flairTitles: readonly string[];
   readonly mood: string;
+  /** Round 2G's N1 fix (hud-redesign doc §2.7, spec v1.3 §10's standing
+   * rule): this view never mentioned sulking at all before, even though a
+   * Pip can nap through a sulk (`isSulking` true while `activity` reads
+   * "resting" or "idle"). The mood row appends "· sulking" when this is
+   * true — see `createFocusView`'s `moodRow` below. */
+  readonly sulking: boolean;
   readonly needs: Readonly<Record<NeedId, number>>;
   readonly expeditions: readonly ExpeditionRowModel[];
   /** Job rows (spec §6.2): one per placed station that hosts a job.
@@ -617,6 +624,7 @@ export function buildFocusModel(
       (def) => `${def.glyph} ${def.name}`,
     ),
     mood: peekDisplayedMood(state, pip),
+    sulking: isSulking(pip),
     needs: { ...pip.needs },
     expeditions: rows,
     jobs: buildJobRows(state, pip),
@@ -845,7 +853,12 @@ export function createFocusView(deps: FocusViewDeps): FocusView {
     moodDot.className = "pk-focus-mood-dot";
     moodDot.style.background = moodColors[model.mood] ?? "#999";
     const moodText = document.createElement("span");
-    moodText.textContent = `Feeling ${model.mood}`;
+    // Round 2G N1 fix: sulking is reported here even while `activity` reads
+    // "resting" or "idle" (a Pip can nap through a sulk) — see FocusModel's
+    // `sulking` field doc.
+    moodText.textContent = model.sulking
+      ? `Feeling ${model.mood} · sulking`
+      : `Feeling ${model.mood}`;
     moodRow.append(moodDot, moodText);
     // Species greeting (content bible §6.2/§8.2.5) — set by open(), not
     // here, so it survives the per-TICK rebuild the same way the refusal

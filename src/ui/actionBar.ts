@@ -112,6 +112,31 @@ export function createActionBar(deps: ActionBarDeps): ActionBar {
   const el = document.createElement("div");
   el.className = "pk-actionbar";
 
+  // ROUND 2G REVIEW — PUBLISH THE REAL HEIGHT, BECAUSE IT IS NOT A CONSTANT.
+  //
+  // `progression.css` pinned the Keep strip at `bottom: … + 84px` under a
+  // comment asserting "the action bar is a fixed 84px tall by design". The
+  // reason pill below (`grid-column: 1 / -1`) grows this bar to 124px
+  // whenever the active Pip cannot take care — which is the ordinary day-2
+  // state, since the Pip you left working is the one still working when you
+  // return. The strip stayed where it was and the two elements painted on
+  // the same 351×14 band: the pill's text under `.pk-xpbar-next`'s text,
+  // and (because the strip carries `z-index: 5` and this bar carries none)
+  // the pill was not even hit-testable. Its whole job is being the one-tap
+  // switch to a Pip who IS free, so the escape hatch from a fully greyed-out
+  // care bar was unreachable.
+  //
+  // Measuring is the same answer round 2G already chose for `--pk-hud-top`:
+  // consumers read `var(--pk-actionbar-h, …)` and stay correct however this
+  // bar re-wraps.
+  if (typeof ResizeObserver !== "undefined") {
+    const ro = new ResizeObserver(() => {
+      const h = Math.round(el.getBoundingClientRect().height);
+      document.documentElement.style.setProperty("--pk-actionbar-h", `${h}px`);
+    });
+    ro.observe(el);
+  }
+
   // The reason pill: shown ONLY while the whole care bar is disabled. When
   // another Pip is free it is a BUTTON that switches to them, which turns the
   // 3-tap day-2 path into 2 and makes the roster strip discoverable without
@@ -214,12 +239,26 @@ export function createActionBar(deps: ActionBarDeps): ActionBar {
       els.button.disabled = true;
       els.button.classList.add("pk-action--cooldown");
       const pct = ((total - left) / total) * 360;
+      const secs = Math.ceil(left / 1000);
       els.ring.style.setProperty("--pk-ring-deg", `${pct}deg`);
-      els.ringText.textContent = `${Math.ceil(left / 1000)}`;
+      // The unit, not a bare integer. Three visual states ship with no
+      // legend — ready, cooling down, unavailable — and the cooldown one was
+      // a 9px number inside a 0.45-opacity button (2.26 : 1 effective) that
+      // said "47" without saying 47 of what. The "s" is one glyph; the rest
+      // of that fix is in ui.css, which stops dimming a button that is
+      // merely counting down.
+      els.ringText.textContent = `${secs}s`;
+      // The ring is `aria-hidden`, so without this assistive tech was told
+      // "Clean this Pip", that it was disabled, and nothing about the wait.
+      els.button.setAttribute(
+        "aria-label",
+        `${ACTION_ARIA_LABELS[id]} — ready in ${secs} second${secs === 1 ? "" : "s"}`,
+      );
     } else {
       els.button.disabled = !careOk;
       els.button.classList.remove("pk-action--cooldown");
       els.ringText.textContent = "";
+      els.button.setAttribute("aria-label", ACTION_ARIA_LABELS[id]);
     }
   };
 

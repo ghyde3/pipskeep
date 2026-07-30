@@ -15,12 +15,21 @@
  * DOM around them (the topBar.test.ts convention).
  */
 
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { LifeStage, PipActivity } from "../core/pips/types";
 import type { PipNeeds, PipState } from "../core/pips/types";
 import { createNewGame } from "../core/state";
 import type { GameState } from "../core/state";
-import { careUnavailableReason, firstCareablePipId, firstStockedFoodId } from "./actionBar";
+import {
+  ACTION_ARIA_LABELS,
+  careUnavailableReason,
+  createActionBar,
+  firstCareablePipId,
+  firstStockedFoodId,
+} from "./actionBar";
+import { tuning } from "../content/tuning";
+import { installFakeDom } from "./fakeDom";
+import type { FakeDomHandle, FakeElement } from "./fakeDom";
 
 const T0 = 1_000_000;
 
@@ -164,5 +173,131 @@ describe("firstStockedFoodId — unchanged, pinned alongside", () => {
     const base = createNewGame(7, T0);
     expect(firstStockedFoodId({ ...base, inventory: {} })).toBeNull();
     expect(firstStockedFoodId({ ...base, inventory: { berry: 2 } })).toBe("berry");
+  });
+});
+
+/**
+ * ROUND 2G REVIEW — THE COOLDOWN STATE, WHICH NOTHING RENDERED LEGIBLY AND
+ * NOTHING ANNOUNCED AT ALL.
+ *
+ * Three visual states shipped with no legend and two of them shared a look:
+ * ready (full opacity), cooling down (`opacity: 0.45`, a partial ring, a 9px
+ * number), and unavailable (`opacity: 0.45`, nothing). Composited over the
+ * bar's translucent cream the countdown digits came out at ~2.26 : 1 — a "47"
+ * and a "21" both photographed as grey smudges — and nothing said what 47 was
+ * a count OF: no unit, no "s".
+ *
+ * Assistive tech got less than that. `.pk-ring` is `aria-hidden="true"`, so a
+ * screen-reader user was told "Clean this Pip", that it was disabled, and
+ * nothing whatsoever about the wait. The contrast half of the fix is in
+ * ui.css (a cooling-down button stops being faded, so its digits can carry
+ * their own contrast); this pins the half that lives in TypeScript.
+ */
+describe("createActionBar — the cooldown states say what they are", () => {
+  let dom: FakeDomHandle;
+
+  beforeEach(() => {
+    dom = installFakeDom();
+  });
+  afterEach(() => {
+    dom.uninstall();
+  });
+
+  const CLEAN_COOLDOWN = tuning.care.clean.cooldownMs;
+
+  function mount(state: GameState): {
+    readonly bar: ReturnType<typeof createActionBar>;
+    readonly root: FakeElement;
+  } {
+    let now = T0;
+    const bar = createActionBar({
+      dispatch: () => {},
+      getState: () => state,
+      clock: { now: () => now },
+      openItems: () => {},
+    });
+    const root = bar.el as unknown as FakeElement;
+    dom.ui.appendChild(root);
+    bar.sync(state);
+    bar.tick(now);
+    return { bar, root };
+  }
+
+  const cleanButton = (root: FakeElement): FakeElement =>
+    root.querySelectorAll(".pk-action").find((el) => el.getAttribute("aria-label")?.includes("Clean")) as FakeElement;
+
+  it("a cooling-down button carries the wait in its accessible name, not just in a hidden ring", () => {
+    const base = roster(PipActivity.Idle);
+    const state: GameState = {
+      ...base,
+      cooldowns: { "pip-1": { clean: T0 - (CLEAN_COOLDOWN - 47_000) } },
+    } as GameState;
+    const { root } = mount(state);
+
+    const clean = cleanButton(root);
+    expect(clean.disabled).toBe(true);
+    expect(clean.classList.contains("pk-action--cooldown")).toBe(true);
+    expect(clean.getAttribute("aria-label")).toBe("Clean this Pip — ready in 47 seconds");
+  });
+
+  it("the visible countdown carries its unit — '47' alone names no quantity", () => {
+    const base = roster(PipActivity.Idle);
+    const state: GameState = {
+      ...base,
+      cooldowns: { "pip-1": { clean: T0 - (CLEAN_COOLDOWN - 47_000) } },
+    } as GameState;
+    const { root } = mount(state);
+    const ring = cleanButton(root).querySelector(".pk-ring-text") as FakeElement;
+    expect(ring.textContent).toBe("47s");
+  });
+
+  it("says 'second', singular, on the last tick", () => {
+    const base = roster(PipActivity.Idle);
+    const state: GameState = {
+      ...base,
+      cooldowns: { "pip-1": { clean: T0 - (CLEAN_COOLDOWN - 900) } },
+    } as GameState;
+    const { root } = mount(state);
+    expect(cleanButton(root).getAttribute("aria-label")).toBe(
+      "Clean this Pip — ready in 1 second",
+    );
+  });
+
+  it("restores the plain label once the cooldown clears — the wait must not stick", () => {
+    const base = roster(PipActivity.Idle);
+    const state: GameState = {
+      ...base,
+      cooldowns: { "pip-1": { clean: T0 - (CLEAN_COOLDOWN - 5_000) } },
+    } as GameState;
+    const bar = createActionBar({
+      dispatch: () => {},
+      getState: () => state,
+      clock: { now: () => T0 },
+      openItems: () => {},
+    });
+    const root = bar.el as unknown as FakeElement;
+    dom.ui.appendChild(root);
+    bar.sync(state);
+    bar.tick(T0);
+    expect(cleanButton(root).getAttribute("aria-label")).toContain("ready in");
+
+    bar.tick(T0 + CLEAN_COOLDOWN);
+    const clean = cleanButton(root);
+    expect(clean.getAttribute("aria-label")).toBe(ACTION_ARIA_LABELS.clean);
+    expect(clean.classList.contains("pk-action--cooldown")).toBe(false);
+    expect((clean.querySelector(".pk-ring-text") as FakeElement).textContent).toBe("");
+  });
+
+  it("an UNAVAILABLE button is a different state from a cooling-down one, and wears no countdown", () => {
+    // The legend the three states were missing: away ≠ waiting.
+    const { root } = mount(roster(PipActivity.OnExpedition));
+    const clean = cleanButton(root);
+    expect(clean.disabled).toBe(true);
+    expect(clean.classList.contains("pk-action--cooldown")).toBe(false);
+    expect(clean.getAttribute("aria-label")).toBe(ACTION_ARIA_LABELS.clean);
+    // …and the reason pill explains it, rather than the bar going mute.
+    const reason = root.querySelector(".pk-actionbar-reason") as FakeElement;
+    expect(reason.hidden).toBe(false);
+    expect(reason.textContent.length).toBeGreaterThan(0);
   });
 });

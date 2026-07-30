@@ -382,7 +382,13 @@
   width: min(420px, 94vw);
   max-width: 100%;
   max-height: 84vh;
-  overflow-y: auto;
+  /* ROUND 2G (hud-redesign.md §5.1 decision 1): the CARD used to be the
+     scroll container, so "Come in" — the sheet's one dismiss button, per
+     bible §10.2 — scrolled away with the body and sat below the fold on
+     an ordinary multi-Pip return. Only `.pk-doorstep-body` scrolls now;
+     the title/elapsed line and the dismiss footer are fixed chrome around
+     it, so the one way out of the sheet is always reachable. */
+  overflow: hidden;
   background: #fffdf6;
   border: 1.5px solid rgba(95, 138, 94, 0.25);
   border-radius: 22px;
@@ -421,6 +427,10 @@
   flex-direction: column;
   gap: 12px;
   padding-top: 4px;
+  /* The scrolling region — see `.pk-doorstep-card`'s note above. */
+  overflow-y: auto;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .pk-doorstep-section {
@@ -429,17 +439,28 @@
   gap: 4px;
 }
 
+/* A section heading and a body line used the identical colour
+   (rgb(61,74,61)), so the only hierarchy signal on the whole card was "bolder
+   but smaller" — every line was one of two nearly identical styles. A real
+   colour step plus a hairline rule makes the sections legible as sections. */
 .pk-doorstep-heading {
-  font-size: 11.5px;
+  font-size: 11px;
   font-weight: 800;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
-  opacity: 0.55;
+  letter-spacing: 0.07em;
+  color: #7e8c7c;
+  padding-bottom: 3px;
+  border-bottom: 1px solid rgba(95, 138, 94, 0.16);
+  margin-bottom: 2px;
 }
 
+/* The card's baseline voice: the things that merely HAPPENED (need decay,
+   per-pip arrows). Deliberately the quietest rank on the card — see
+   `--gain`/`--tier` below for the two that outrank it. */
 .pk-doorstep-line {
   font-size: 13px;
   line-height: 1.4;
+  color: #5b6a5b;
 }
 
 .pk-doorstep-nudge {
@@ -453,12 +474,85 @@
   color: #9c6f2e;
 }
 
+/* ROUND 2G — the tier fact leads "The Keep" section (hud-redesign.md
+   §5.1 decision 3): always the section's first line, so it reads as the
+   permanent, positive fact it is rather than one more line of body text. */
+.pk-doorstep-line--tier {
+  font-size: 14px;
+  font-weight: 800;
+  color: #3d6b44;
+}
+
+/*
+ * WHAT THE ABSENCE PAID YOU. The one rank on this card that means "you
+ * received this", and until now the only rank it did NOT have.
+ *
+ * Round 2G moved the earnings above the decay; the review measured what that
+ * bought and found: nothing. Both rendered as plain 13px `.pk-doorstep-line`,
+ * so "+81 Keep XP while you were away." and "The Keep kept working: 29 Fiber
+ * and 17 Wood came in." were typographically identical to the paragraph of
+ * downward arrows underneath — which was 3.1× larger by area. The good news
+ * was ordered first and still lost.
+ *
+ * A tinted pill with a leading "＋" gives it a shape the eye catches before
+ * it starts reading, which is the whole point of a return screen. Not the
+ * amber the nudge uses (that slot means "go do this"), and not the plain
+ * green of the tier line (that means "here is where you stand"): green on a
+ * soft green field means "this arrived while you were out".
+ */
+.pk-doorstep-line--gain {
+  font-weight: 700;
+  color: #2f6b3c;
+  background: rgba(124, 194, 131, 0.18);
+  border-radius: 10px;
+  padding: 6px 10px 6px 8px;
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+}
+
+.pk-doorstep-line--gain::before {
+  content: "＋";
+  flex: 0 0 auto;
+  font-weight: 800;
+  color: #4f9e58;
+}
+
+/* The "+N more" / "Show less" per-pip disclosure (decision 2). Same warm,
+   low-emphasis chrome as the bounty reroll button so it reads as a small
+   affordance, not another call to action competing with "Come in". */
+.pk-doorstep-more {
+  align-self: flex-start;
+  appearance: none;
+  border: none;
+  background: rgba(95, 138, 94, 0.12);
+  color: #5f6f5f;
+  border-radius: 999px;
+  padding: 4px 12px;
+  margin-top: 2px;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+/* Fixed footer around the dismiss button (see `.pk-doorstep-card`'s
+   overflow note) — a subtle top seam is the "there is more above" cue in
+   place of a JS-tracked scroll shadow. */
+.pk-doorstep-footer {
+  flex: 0 0 auto;
+  border-top: 1px solid rgba(95, 138, 94, 0.14);
+  padding-top: 10px;
+  margin-top: 2px;
+}
+
 .pk-doorstep-dismiss {
   appearance: none;
   border: none;
   border-radius: 14px;
   min-height: 46px;
-  margin-top: 6px;
+  width: 100%;
   padding: 12px 16px;
   background: #7cc283;
   color: #fffdf6;

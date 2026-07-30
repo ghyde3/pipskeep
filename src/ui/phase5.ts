@@ -35,6 +35,7 @@ import { notify } from "./notify";
 import type { NotifyEvent } from "./notify";
 import { burstConfetti } from "./confetti";
 import { createParadeTapCounter } from "./parade";
+import { isNextTierXpReady } from "../core/progression/xp";
 import { findBuildItem, resourceDisplayName } from "./buildMode";
 import { createBuildSheet } from "./buildSheet";
 import {
@@ -236,12 +237,30 @@ export interface Phase5UiDeps {
   getBubbleAnchor(): { x: number; y: number };
   /** Open the Pip focus view (non-glowing pip tap, spec §10 two views). */
   openFocus(): void;
+  /**
+   * ROUND 2G: the OLD `.pk-keepbar` (Keep chip + Build button) lived
+   * inside `.pk-phase5` and hid itself directly on a build-sheet-open /
+   * placement-mode signal. Both signals still originate here — the Build
+   * sheet's own `onOpenChange` and this module's `beginPlacement`/
+   * `endPlacement` — but the element they must hide (the Keep strip) now
+   * lives OUTSIDE `.pk-phase5` (see `ui/xpBar.ts`'s `.pk-keepstrip`), so
+   * this callback is how the signal still reaches it. `app/main.ts` wires
+   * it to the strip's own `setHidden`.
+   */
+  setChromeHidden(hidden: boolean): void;
 }
 
 export interface Phase5Ui {
-  /** Opens the Keep upgrade card — the seam `ui/xpBar.ts`'s level chip taps
-   * (see the note on the returned implementation). */
+  /** Opens the Keep upgrade card — the seam `ui/xpBar.ts`'s bar taps (see
+   * the note on the returned implementation). ALSO carries the old Keep
+   * chip's rapid-tap "parade" Easter egg (round 2G deleted that chip as a
+   * separate door — the strip is the one door now, so its tap streak
+   * inherits the chip's whole behaviour, cosmetic Easter egg included). */
   openUpgrades(): void;
+  /** Opens the Build sheet — the seam `ui/xpBar.ts`'s Build icon taps,
+   * folded into the Keep strip beside the bar (round 2G; the icon used to
+   * be its own floating button built right here). */
+  openBuild(): void;
   dispose(): void;
 }
 
@@ -250,24 +269,6 @@ export function initPhase5Ui(deps: Phase5UiDeps): Phase5Ui {
   const root = document.createElement("div");
   root.className = "pk-phase5";
   deps.mount.appendChild(root);
-
-  // --- Keep bar: the Keep-level chip + the Build button ---
-  const keepBar = document.createElement("div");
-  keepBar.className = "pk-keepbar";
-
-  const keepChip = document.createElement("button");
-  keepChip.type = "button";
-  keepChip.className = "pk-keep-chip";
-  keepChip.title = "The Keep";
-
-  const buildBtn = document.createElement("button");
-  buildBtn.type = "button";
-  buildBtn.className = "pk-build-btn";
-  buildBtn.textContent = "Build";
-  buildBtn.title = "Build something for the Keep";
-
-  keepBar.append(keepChip, buildBtn);
-  root.appendChild(keepBar);
 
   // --- Placement mode (the scene's render hooks, spec §9) ---
   // While a ghost is live, this pill names the moment and carries the
@@ -287,7 +288,7 @@ export function initPhase5Ui(deps: Phase5UiDeps): Phase5Ui {
   const endPlacement = (): void => {
     deps.scene.exitPlacementMode();
     placeBar.classList.remove("pk-placebar--in");
-    keepBar.classList.remove("pk-keepbar--hide");
+    deps.setChromeHidden(false);
   };
   placeBarCancel.addEventListener("click", () => {
     sound("ui.tap");
@@ -298,7 +299,7 @@ export function initPhase5Ui(deps: Phase5UiDeps): Phase5Ui {
     placeBarText.textContent = label;
     placeBar.classList.add("pk-placebar--in");
     // The pill owns the bottom thumb zone while the ghost is live.
-    keepBar.classList.add("pk-keepbar--hide");
+    deps.setChromeHidden(true);
   };
 
   const startPlace = (itemId: string): void => {
@@ -380,22 +381,15 @@ export function initPhase5Ui(deps: Phase5UiDeps): Phase5Ui {
     startPlace,
     startMove,
     remove: removePlacement,
-    // The keep bar cannot be z-index'd beneath the sheet (it lives in
-    // .pk-phase5's own stacking context), so it steps aside while the
-    // sheet is up — otherwise the chip and Build button sit on top of
-    // the catalog and cover a card.
+    // Round 2G: the Keep strip that now carries the Build button lives
+    // OUTSIDE `.pk-phase5` (see the `setChromeHidden` note above), so this
+    // seam just forwards the open/close signal instead of toggling a class
+    // on a local element.
     onOpenChange: (open) => {
-      keepBar.classList.toggle("pk-keepbar--hide", open);
+      deps.setChromeHidden(open);
     },
   });
   root.appendChild(buildSheet.el);
-  buildBtn.addEventListener("click", () => {
-    sound("ui.tap");
-    // The keep bar sits above the upgrade card's backdrop (ui.css), so
-    // Build stays reachable while the card is open — hand off cleanly.
-    upgradeCard.close();
-    buildSheet.open();
-  });
 
   const upgradeCard = createUpgradeCard({
     dispatch: (action) => store.dispatch(action),
@@ -403,21 +397,15 @@ export function initPhase5Ui(deps: Phase5UiDeps): Phase5Ui {
     now: () => clock.now(),
   });
   root.appendChild(upgradeCard.el);
-  // Rapid-tap streak on the Keep chip → the scene's cosmetic moment.
+  // Rapid-tap streak on the Keep strip → the scene's cosmetic moment.
   // The counter's deps are now() + start() ONLY (ui/parade.ts — no
-  // dispatch by construction); ui.css keeps the chip above the upgrade
-  // card's backdrop so the streak isn't swallowed after the first tap.
+  // dispatch by construction). Round 2G folds this into `openUpgrades()`
+  // (the seam `ui/xpBar.ts`'s bar tap calls) rather than a separate Keep
+  // chip's click handler — the strip is the one door now, so it inherits
+  // the door's whole behaviour, Easter egg included.
   const paradeTaps = createParadeTapCounter({
     now: () => clock.now(),
     start: () => deps.scene.playParade(),
-  });
-  keepChip.addEventListener("click", () => {
-    sound("ui.tap");
-    if (paradeTaps.tap()) {
-      upgradeCard.close(); // clear the stage — the roster has plans
-      return;
-    }
-    upgradeCard.open();
   });
 
   // --- Evolve confirm bubble (spec §4.6: the tap is the moment) ---
@@ -510,15 +498,6 @@ export function initPhase5Ui(deps: Phase5UiDeps): Phase5Ui {
 
   // --- Store subscription: sync chrome, execute effect lists ---
   const syncChrome = (state: GameState): void => {
-    // ROUND 2F: no longer repeats the level. `ui/xpBar.ts`'s chip is the ONE
-    // Keep-level readout now (and, since this round, the one that opens this
-    // card when tapped) — two chips showing "Lv 3" in opposite corners, only
-    // one of which responded, was the confusing half of that finding.
-    keepChip.textContent = "The Keep";
-    keepChip.setAttribute(
-      "aria-label",
-      `The Keep, level ${state.keep.level} — open upgrades`,
-    );
     buildSheet.sync(state);
     upgradeCard.sync(state);
   };
@@ -540,6 +519,16 @@ export function initPhase5Ui(deps: Phase5UiDeps): Phase5Ui {
       closeEvolveBubble();
     }
 
+    // N7 (hud-redesign doc §4): a successful purchase dismisses the
+    // upgrade card BEFORE the tier-up banner plays, so the celebration
+    // lands on the world instead of behind the surface that triggered it.
+    // `lastLevelUp` is set exactly once per successful PURCHASE_KEEP_LEVEL
+    // tap (never while away — `ui/levelUp.ts`'s own doc), so any change to
+    // it here is that tap, never a migration backfill during boot.
+    if (state.lastLevelUp !== before.lastLevelUp && state.lastLevelUp !== null) {
+      upgradeCard.close();
+    }
+
     const effects = diffPhase5(before, state);
     for (const toast of effects.toasts) {
       // Throttle only the production pops; celebrations always land.
@@ -555,14 +544,41 @@ export function initPhase5Ui(deps: Phase5UiDeps): Phase5Ui {
   });
 
   return {
-    // ROUND 2F: the seam that lets the Keep XP bar's own level chip open this
-    // card. The chip reads `Lv 5 ▸ Ready` and pulses gold when a tier is
-    // waiting, and before this it was an inert `role="status"` div while the
-    // actual tap target was a SECOND Keep-level chip in the opposite corner —
-    // two competing readouts, and the loud one did nothing. Bible §1.2
-    // specifies one widget: "Tapping it opens the upgrade card."
+    // ROUND 2F/2G: the seam that lets the Keep XP bar's own bar-button open
+    // this card. The bar reads `Lv 5 ▸ Ready` and pulses gold when a tier is
+    // waiting; before round 2F it was an inert `role="status"` div while the
+    // actual tap target was a SECOND Keep-level chip in the opposite corner.
+    // Round 2G deleted that chip entirely — the strip is the one door now —
+    // so this also inherits its rapid-tap parade Easter egg.
+    //
+    // THE EASTER EGG DOES NOT GET TO EAT THE CALL TO ACTION. Until round 2G
+    // the rapid-tap parade lived on a decorative "The Keep" chip whose only
+    // job was opening this card. That chip is gone and the seam moved here —
+    // onto the gold-pulsing bar whose own label reads "Tap to grow the
+    // Keep." A player hammering that bar because a tier is Ready is the most
+    // plausible way in the game to hit seven taps in four seconds, and the
+    // reward for doing so would have been the card refusing to open.
+    //
+    // So the egg is gated to the NOT-ready state: when there is nothing
+    // waiting to be bought, an insistent tapper is playing rather than
+    // trying to spend, and the parade is a delight. When a tier IS ready the
+    // bar does exactly and only what it says.
     openUpgrades(): void {
+      const state = store.getState();
+      const ready = isNextTierXpReady(state.keepXp, state.keep.level);
+      if (!ready && paradeTaps.tap()) {
+        upgradeCard.close(); // clear the stage — the roster has plans
+        return;
+      }
       upgradeCard.open();
+    },
+    // The seam `ui/xpBar.ts`'s Build icon taps (folded into the Keep strip
+    // beside the bar — round 2G; it used to be its own floating button).
+    openBuild(): void {
+      // The upgrade card sits above the Build sheet's own backdrop, so a
+      // tap here hands off cleanly rather than stacking two cards.
+      upgradeCard.close();
+      buildSheet.open();
     },
     dispose(): void {
       unsubscribe();

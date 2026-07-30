@@ -405,6 +405,26 @@ describe("buildFocusModel — the whole panel model", () => {
     expect(buildFocusModel(makeState(), "pip-99", 0)).toBeNull();
   });
 
+  /**
+   * ROUND 2G N1 FIX (hud-redesign doc §2.7, spec v1.3 §10's standing rule):
+   * before this round, the focus view never mentioned sulking at all — not
+   * even for a Pip whose bare `activity` reads "sulking". Now it reports it
+   * via `isSulking`, which ALSO catches the case `activity` cannot: a Pip
+   * napping through a sulk (`activity: "resting"`, `sulking: true`).
+   */
+  it("reports sulking via isSulking — including a Pip napping through it", () => {
+    const sulkingActivity = makeState({ pip: makePip({ activity: PipActivity.Sulking }) });
+    expect(buildFocusModel(sulkingActivity, "pip-1", 0)?.sulking).toBe(true);
+
+    const nappingThroughIt = makeState({
+      pip: makePip({ activity: PipActivity.Resting, sulking: true }),
+    });
+    expect(buildFocusModel(nappingThroughIt, "pip-1", 0)?.sulking).toBe(true);
+
+    const notSulking = makeState({ pip: makePip({ activity: PipActivity.Idle }) });
+    expect(buildFocusModel(notSulking, "pip-1", 0)?.sulking).toBe(false);
+  });
+
   /** ROUND-2C REVIEW FIX: `pip-card-old-friend-title` /
    * `pip-card-well-travelled-title` were `kind: "flair"` milestone rewards
    * (mastery tier 5 in one biome, tier 3 in all six) that granted and drew

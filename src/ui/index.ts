@@ -62,19 +62,19 @@ export interface Ui {
    * landing moment, spec §10.1.2 — same bubble, same anchoring). */
   say(line: string): void;
   /**
-   * ROUND 2F — append an element as the last row of the persistent top bar
-   * (`.pk-topbar` is a column flex, so this is a plain append, no layout
-   * assumptions).
+   * ROUND 2G — append an element as a sibling of the top bar / action bar,
+   * inside `#ui`'s own stacking context (so it inherits the same clip,
+   * pointer-events and font stack, but nothing about the top bar's own
+   * layout). This is where `app/main.ts` appends the Keep strip
+   * (`ui/xpBar.ts`'s `.pk-keepstrip`) — that module owns its OWN fixed
+   * position now (bottom-anchored, 8px above the action bar), so this seam
+   * is just "give me a parent inside `#ui`", not "lay me out for me".
    *
-   * This exists for the Keep XP bar (`ui/xpBar.ts`), which must be visible
-   * during ordinary play — the owner's "one of the major driving levers
-   * that we're missing from the UI". The bar module deliberately mounts
-   * nothing itself, so SOMEONE has to choose a home; the top bar is it,
-   * because that is the one surface that is on screen in every state the
-   * player can act from. Round 2G owns the final placement and may take
-   * this seam back out.
+   * (Round 2F's `mountInTopBar` put the bar INSIDE `.pk-topbar` as its last
+   * row; round 2G moved the bar to the thumb zone, so the seam moved with
+   * it and was renamed to match what it actually does now.)
    */
-  mountInTopBar(el: HTMLElement): void;
+  mountChrome(el: HTMLElement): void;
 }
 
 /** Warm copy for structural blocks (spec §5: the world said no, not the
@@ -154,8 +154,8 @@ export function initUi(deps: UiDeps): Ui {
       bubble.show(line, "normal");
     },
 
-    mountInTopBar(el: HTMLElement): void {
-      topBar.el.appendChild(el);
+    mountChrome(el: HTMLElement): void {
+      root.appendChild(el);
     },
   };
 }

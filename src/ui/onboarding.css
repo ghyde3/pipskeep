@@ -251,10 +251,21 @@
   opacity: 1;
 }
 
+/* ROUND 2G: `bottom` keys off `--pk-hud-bottom` (published by xpBar.ts's
+   ResizeObserver — see there) instead of the old hardcoded 108px. 108px was
+   tuned when the action bar was the only bottom chrome; round 2G's Keep
+   strip occupies 84px→157px, so the literal put this cue on top of the XP
+   bar (measured: 62.7% of the bar covered at 375×812). The fallback is the
+   strip's measured height, so this stays correct even before the first
+   observer callback. */
 .pk-onboard-cue {
   position: absolute;
   left: 50%;
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 108px);
+  /* No `env(safe-area-inset-bottom)` term here on purpose: `--pk-hud-bottom`
+     is measured from the real viewport bottom to the Keep strip's top edge,
+     and the strip's own offset already includes the inset — adding it again
+     would double-count it. */
+  bottom: calc(var(--pk-hud-bottom, 157px) + 10px);
   transform: translateX(-50%);
   max-width: min(86vw, 360px);
   padding: 10px 16px;
@@ -278,11 +289,30 @@
   color: #6c8878;
 }
 
-/* A quiet Skip in the corner (spec §10) — present, never shouty. */
+/*
+ * A quiet Skip in the corner (spec §10) — present, never shouty, and no
+ * longer sitting on another control.
+ *
+ * ROUND 2G REVIEW: at `right: 12px; bottom: --pk-hud-bottom + 10px` this
+ * button overlapped `.pk-sound-toggle` (same corner, 40px tall, sitting at
+ * +21px) by 40×15px = 600px². `elementFromPoint` returned `.pk-onboard-skip`
+ * at every point in the overlap, so the bottom 15px of the mute button was
+ * dead for the whole tutorial — and visually the Skip pill tucked under the
+ * speaker glyph and read as a rendering bug in the first ten seconds of the
+ * game.
+ *
+ * The whole bottom band is spoken for: the cue banner is `min(86vw, 360px)`
+ * centred at +10px (≈56px tall), the sound toggle holds the right corner at
+ * +21…+61, and the dev-only debug toggle holds +69…+103 of it. The left
+ * corner ABOVE the cue is the one place that collides with nothing, at any
+ * viewport width — the cue is centred, so it never reaches x=12 on desktop
+ * either.
+ */
 .pk-onboard-skip {
   position: absolute;
-  right: 12px;
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 108px);
+  left: 12px;
+  /* See `.pk-onboard-cue` above for why there is no `env()` term. */
+  bottom: calc(var(--pk-hud-bottom, 157px) + 76px);
   pointer-events: auto;
   appearance: none;
   border: 1px solid rgba(95, 138, 94, 0.28);
@@ -309,7 +339,11 @@ body[data-pk-onboard="feed"] .pk-action[data-action="feed"] {
   border-radius: 16px;
 }
 
-body[data-pk-onboard="explore"] .pk-identity {
+/* ROUND 2G: `.pk-identity` — the old top bar's identity row — was cut with
+   the rest of the dashboard. Its replacement is the cast strip's who-line,
+   which is the same affordance (tap to open the focus view) under a new
+   name, so the beat's highlight follows it rather than glowing on nothing. */
+body[data-pk-onboard="explore"] .pk-hud-who {
   animation: pk-onboard-glow 1600ms ease-in-out infinite;
   border-radius: 12px;
 }

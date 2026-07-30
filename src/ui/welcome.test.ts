@@ -3,11 +3,14 @@
  * round's headline UX). Covers: the inherited "no Doorstep under 3
  * minutes" contract, section presence/omission, and the one-nudge
  * priority chain (pipping egg > ready-to-evolve > pity > Album >
- * milestone > none — exactly one, ever). DOM is untested chrome, same
- * convention as awaySheet.test.ts.
+ * milestone > none — exactly one, ever).
+ *
+ * ROUND 2G REVIEW: "DOM is untested chrome" was this file's convention and it
+ * is gone — see the `createDoorstep` block at the bottom for the blocker that
+ * hid behind it.
  */
 
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { MINUTE_MS, tuning } from "../content/tuning";
 import { EggState } from "../core/eggs";
 import { LifeStage, PipActivity } from "../core/pips/types";
@@ -15,7 +18,20 @@ import type { PipNeeds, PipState } from "../core/pips/types";
 import type { CatchupSummary } from "../core/pips/catchup";
 import type { GameState } from "../core/state";
 import type { BountyInstance } from "../core/progression/bounties";
-import { deriveDoorstepModel, isTrivialAbsence, pickNudge } from "./welcome";
+import type { AwayPipLine } from "./awaySheet";
+import {
+  DOORSTEP_PIP_CAP,
+  cappedAwayPips,
+  createDoorstep,
+  deriveDoorstepModel,
+  isTrivialAbsence,
+  keepTierLine,
+  pickNudge,
+  summarizeAwayNotes,
+} from "./welcome";
+import type { DoorstepModel } from "./welcome";
+import { asHtml, installFakeDom } from "./fakeDom";
+import type { FakeDomHandle, FakeElement } from "./fakeDom";
 import { MILESTONES } from "../content/milestones";
 
 /** `dayOffsetMs` is 0 in every fixture here, so a timestamp inside day N is
@@ -213,10 +229,19 @@ describe("deriveDoorstepModel — section presence (bible §10.2)", () => {
       },
     });
     const model = deriveDoorstepModel(summary(10 * MINUTE_MS), state, SAME_DAY);
+    // The count follows the title and is spelled out. "0/1, 0/2, 0/3" down
+    // the card read as an ordinal list ("item 1 of 3") rather than three
+    // independent fractions — the format only became legible once one of
+    // them completed. The leading marker carries done-ness instead.
     expect(model?.bountyLines).toEqual([
-      "✓ Hand out four snacks",
-      "1/3 Freshen everyone up",
+      "✓ Hand out four snacks — done",
+      "○ Freshen everyone up — 1 of 3",
     ]);
+    // Neither form may read as "N of M bounties" — the fraction belongs to
+    // the bounty's own progress, so the title has to come first.
+    for (const line of model?.bountyLines ?? []) {
+      expect(line).not.toMatch(/^[✓○]\s*\d/);
+    }
     // No clock anywhere in the checklist (bible §5.4 "no clock").
     expect(model?.bountyLines.join(" ")).not.toMatch(/\d+:\d+|hour|minute|expires?/i);
   });
@@ -495,9 +520,52 @@ describe("deriveDoorstepModel — what the absence PAID (bible §6.3)", () => {
   });
 });
 
-describe("pickNudge — 'a Keep tier ready to grow' (bible §6.3's new entry)", () => {
+/**
+ * ROUND 2G (hud-redesign.md §5.1 decision 3) — "a Keep tier ready to grow"
+ * moved OUT of the nudge chain into a permanent line (`keepTierLine`,
+ * always present in `DoorstepModel.tierLine`). These tests replace round
+ * 2F's "pickNudge — 'a Keep tier ready to grow'" describe block, which
+ * pinned the nudge behaviour this round deliberately removes.
+ */
+describe("keepTierLine — the permanent Keep progress line (replaces the old tier-ready NUDGE)", () => {
+  it("names the next tier's headline and the live XP/span numerals while not yet ready", () => {
+    const line = keepTierLine(baseState({ keepXp: 42 }));
+    expect(line).toContain("Lv 1");
+    expect(line).toContain("42");
+    expect(line).toContain("The Forest trail"); // tier 2's headline — the NEXT tier from level 1
+    expect(line).not.toMatch(/Ready/);
+  });
+
+  it("switches to READY phrasing, naming the headline as the thing waiting, once the XP gate clears", () => {
+    const gate = tuning.progression.levelXp[1] as number;
+    const line = keepTierLine(baseState({ keepXp: gate }));
+    expect(line).toContain("Lv 1 ▸ Ready");
+    expect(line).toContain("The Forest trail"); // tier 2's headline
+    expect(line).toMatch(/is waiting/);
+  });
+
+  it("stays in not-ready phrasing one XP short of the gate", () => {
+    const gate = tuning.progression.levelXp[1] as number;
+    expect(keepTierLine(baseState({ keepXp: gate - 1 }))).not.toMatch(/Ready/);
+  });
+
+  it("never throws past the top tier (Renown) and still names a level", () => {
+    const top = tuning.progression.levelXp.length;
+    const line = keepTierLine(baseState({ keep: { level: top, placements: {} }, keepXp: 999_999 }));
+    expect(line).toContain(`Lv ${top}`);
+  });
+
+  it("is exposed on the Doorstep model as `tierLine`, ALWAYS — even on a return that earned nothing this trip", () => {
+    const state = baseState({ keepXp: 42 });
+    const model = deriveDoorstepModel(summary(10 * MINUTE_MS), state, SAME_DAY);
+    expect(model?.tierLine).toBe(keepTierLine(state));
+    expect(model?.keepGainLines).toEqual([]); // nothing earned THIS trip — the fact still shows
+  });
+});
+
+describe("pickNudge — the tier-ready fact no longer competes for the nudge slot", () => {
   /** Every non-hidden milestone banked, so the lower-priority milestone nudge
-   * cannot mask the tier nudge in these fixtures. */
+   * cannot mask what's being tested in these fixtures. */
   function noOtherNudges(overrides: Partial<GameState> = {}): GameState {
     const earned: Record<string, number> = {};
     for (const def of MILESTONES) {
@@ -509,25 +577,12 @@ describe("pickNudge — 'a Keep tier ready to grow' (bible §6.3's new entry)", 
     });
   }
 
-  it("nudges when the XP gate for the next tier is already cleared", () => {
+  it("returns null when a tier is ready and nothing else qualifies — the round-2F 'is null when nothing qualifies' case now includes a ready tier, because that fact moved to a permanent line", () => {
     const gate = tuning.progression.levelXp[1] as number;
-    const nudge = pickNudge(noOtherNudges({ keepXp: gate }));
-    expect(nudge?.icon).toBe("✦");
-    expect(nudge?.text).toContain("level 2");
+    expect(pickNudge(noOtherNudges({ keepXp: gate }))).toBeNull();
   });
 
-  it("names the tier's HEADLINE, so the nudge says what you get", () => {
-    const gate = tuning.progression.levelXp[1] as number;
-    const nudge = pickNudge(noOtherNudges({ keepXp: gate }));
-    expect(nudge?.text).toContain("The Forest trail");
-  });
-
-  it("stays silent one XP short of the gate", () => {
-    const gate = tuning.progression.levelXp[1] as number;
-    expect(pickNudge(noOtherNudges({ keepXp: gate - 1 }))).toBeNull();
-  });
-
-  it("is LAST in the chain — a perishable moment always outranks a tier that waits forever", () => {
+  it("a pipping egg still nudges normally even when a tier happens to be ready — there is no longer anything to outrank", () => {
     const gate = tuning.progression.levelXp[1] as number;
     const withEgg = noOtherNudges({
       keepXp: gate,
@@ -545,14 +600,69 @@ describe("pickNudge — 'a Keep tier ready to grow' (bible §6.3's new entry)", 
     });
     expect(pickNudge(withEgg)?.icon).toBe("🥚");
   });
+});
 
-  it("stays silent at the top tier, where there is no next tier to be ready for", () => {
-    const top = tuning.progression.levelXp.length;
-    const state = noOtherNudges({
-      keep: { level: top, placements: {} },
-      keepXp: 999_999,
-    });
-    expect(pickNudge(state)).toBeNull();
+describe("cappedAwayPips — the per-pip block cap (hud-redesign.md §5.1 decision 2)", () => {
+  const pip = (id: string, note: string | null = null): AwayPipLine => ({
+    pipId: id,
+    name: id,
+    needLines: [],
+    note,
+  });
+
+  it("shows everything, with no hidden count, at or under the cap", () => {
+    const pips = [pip("a"), pip("b"), pip("c")];
+    expect(cappedAwayPips(pips, false)).toEqual({ shown: pips, hiddenCount: 0 });
+  });
+
+  it("caps at 3 and reports the hidden count when collapsed", () => {
+    const pips = [pip("a"), pip("b"), pip("c"), pip("d"), pip("e")];
+    const result = cappedAwayPips(pips, false);
+    expect(result.shown).toEqual(pips.slice(0, 3));
+    expect(result.hiddenCount).toBe(2);
+  });
+
+  it("shows everything, with zero hidden, once expanded", () => {
+    const pips = [pip("a"), pip("b"), pip("c"), pip("d"), pip("e")];
+    expect(cappedAwayPips(pips, true)).toEqual({ shown: pips, hiddenCount: 0 });
+  });
+});
+
+describe("summarizeAwayNotes — collapsing a note repeated by 2+ Pips (hud-redesign.md §5.1 decision 2)", () => {
+  const SULKY_NOTE = "came home a bit sulky. One good snack fixes everything.";
+
+  const pip = (id: string, note: string | null): AwayPipLine => ({
+    pipId: id,
+    name: id,
+    needLines: [],
+    note,
+  });
+
+  it("leaves a UNIQUE note in place — only genuine repetition collapses", () => {
+    const pips = [pip("a", SULKY_NOTE), pip("b", null)];
+    const { pips: out, sharedNotes } = summarizeAwayNotes(pips);
+    expect(sharedNotes).toEqual([]);
+    expect(out).toEqual(pips);
+  });
+
+  it("collapses a note shared by 2+ Pips into ONE section-level line, stripped from each Pip's own row", () => {
+    const pips = [pip("a", SULKY_NOTE), pip("b", SULKY_NOTE), pip("c", SULKY_NOTE), pip("d", null)];
+    const { pips: out, sharedNotes } = summarizeAwayNotes(pips);
+    expect(sharedNotes).toEqual([`Three of them ${SULKY_NOTE}`]);
+    expect(out.filter((p) => p.note !== null)).toEqual([]);
+    expect(out.map((p) => p.pipId)).toEqual(["a", "b", "c", "d"]); // order preserved
+  });
+
+  it("keeps two DIFFERENT repeated notes as two separate collective lines", () => {
+    const other = "dozed through the whole thing, honestly.";
+    const pips = [pip("a", SULKY_NOTE), pip("b", SULKY_NOTE), pip("c", other), pip("d", other)];
+    const { sharedNotes } = summarizeAwayNotes(pips);
+    expect(sharedNotes).toEqual([`Two of them ${SULKY_NOTE}`, `Two of them ${other}`]);
+  });
+
+  it("is a no-op with no notes at all", () => {
+    const pips = [pip("a", null), pip("b", null)];
+    expect(summarizeAwayNotes(pips)).toEqual({ pips, sharedNotes: [] });
   });
 });
 
@@ -678,5 +788,177 @@ describe("deriveDoorstepModel — a trivial absence gets NO Doorstep at all", ()
     ).toBe(false);
     // And so does crossing the quiet window.
     expect(isTrivialAbsence(summary(2 * 60 * MINUTE_MS), away)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE CARD — the return moment as the player actually sees it
+// ---------------------------------------------------------------------------
+
+/**
+ * ROUND 2G REVIEW. Two findings meet here.
+ *
+ * The first is the systemic one: `createDoorstep` was one of three headline
+ * DOM factories in the round with no test whatsoever, and the review's note
+ * was specific — mutations to the Doorstep's XP line, tier phrasing and
+ * station-production line all died correctly, but every one of them died at
+ * the MODEL layer. Nothing asserted `renderBody` PAINTS any of it, so the
+ * Doorstep sat one `bodyEl.replaceChildren()` away from the same class of
+ * silently-dead feature that killed the loot reveal's XP chip.
+ *
+ * The second is the blocker: on a real day-2 return the card was, in full,
+ * one tier line and a paragraph of decay. The gains existed and were ordered
+ * first, but rendered in the identical 13px/weight-400/rgb(61,74,61) as the
+ * losses beneath them — measured, the gain line was 5,328px² against
+ * 16,280px² of decay, 3.1× larger, same weight, same colour. So the tests
+ * below pin the RANK, not just the presence: a `--gain` line has to be
+ * distinguishable in the DOM from a decay line, because that distinction is
+ * the only thing the CSS has to hang a hierarchy on.
+ */
+describe("createDoorstep — what the card paints", () => {
+  let dom: FakeDomHandle;
+
+  beforeEach(() => {
+    dom = installFakeDom();
+  });
+  afterEach(() => {
+    dom.uninstall();
+  });
+
+  function show(model: DoorstepModel): {
+    readonly sheet: ReturnType<typeof createDoorstep>;
+    readonly root: FakeElement;
+  } {
+    let dismissed = 0;
+    const sheet = createDoorstep({
+      mount: asHtml(dom.ui),
+      onDismiss: () => (dismissed += 1),
+    });
+    void dismissed;
+    sheet.show(model);
+    return { sheet, root: sheet.el as unknown as FakeElement };
+  }
+
+  /** A real model, straight from the real deriver — no hand-built fixture
+   * that could drift from what the game actually produces. */
+  function modelFor(state: GameState, sum: CatchupSummary, now = SAME_DAY): DoorstepModel {
+    const model = deriveDoorstepModel(sum, state, now);
+    if (model === null) throw new Error("fixture produced no Doorstep");
+    return model;
+  }
+
+  const lines = (root: FakeElement, cls = ".pk-doorstep-line"): string[] =>
+    root.querySelectorAll(cls).map((el) => el.textContent);
+
+  it("paints the tier fact as a marked line, whatever its position in the section", () => {
+    const { root } = show(modelFor(baseState(), summary(10 * MINUTE_MS)));
+
+    const tier = root.querySelectorAll(".pk-doorstep-line--tier");
+    expect(tier).toHaveLength(1);
+    expect(tier[0]?.textContent).toMatch(/^Lv 1 —/);
+    // The tone travels with the line. This used to be applied afterwards by
+    // `querySelector(".pk-doorstep-line")` — i.e. by POSITION — which would
+    // have silently marked the wrong line, or none, the day the order moved.
+    expect(tier[0]?.classList.contains("pk-doorstep-line")).toBe(true);
+  });
+
+  it("ranks what the absence EARNED above what it cost, in the DOM as well as in order", () => {
+    const withGains: CatchupSummary = {
+      ...summary(24 * 60 * MINUTE_MS),
+      keepXpGained: 81,
+      produced: { fiber: 29, wood: 17 },
+    };
+    const { root } = show(modelFor(baseState(), withGains));
+
+    const gains = root.querySelectorAll(".pk-doorstep-line--gain").map((el) => el.textContent);
+    expect(gains).toEqual([
+      "+81 Keep XP while you were away.",
+      "The Keep kept working: 29 Fiber and 17 Wood came in.",
+    ]);
+
+    // …and they are ranked, not merely present: a decay line must not be
+    // able to wear the same class.
+    const all = lines(root);
+    const plain = all.filter((text) => !gains.includes(text));
+    expect(plain.length).toBeGreaterThan(0);
+    for (const text of plain) {
+      expect(gains).not.toContain(text);
+    }
+  });
+
+  it("a quiet return that earned nothing prints NO gain lines rather than a '+0'", () => {
+    const { root } = show(modelFor(baseState(), summary(10 * MINUTE_MS)));
+    expect(root.querySelectorAll(".pk-doorstep-line--gain")).toHaveLength(0);
+  });
+
+  it("the streak forecast is NOT dressed as a gain — it has not happened yet", () => {
+    const { root } = show(modelFor(baseState(), summary(10 * MINUTE_MS)));
+
+    const forecast = lines(root).find((text) => text.includes("Waiting for you today"));
+    expect(forecast).toBeDefined();
+    const gainTexts = root
+      .querySelectorAll(".pk-doorstep-line--gain")
+      .map((el) => el.textContent);
+    expect(gainTexts).not.toContain(forecast);
+  });
+
+  it("'Come in' sits in a fixed footer OUTSIDE the scrolling body, and dismisses", () => {
+    let dismissed = 0;
+    const sheet = createDoorstep({
+      mount: asHtml(dom.ui),
+      onDismiss: () => (dismissed += 1),
+    });
+    const root = sheet.el as unknown as FakeElement;
+    sheet.show(modelFor(baseState(), summary(10 * MINUTE_MS)));
+
+    const dismiss = root.querySelector(".pk-doorstep-dismiss") as FakeElement;
+    expect(dismiss.closest(".pk-doorstep-footer")).not.toBeNull();
+    expect(dismiss.closest(".pk-doorstep-body")).toBeNull();
+
+    expect(sheet.isOpen()).toBe(true);
+    dismiss.click();
+    expect(dismissed).toBe(1);
+    expect(sheet.isOpen()).toBe(false);
+    expect(root.classList.contains("pk-doorstep--open")).toBe(false);
+  });
+
+  it("caps the per-pip block and expands it in place on the disclosure tap", () => {
+    const roster = ["a", "b", "c", "d", "e"].map((id) =>
+      makePip({ id, name: `Pip-${id}`, needs: needs({ hunger: 20 }) }),
+    );
+    const state = baseState({
+      pips: Object.fromEntries(roster.map((p) => [p.id, p])),
+      rosterOrder: roster.map((p) => p.id),
+      activePipId: "a",
+    });
+    const sum: CatchupSummary = {
+      ...summary(24 * 60 * MINUTE_MS),
+      pips: roster.map((p) => ({
+        pipId: p.id,
+        activityBefore: PipActivity.Idle,
+        activityAfter: PipActivity.Idle,
+        needsBefore: needs({ hunger: 80 }),
+        needsAfter: needs({ hunger: 20 }),
+        needsDelta: { hunger: -60, cleanliness: 0, happiness: 0, energy: 0 },
+      })) as CatchupSummary["pips"],
+    };
+    const { root } = show(modelFor(state, sum));
+
+    const named = (): string[] => lines(root).filter((text) => text.startsWith("Pip-"));
+    expect(named()).toHaveLength(DOORSTEP_PIP_CAP);
+
+    const more = root.querySelector(".pk-doorstep-more") as FakeElement;
+    expect(more.textContent).toBe(`+${roster.length - DOORSTEP_PIP_CAP} more`);
+    more.click();
+    expect(named()).toHaveLength(roster.length);
+    expect((root.querySelector(".pk-doorstep-more") as FakeElement).textContent).toBe("Show less");
+  });
+
+  it("re-opening starts tidy again — the disclosure is per-open, not persisted", () => {
+    const model = modelFor(baseState(), summary(10 * MINUTE_MS));
+    const { sheet, root } = show(model);
+    sheet.hide();
+    sheet.show(model);
+    expect(root.classList.contains("pk-doorstep--open")).toBe(true);
   });
 });

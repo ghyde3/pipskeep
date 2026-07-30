@@ -371,7 +371,15 @@ export interface DebugMenu {
 }
 
 const DEBUG_STYLES = `
-.pk-debug-root { position: fixed; right: 10px; bottom: 132px; z-index: 60;
+/* ROUND 2G INTEGRATE: keyed to \`--pk-hud-bottom\` (published by xpBar.ts's
+   ResizeObserver) instead of the old \`bottom: 132px\`. 132px landed inside
+   the new Keep strip's band (84px→157px), so at 375x812 this dev toggle
+   covered 30% of the Build button and won the hit-test on its top-right
+   corner. Dev-only, so it never shipped — but it broke the QA tool used to
+   verify the strip it was sitting on. The +69px stacks this 8px ABOVE the
+   sound toggle (which sits at +21px with a 40px box), so the two right-edge
+   floats queue up the column instead of sitting on each other. */
+.pk-debug-root { position: fixed; right: 10px; bottom: calc(var(--pk-hud-bottom, 157px) + 69px); z-index: 60;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 .pk-debug-toggle { position: absolute; right: 0; bottom: 0; width: 34px; height: 34px;
   border-radius: 50%; border: 1.5px solid rgba(95, 138, 94, 0.4);

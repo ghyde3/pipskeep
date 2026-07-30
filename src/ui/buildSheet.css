@@ -73,6 +73,17 @@
   color: #8a5a12;
 }
 
+/* The set's roster, shown only while the group is collapsed: a bonus you can
+   price but cannot shop for is a bonus you will not chase, and the header
+   named the reward without ever naming the seven items that earn it. */
+.pk-build-group-members {
+  margin: 0 0 6px;
+  padding: 0 2px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #7e8c7c;
+}
+
 .pk-build-sets {
   display: flex;
   flex-direction: column;

@@ -11,8 +11,12 @@ import { LifeStage, PipActivity } from "../core/pips/types";
 import type { PipNeeds, PipState } from "../core/pips/types";
 import type { GameState } from "../core/state";
 import type { BountyInstance } from "../core/progression/bounties";
+import { bountyCompleteXp, bountyDayClearXp, streakDayXp } from "../core/progression/xp";
+import { effectiveStreakTier } from "../core/progression/streak";
 import {
   bountiesClearedToday,
+  bountyDayClearXpAmount,
+  detectBountyDayClearCelebration,
   buildBountyCards,
   buildMilestoneRows,
   buildStreakModel,
@@ -333,16 +337,29 @@ describe("detectStreakRewardToast", () => {
     });
     const toast = detectStreakRewardToast(prev, next);
     expect(toast).toMatch(/day 1/i);
+    // ROUND 2G: the day's Keep XP is named too (progression-bible.md §1.3
+    // row 27) — it used to be silent, visible only as the bar's generic
+    // `+N` flight chip.
+    expect(toast).toMatch(/\+\d+ XP/);
   });
 
-  it("stays silent for a choice-kind reward (the picker handles that moment)", () => {
+  // ROUND 2G: a choice-kind reward day still pays the day's Keep XP the
+  // instant `rewardedForDay` advances (`core/state.ts`'s CLAIM_STREAK_REWARD
+  // arm keys the grant off `rewardedForDay` alone, never off `reward.kind`)
+  // — so this toast now names that XP instead of staying fully silent. The
+  // picker card still handles the CHOICE itself; only the payout's XP half
+  // gets a toast here.
+  it("names the XP on a choice-kind reward day, but never the reward itself (the picker handles that)", () => {
     const prev = baseState({
       streak: { current: 5, longest: 5, lastVisitDay: 5, totalVisitDays: 5, graceBanked: 2, graceRefilledOnDay: 5, rainDays: 0, rewardedForDay: null, pendingChoices: [] },
     });
     const next = baseState({
       streak: { current: 5, longest: 5, lastVisitDay: 5, totalVisitDays: 5, graceBanked: 2, graceRefilledOnDay: 5, rainDays: 0, rewardedForDay: 5, pendingChoices: [{ kind: "keepsake", offers: ["moss-tuft"], forDay: 5 }] },
     });
-    expect(detectStreakRewardToast(prev, next)).toBeNull();
+    const toast = detectStreakRewardToast(prev, next);
+    expect(toast).toMatch(/day 5/i);
+    expect(toast).toMatch(/\+\d+ XP/);
+    expect(toast).not.toMatch(/keepsake|moss tuft/i);
   });
 
   it("does not re-fire on a repeat sync for the same already-rewarded day", () => {
@@ -527,5 +544,89 @@ describe("dailyBadgeCount", () => {
 
   it("is zero on a fresh save", () => {
     expect(dailyBadgeCount(baseState())).toBe(0);
+  });
+});
+
+/**
+ * ROUND 2G REVIEW — the round's four new XP-copy surfaces, none of which had
+ * a single assertion: `BountyCardModel.xpReward`, `StreakDisplayModel.rewardXp`,
+ * `bountyDayClearXpAmount` and `detectBountyDayClearCelebration`. All four are
+ * rendered (the bounty card's "Banked: +15 XP · …", the ladder line, the
+ * day-clear banner, and a brand-new toast-plus-confetti-plus-sound
+ * celebration), and the day-clear detector in particular is the same detector
+ * CLASS as `detectBountyCelebrations` and `detectStreakRewardToast`, both of
+ * which are tested here.
+ *
+ * The values were verified correct by inspection at review time — each calls
+ * the same `bountyCompleteXp`/`bountyDayClearXp`/`streakDayXp` that
+ * `core/state.ts` sums into `keepXp`. So this is a coverage gap rather than a
+ * wrong number, and these tests exist to keep it that way: they assert the UI
+ * figures ARE the reducer's figures, not that they equal some literal a
+ * retune would have to chase.
+ */
+describe("the XP the dailies surfaces promise is the XP the reducer grants", () => {
+  it("a bounty card's xpReward is bountyCompleteXp, not a hand-typed number", () => {
+    const state = baseState({
+      bounties: {
+        day: 1,
+        slots: [bounty({ slot: 0, progress: 2, target: 4 })],
+        rerollsUsed: 0,
+        dayBonusGranted: false,
+      },
+    });
+    const [card] = buildBountyCards(state);
+    expect(card?.xpReward).toBe(bountyCompleteXp(1, tuning));
+    expect(card?.xpReward).toBeGreaterThan(0);
+  });
+
+  it("the streak ladder's rewardXp is streakDayXp at the EFFECTIVE tier, not the ladder day", () => {
+    const state = baseState({
+      streak: {
+        current: 5,
+        longest: 5,
+        lastVisitDay: 5,
+        totalVisitDays: 5,
+        graceBanked: 2,
+        graceRefilledOnDay: 5,
+        rainDays: 0,
+        rewardedForDay: 5,
+        pendingChoices: [],
+      },
+    });
+    const model = buildStreakModel(state, tuning);
+    // `effectiveStreakTier` — the SAME argument core/state.ts's reducer sums
+    // into `keepXp`. The ladder day is a different number (it cycles), and
+    // reading it here would have the card promise one figure while the bar
+    // moved by another.
+    expect(model.rewardXp).toBe(streakDayXp(effectiveStreakTier(state.streak, tuning), tuning));
+    expect(model.rewardXp).toBe(streakDayXp(model.tier, tuning));
+    expect(model.rewardXp).toBeGreaterThan(0);
+  });
+
+  it("bountyDayClearXpAmount is bountyDayClearXp, and is worth more than one bounty", () => {
+    expect(bountyDayClearXpAmount(tuning)).toBe(bountyDayClearXp(1, tuning));
+    expect(bountyDayClearXpAmount(tuning)).toBeGreaterThan(bountyCompleteXp(1, tuning));
+  });
+});
+
+describe("detectBountyDayClearCelebration — fires on the edge, exactly once", () => {
+  const withBonus = (dayBonusGranted: boolean): GameState =>
+    baseState({
+      bounties: { day: 1, slots: [], rerollsUsed: 0, dayBonusGranted },
+    });
+
+  it("fires on the false → true edge", () => {
+    expect(detectBountyDayClearCelebration(withBonus(false), withBonus(true))).toBe(true);
+  });
+
+  it("does NOT fire on a repeat sync once the bonus is already granted", () => {
+    // The failure mode this guards: the celebration is a toast plus confetti
+    // plus a sound, driven off a subscription that runs on every tick.
+    expect(detectBountyDayClearCelebration(withBonus(true), withBonus(true))).toBe(false);
+  });
+
+  it("does not fire while the day is still unfinished, or when a new day resets the flag", () => {
+    expect(detectBountyDayClearCelebration(withBonus(false), withBonus(false))).toBe(false);
+    expect(detectBountyDayClearCelebration(withBonus(true), withBonus(false))).toBe(false);
   });
 });

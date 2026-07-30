@@ -1,18 +1,18 @@
 /**
- * THE PROGRESSION SPINE'S UI (docs/progression-bible.md §0.2, §1.2, §6) —
- * one stylesheet shared by `xpBar.ts`, `levelUp.ts` and
- * `milestoneCelebration.ts`, exactly the way `dailies.css` covers the
- * streak/bounty/milestone trio. Own class prefixes per surface
- * (`pk-xpbar-*`, `pk-levelup-*`, `pk-ribbon-*`) — edits nothing in
- * ui.css/modals.css/pipdex.css.
+ * THE PROGRESSION SPINE'S UI (docs/progression-bible.md §0.2, §1.2, §6;
+ * round 2G's hud-redesign doc §2.4) — one stylesheet shared by `xpBar.ts`,
+ * `levelUp.ts` and `milestoneCelebration.ts`, exactly the way `dailies.css`
+ * covers the streak/bounty/milestone trio. Own class prefixes per surface
+ * (`pk-keepstrip-*`/`pk-xpbar-*`, `pk-levelup-*`, `pk-ribbon-*`) — edits
+ * nothing in ui.css/modals.css/pipdex.css.
  *
  * Z-INDEX (see `ui/layers.test.ts`, which pins every number below):
  *
- *  - `.pk-xpbar` is a FLOAT, z 5 — a peer of the sound toggle / Nook
- *    button / dailies entry. It is meant to be visible everywhere it is
- *    mounted (round 2G decides where), so like every other float it sits
- *    UNDER any real overlay: opening a sheet or screen covers it rather
- *    than it floating on top of one.
+ *  - `.pk-keepstrip` is a FLOAT, z 5 — a peer of the sound toggle / Nook
+ *    button / dailies entry (round 2G moves this rung here from `.pk-xpbar`,
+ *    which is now a plain flex child of the strip and needs no z-index of
+ *    its own). Like every other float it sits UNDER any real overlay:
+ *    opening a sheet or screen covers it rather than it floating on top.
  *  - `.pk-levelup` (the tier-up banner) and `.pk-ribbon` (the milestone
  *    ribbon) sit ABOVE ordinary toasts (45) — a level-up or a milestone is
  *    a bigger deal than a passing "someone's back from the Meadow" toast —
@@ -22,87 +22,143 @@
  */
 
 /* ---------------------------------------------------------------------- */
-/* THE KEEP XP BAR                                                        */
+/* THE KEEP STRIP                                                         */
 /* ---------------------------------------------------------------------- */
 
 /*
- * THE ROUND'S HEADLINE FEATURE HAS TO BE THE BAR YOU NOTICE.
+ * THE ROUND'S HEADLINE FEATURE HAS TO BE THE BAR YOU NOTICE — AND THE
+ * REWARD HAS TO SIT NEXT TO THE ACTION THAT EARNS IT.
  *
- * This was a single non-wrapping flex ROW — chip, track, numerals and the
- * "Next: …" label all on one line — with `.pk-xpbar-next { flex-basis: 100% }`.
- * A 100% basis in a row that cannot wrap starves everything else, so on a
- * 375px screen the fill track collapsed to its `min-width` of 56px: 16% of
- * its own 351px widget, and the SMALLEST bar on a screen whose four need bars
- * are ~90px each. The owner's diagnosis was "we need that visual progress bar
- * for experience… one of the major driving levers we're missing", and it
- * shipped as the least visible element on the screen. The same starvation
- * clipped the named carrot mid-word ("Next: Shore expedit…").
- *
- * A two-row GRID instead of a wrapped flex row, because grid states the
- * intent instead of relying on wrap order: row 1 is chip / track / numerals
- * with the track on `1fr` (so it takes every pixel the other two do not), and
- * row 2 is the label spanning the full width (so it has ~330px to itself and
- * never ellipsises a trail name). `min-width: 0` on the track is what lets
- * `1fr` actually shrink below its content in a grid.
+ * Round 2F rebuilt the bar itself well (a 2-row grid instead of a starved
+ * flex row) but left it sited at the TOP of the screen, 489px from the
+ * Feed button that fills it — the bible's own "the bar always acknowledges
+ * you" promise, delivered to an empty room (hud-redesign doc §1.4). Round
+ * 2G moves the whole thing into a fixed strip 8px above the action bar, so
+ * a Feed/Clean/Play/Pet/Rest tap and the bar it moves are finally
+ * adjacent, and fuses the Build button into the same strip (it stops
+ * floating on its own — see the deleted `.pk-keepbar` note in ui.css).
  */
-.pk-xpbar {
+.pk-keepstrip {
   pointer-events: auto;
-  position: relative;
+  position: absolute;
+  left: 0;
+  right: 0;
+  /*
+   * MEASURED, NOT ASSUMED. This used to read
+   * `calc(env(safe-area-inset-bottom, 0px) + 84px)` under a comment claiming
+   * "the action bar is a fixed 84px tall by design". That claim was false:
+   * `.pk-actionbar-reason` (ui.css) is `grid-column: 1 / -1` and grows the
+   * bar to 124px whenever the active Pip is unavailable — which is the
+   * NORMAL day-2 state, since the Pip you left working is the one still
+   * working when you come back.
+   *
+   * Measured at 375×812 with the Pip on a Meadow trip: the action bar's top
+   * moved 729→688 while this strip stayed at 655, so the reason pill
+   * ("Mosspip is out on the trail.") and `.pk-xpbar-next` ("Next: The
+   * Lanterngrotto") painted on the same 351×14 band — text on text. Worse,
+   * this strip carries `z-index: 5` and the action bar carries none, so
+   * `elementFromPoint` at the pill's own centre returned `.pk-xpbar-next`:
+   * the pill is documented as "the one-tap switch to a Pip who IS free" and
+   * it was not hit-testable. Six dead care buttons, an empty playfield, and
+   * the one control that explains why, unreachable underneath this strip.
+   *
+   * `--pk-actionbar-h` is published by `actionBar.ts`'s ResizeObserver from
+   * the bar's real rendered height, inset included. The fallback is the
+   * six-button height, so the pre-observer frame is still correct.
+   */
+  bottom: var(--pk-actionbar-h, calc(env(safe-area-inset-bottom, 0px) + 84px));
   z-index: 5;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  grid-template-areas:
-    "chip track numerals"
-    "next next next";
-  align-items: center;
-  column-gap: 8px;
-  row-gap: 3px;
-  max-width: 100%;
-  padding: 7px 11px;
-  border-radius: 14px;
-  background: rgba(255, 253, 246, 0.94);
-  border: 1.5px solid rgba(95, 138, 94, 0.22);
-  box-shadow: 0 3px 10px rgba(61, 74, 61, 0.16);
+  padding: 7px 12px 8px;
+  background: rgba(255, 253, 246, 0.88);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  border-top: 1.5px solid rgba(95, 138, 94, 0.14);
   font-family:
     -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
     Arial, sans-serif;
   color: #3d4a3d;
+  transition: opacity 160ms ease;
 }
 
-/* A BUTTON, not a label: the pulsing gold "Ready" chip used to be inert
-   while the thing you actually had to tap was a SECOND Keep-level chip in
-   the opposite corner, 250px away. One widget now (bible §1.2: "Tapping it
-   opens the upgrade card"), so the loud thing is the thing that does
-   something. `appearance: none` because this is a real <button>. */
-.pk-xpbar-chip {
-  grid-area: chip;
+/* Driven by the SAME `onOpenChange` seam `buildSheet.ts` fires for the old
+   `.pk-keepbar`, plus placement mode (`ui/phase5.ts` wires both) — the
+   strip cannot be z-index'd under the Build sheet / upgrade card from
+   inside `.pk-phase5`'s own stacking context, so it steps aside instead
+   (the documented trap; see `ui/layers.test.ts`'s module doc). */
+.pk-keepstrip--hide {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.pk-keepstrip-inner {
+  max-width: 560px;
+  margin: 0 auto;
+}
+
+.pk-keepstrip-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+
+/* THE WHOLE WIDGET IS ONE <button> — both rows of it (hud-redesign doc
+   N2/failure 6). Round 2G's first build made the bar a button but left the
+   carrot line outside it, so the words "Tap to grow the Keep." were the one
+   part of the widget that did not accept a tap. `flex-direction: column`
+   puts that line inside the target it describes, and takes the target from
+   ~40px to ~57px tall while it is at it. */
+.pk-xpbar {
   appearance: none;
-  border: none;
-  margin: 0;
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  padding: 6px 10px 5px;
+  border: 1.5px solid rgba(95, 138, 94, 0.22);
+  border-radius: 14px;
+  background: rgba(255, 253, 246, 0.94);
+  box-shadow: 0 3px 10px rgba(61, 74, 61, 0.16);
   font: inherit;
+  color: #3d4a3d;
+  text-align: left;
   cursor: pointer;
-  font-size: 12px;
-  font-weight: 800;
-  padding: 3px 8px;
-  border-radius: 999px;
-  background: rgba(124, 194, 131, 0.22);
-  color: #3d6b44;
-  white-space: nowrap;
+  touch-action: manipulation;
 }
 
-.pk-xpbar-chip:disabled {
+/* Row 1 of the button: level chip + track (+ the gain-chip flight layer,
+   which is positioned against this box). */
+.pk-xpbar-main {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+}
+
+.pk-xpbar:disabled {
   cursor: default;
 }
 
-.pk-xpbar-chip:focus-visible {
+.pk-xpbar:focus-visible {
   outline: 2px solid #3d6b44;
   outline-offset: 2px;
 }
 
-.pk-xpbar-chip--ready {
+/* Whole-strip pulse when Ready — replaces the old chip-only pulse now that
+   the chip is a plain `<span>` and the BUTTON is the whole bar. */
+.pk-xpbar--ready {
+  animation: pk-xpbar-pulse 1100ms ease-in-out infinite;
+}
+
+.pk-xpbar--ready .pk-xpbar-chip {
   background: #f4b942;
   color: #4a3300;
-  animation: pk-xpbar-pulse 1100ms ease-in-out infinite;
+}
+
+.pk-xpbar--ready .pk-xpbar-fill {
+  background: #f2b705;
 }
 
 @keyframes pk-xpbar-pulse {
@@ -115,16 +171,55 @@
   }
 }
 
+/* A `<span>` now, not a `<button>` — the whole bar is the tap target, so a
+   nested interactive element would be invalid HTML and a confusing a11y
+   target besides. */
+/* STACKED, not inline: "Keep" beside "Lv 1 ▸ Ready" made the chip 140px wide
+   and left the track just 147px — the round's headline element paying for its
+   own label. Over two short lines the chip is as wide as its longest line
+   alone (~94px) and the track gets ~46px back. */
+.pk-xpbar-chip {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  line-height: 1.08;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 3px 9px;
+  border-radius: 12px;
+  background: rgba(124, 194, 131, 0.22);
+  color: #3d6b44;
+  white-space: nowrap;
+}
+
+/* THE SUBJECT OF THE SENTENCE. On a cold landing the only progression text
+   was `Lv 1`, sitting directly under the single Pip a new player has just
+   met — so it reads as the PET's level, which is a whole different game.
+   The aria-label said "Keep level 1" and nothing visible did. Small,
+   uppercase and dimmed: it names the noun once without competing with the
+   number for attention. */
+.pk-xpbar-kicker {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.72;
+}
+
+.pk-xpbar-level {
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .pk-xpbar-track {
-  grid-area: track;
+  flex: 1 1 0;
+  min-width: 120px;
   position: relative;
-  /* `minmax(0, 1fr)` above supplies the width; this is only a floor for
-     absurdly narrow viewports. It is no longer what the track actually
-     gets — measured ~183px at 375px wide, against 56px before. */
-  min-width: 90px;
-  /* 9px → 12px: this is the bar the round is about, and it now reads as a
-     peer of the need bars rather than a hairline under them. */
-  height: 12px;
+  /* 12px → 14px: the round's headline feature reads as a peer of the cast
+     strip's combs, not a hairline under them. */
+  height: 14px;
   border-radius: 999px;
   background: rgba(95, 138, 94, 0.16);
   overflow: hidden;
@@ -138,42 +233,86 @@
   transition: width 420ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
+/* Moved INSIDE the track (hud-redesign doc §2.4) — this alone buys back
+   ~66px of fill width that used to be spent on a separate numerals column,
+   and puts the figure ON the fill, where the eye already is. One colour
+   with a light text-shadow reads over both the gold fill and the empty
+   track, rather than needing two states. */
 .pk-xpbar-numerals {
-  grid-area: numerals;
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  color: #5f6f5f;
-  white-space: nowrap;
-}
-
-/* Row 2, full width — the named carrot gets the whole widget rather than
-   whatever the row had left over, so "Next: The Shore, and Cozy Bunks"
-   fits instead of clipping to "Next: Shore expedit…". */
-.pk-xpbar-next {
-  grid-area: next;
-  min-width: 0;
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
   font-size: 10.5px;
-  font-weight: 600;
-  color: #7a8a7a;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: #5a4a12;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.55);
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
+/* Row 2 — INSIDE the button (see `.pk-xpbar`'s note). Full width of the
+   button, so "Next: The Trail Post, and more ground" fits instead of
+   clipping mid-word. */
+/* WRAPS TO A SECOND LINE RATHER THAN EATING THE VERB. The Ready string is
+   "Ready — <tier headline>. Tap to grow the Keep." and tier headlines run to
+   28 characters ("More Ground & the Trail Post"), so no font size fits every
+   tier on one 276px line: measured, "Ready — The Forest trail. Tap to grow
+   the Keep." clipped to "…Tap to grow the Ke…" — losing precisely the words
+   that make it a call to action. Two lines, clamped, so a pathological string
+   still cannot grow the strip without bound. */
+.pk-xpbar-next {
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.25;
+  color: #64745f;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.pk-xpbar-next--ready {
+  color: #8a5a12;
+  font-weight: 800;
+}
+
+/* ABOVE the row, never across it. The flight layer's bottom edge is the top
+   edge of row 1, so a `+N` chip rises off the bar into clear air instead of
+   landing on the numerals it is reporting (measured: the chip spawned at
+   x 288–303 while `.pk-xpbar-numerals` occupied 247–292 — a 4px overlap
+   directly on the score readout, so "+4" painted as a smudge behind the
+   "81" of "81 / 100"). */
 .pk-xpbar-flights {
   position: absolute;
-  inset: -4px 0 auto 0;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  height: 0;
   pointer-events: none;
   overflow: visible;
 }
 
+/* THE ONLY PER-TAP REWARD FEEDBACK IN THE GAME, MADE LEGIBLE. It shipped as
+   bare 12px `#b1782a` text painted over the gold fill: 2.08 : 1 contrast,
+   against the 4.5 : 1 WCAG needs at that size, in a 15×13px box. A filled
+   pill instead of loose text gives it its own background to sit on, so its
+   contrast no longer depends on whatever it happens to be flying over
+   (#fffdf6 on #3d6b44 = 8.1 : 1). */
 .pk-xpbar-gain {
   position: absolute;
-  right: 6px;
-  top: 0;
+  right: 4px;
+  bottom: 2px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: #3d6b44;
+  color: #fffdf6;
   font-size: 12px;
   font-weight: 800;
-  color: #b1782a;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  box-shadow: 0 2px 6px rgba(61, 74, 61, 0.28);
   animation: pk-xpbar-gain-float 950ms ease-out forwards;
 }
 
@@ -192,6 +331,32 @@
   }
 }
 
+/* The Build button, folded into the strip (hud-redesign doc §2.4/§2.9) —
+   it stops floating on its own at `left: 12px` over the world. */
+.pk-build-btn {
+  appearance: none;
+  flex: 0 0 44px;
+  /* Stretches to the bar's height (the row is `align-items: stretch`) now
+     that the bar is two rows tall. */
+  border: 1.5px solid rgba(61, 107, 68, 0.35);
+  border-radius: 12px;
+  background: #7cc283;
+  color: #fffdf6;
+  font-size: 17px;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: transform 90ms ease;
+}
+
+.pk-build-btn:active {
+  transform: scale(0.94);
+}
+
+.pk-build-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 /* ---------------------------------------------------------------------- */
 /* THE KEEP TIER-UP BANNER                                                */
 /* ---------------------------------------------------------------------- */
@@ -199,27 +364,35 @@
 /*
  * THE TWO BIGGEST CELEBRATIONS MUST NOT LAND ON THE DENSEST PART OF THE UI.
  *
- * Both surfaces anchored to `top: 0`, i.e. on top of a ~200px top bar. A real
- * level-up at 375x812 drew "✦ The Keep is Level 6 ✦" and its unlock chips
- * straight over the four need bars — "eggs hatch sooner" printed across
- * "Food 80 / Clean 80" — while the ribbon covered the roster portrait strip.
- * So the round's two proudest moments were also its two least readable.
+ * Both surfaces used to anchor to `top: 0` via a hardcoded
+ * a fixed-pixel top-bar offset — a GUESS that under-shot the real top bar
+ * by up to 119px (223–291px measured across roster sizes). A real level-up
+ * at 375×812 drew "✦ The Keep is Level 6 ✦" and its unlock chips straight
+ * over the top bar's own content, and the ribbon covered the roster
+ * portrait strip. So the round's two proudest moments were also its two
+ * least readable (hud-redesign doc §4).
  *
- * `--pk-below-topbar` is the SAME offset `.pk-toasts` (ui.css) already uses
- * for exactly this reason, named here so the three surfaces cannot drift
- * apart. Everything that floats over the world now starts below the chrome.
+ * ROUND 2G: MEASURE, NEVER GUESS. `--pk-hud-top` is written by
+ * `topBar.ts`'s ResizeObserver onto the cast strip's real rendered
+ * border-box height, live, on every resize. `.pk-toasts` (ui.css) consumes
+ * the SAME variable, so all three surfaces can never drift apart again.
+ * The old fixed-offset custom property is deleted along with both of its
+ * hardcoded pixel literals.
+ *
+ * THE +64px, NOT +8px. `--pk-hud-top` clears the cast strip, but the Nook
+ * button (`.pk-nav-btn`, navMenu.css) floats at `--pk-hud-top + 10px` and is
+ * 44px tall, so a banner starting at +8px covered 44×44 — 100% of the
+ * button, including its unread badge — for the whole 4-second celebration.
+ * `pointer-events: none` meant it was still tappable, which is arguably
+ * worse: an invisible live control. 10 + 44 + 10 = 64 clears the float row
+ * with the same 10px air the float itself uses.
  */
-.pk-levelup,
-.pk-ribbon {
-  --pk-below-topbar: calc(env(safe-area-inset-top, 0px) + 172px);
-}
-
 .pk-levelup {
   pointer-events: none;
   position: fixed;
   left: 0;
   right: 0;
-  top: var(--pk-below-topbar);
+  top: calc(var(--pk-hud-top, 96px) + 64px);
   z-index: 46;
   display: flex;
   flex-direction: column;
@@ -293,8 +466,9 @@
   position: fixed;
   left: 12px;
   right: 12px;
-  /* Below the top bar, for the reason documented on `.pk-levelup` above. */
-  top: var(--pk-below-topbar);
+  /* Below the top bar AND below the Nook float, for the reasons documented
+     on `.pk-levelup` above. */
+  top: calc(var(--pk-hud-top, 96px) + 64px);
   z-index: 47;
   margin: 0 auto;
   max-width: 420px;
@@ -334,13 +508,14 @@
  * `:has()` keeps this in CSS, where the collision is, rather than making the
  * two modules aware of each other (neither owns the other, and a
  * cross-module open/closed protocol for a 4-second overlap would be worse
- * than the bug). The offset is deliberately generous — the banner's height
- * varies with how many things a tier unlocked (one line at tier 10, four at
- * tier 2) — and the ribbon keeps its own transition, so it slides down
- * rather than jumping.
+ * than the bug). ROUND 2G: the offset used to be a flat guessed `168px` —
+ * wrong for every tier except by luck, since the banner's height varies with
+ * how many things a tier unlocked (one line at tier 10, four at tier 2).
+ * `levelUp.ts` now measures its own card's rendered height on open and
+ * writes `--pk-levelup-h`, so this reads the banner's REAL height instead.
  */
 #ui:has(.pk-levelup--open) .pk-ribbon--open {
-  transform: translateY(168px);
+  transform: translateY(calc(var(--pk-levelup-h, 140px) + 12px));
 }
 
 .pk-ribbon-top {

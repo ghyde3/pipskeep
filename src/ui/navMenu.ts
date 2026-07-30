@@ -1,19 +1,25 @@
 /**
- * The Nook menu (round 2C integrate stage): ONE floating button in the
- * bottom-left thumb zone that opens a short list of the game's non-care
- * destinations — the Album, the Long Meadow, and Today.
+ * The Nook menu (round 2C integrate stage): ONE floating button that opens
+ * a short list of the game's non-care destinations — the Album, the Long
+ * Meadow, and Today.
  *
  * WHY A MENU AND NOT MORE BUTTONS. Round 2C shipped three new browsable
  * screens, and the obvious wiring (a floating button each, the pattern
  * `soundToggle.ts` established) does not survive contact with a 375px
- * screen. The bottom-left column is already occupied by the Keep bar
+ * screen. The bottom-left column was already occupied by the old Keep bar
  * (`.pk-keepbar`: the Keep chip + Build, `left: 12px`, rising from
- * `bottom + 118px`), and the dailies entry button as shipped sat at
- * `left: 12px; bottom + 178px` — geometrically ON TOP of the Keep bar's
- * upper button, on a lower z-index, i.e. an unreachable Build button. One
- * button that expands is the fix: the thumb zone gains a single 44px
- * target, the care bar is untouched, and each destination gets a readable
- * label instead of an emoji the player has to guess at.
+ * `bottom + 118px` — deleted in round 2G, see ui.css), and the dailies
+ * entry button as shipped sat at `left: 12px; bottom + 178px` —
+ * geometrically ON TOP of the Keep bar's upper button, on a lower z-index,
+ * i.e. an unreachable Build button. One button that expands is the fix:
+ * the thumb zone gains a single 44px target, the care bar is untouched,
+ * and each destination gets a readable label instead of an emoji the
+ * player has to guess at.
+ *
+ * ROUND 2G moved this button from the bottom-left thumb zone (which now
+ * belongs to the Keep strip) to the TOP-left, just under the cast strip —
+ * see navMenu.css's `.pk-nav-btn`. It reads as chrome there and clears the
+ * world's centre; the popover itself still grows from the bottom, unmoved.
  *
  * The glyph is drawn in CSS (three rounded sage bars), not an emoji: the
  * menu holds three unrelated things, so no single pictogram is honest, and

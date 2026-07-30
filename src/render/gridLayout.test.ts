@@ -64,6 +64,66 @@ describe("computeGridLayout", () => {
   });
 });
 
+/**
+ * ROUND 2G REVIEW: the band ran to `0.97 × viewH` — 787.6px on a 375×812
+ * phone — while the DOM chrome (Keep strip + action bar) starts at y 655, so
+ * 133px of the band was underneath it. Measured at Keep level 4: 35px (10.8%)
+ * of the drawn plot permanently occluded, with the standing Pip's entire
+ * contact-shadow ellipse (y 655–680) inside that band, so the Pip read as
+ * sunk into the XP bar and the celebratory level-4 screenshot cut it off at
+ * the chin.
+ *
+ * Level 1's 8×8 grid escaped by arithmetic luck (bottom at 657.4 — 2.4px
+ * lost), which is the part that matters: the defect grew with the Keep, so
+ * the more the player built the less of it they could see.
+ */
+describe("computeGridLayout — the bottom chrome inset", () => {
+  const CHROME = 157;
+
+  it("keeps the whole plot clear of the bottom chrome at every Keep size", () => {
+    // 8×8 (level 1) through 12×12 (the full plot) — the pre-fix bug only
+    // showed on the larger grids.
+    for (const size of [8, 9, 10, 11, 12]) {
+      const layout = computeGridLayout(375, 812, size, size, {
+        bottomInsetPx: CHROME,
+      });
+      const plotBottom = layout.originY + layout.rows * layout.tileH;
+      expect(plotBottom, `${size}×${size} draws under the chrome`).toBeLessThanOrEqual(
+        812 - CHROME + 1e-9,
+      );
+    }
+  });
+
+  it("defaults to no inset, so every existing caller is unchanged", () => {
+    const withoutOption = computeGridLayout(375, 812, 8, 8);
+    const withZero = computeGridLayout(375, 812, 8, 8, { bottomInsetPx: 0 });
+    expect(withoutOption).toStrictEqual(withZero);
+  });
+
+  it("reserves PIXELS, not a fraction — the same inset costs the same on any viewport", () => {
+    // The chrome is a fixed pixel stack, so a fraction that clears it on a
+    // phone would over-reserve on a tall desktop. Both viewports must end up
+    // with their plot bottom exactly `CHROME` clear of the bottom edge or
+    // higher, never scaled.
+    for (const viewH of [812, 1000, 1400]) {
+      const layout = computeGridLayout(1280, viewH, 12, 12, { bottomInsetPx: CHROME });
+      const plotBottom = layout.originY + layout.rows * layout.tileH;
+      expect(plotBottom).toBeLessThanOrEqual(viewH - CHROME + 1e-9);
+    }
+  });
+
+  it("a negative inset is ignored rather than growing the band past the screen", () => {
+    const clamped = computeGridLayout(375, 812, 8, 8, { bottomInsetPx: -200 });
+    expect(clamped).toStrictEqual(computeGridLayout(375, 812, 8, 8));
+  });
+
+  it("still yields a usable grid when the inset swallows most of the band", () => {
+    const layout = computeGridLayout(375, 812, 8, 8, { bottomInsetPx: 700 });
+    expect(layout.tileW).toBeGreaterThanOrEqual(18); // the tappable floor holds
+    expect(Number.isFinite(layout.originY)).toBe(true);
+  });
+});
+
 describe("tile ↔ world mapping", () => {
   const layout = computeGridLayout(800, 600, 8, 8);
 

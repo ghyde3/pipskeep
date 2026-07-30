@@ -192,6 +192,44 @@ const MOOD_IDLE: Readonly<
 
 const DUST_COLORS = ["#e8dcc0", "#d6c9a8", "#ffffff"] as const;
 
+/**
+ * Design height of the bottom DOM chrome (Keep strip + action bar) — the
+ * fallback used before `.pk-keepstrip` exists in the document, and in any
+ * non-browser context.
+ */
+const BOTTOM_CHROME_FALLBACK_PX = 157;
+
+/**
+ * How much of the bottom of the view the DOM chrome covers, measured off the
+ * Keep strip's own top edge.
+ *
+ * WHY MEASURE RATHER THAN ASSUME. `computeGridLayout`'s band ran to
+ * `0.97 × viewH` — 787.6px on a 375×812 phone, i.e. 133px underneath chrome
+ * that starts at 655. At Keep level 4 that put 35px of the drawn plot, and
+ * the standing Pip's entire contact shadow, permanently behind the Keep
+ * strip: the Pip read as sunk into the XP bar. Level 1's 8×8 grid escaped by
+ * arithmetic luck (2.4px lost), so the bug grew with the Keep — the opposite
+ * of what a reward should do.
+ *
+ * Measuring the real element is what keeps this correct as the strip's own
+ * height changes (its second row is text and can re-wrap). The strip's
+ * `bottom` offset also tracks `--pk-actionbar-h`, so the reason pill's extra
+ * 40px is included whenever it is showing at relayout time; a pill that
+ * appears BETWEEN relayouts is not re-fitted until the next resize or tier
+ * change, which is a transient the plot survives (the Pip that pill is about
+ * is, by definition, not standing on the plot).
+ */
+function measureBottomChrome(viewH: number): number {
+  if (typeof document === "undefined") return BOTTOM_CHROME_FALLBACK_PX;
+  const strip = document.querySelector(".pk-keepstrip");
+  if (strip === null) return BOTTOM_CHROME_FALLBACK_PX;
+  const top = strip.getBoundingClientRect().top;
+  // A detached / not-yet-laid-out strip reports 0 — that is "unknown", not
+  // "the chrome fills the screen", so fall back rather than starving the plot.
+  if (!Number.isFinite(top) || top <= 0) return BOTTOM_CHROME_FALLBACK_PX;
+  return Math.max(0, Math.min(viewH * 0.4, viewH - top));
+}
+
 export function createKeepScene(width: number, height: number): KeepScene {
   // Render-local deterministic jitter (see module doc).
   const jitter = createRng(0x6a756963).stream("keep-juice");
@@ -219,7 +257,12 @@ export function createKeepScene(width: number, height: number): KeepScene {
   let w = width;
   let h = height;
   let lastState: GameState | null = null;
-  let layout: GridLayout = computeGridLayout(w, h, 8, 8);
+  /** Height of the DOM chrome pinned to the bottom of the screen (Keep strip
+   * + action bar), measured — see `measureBottomChrome`. */
+  let bottomInset = measureBottomChrome(h);
+  let layout: GridLayout = computeGridLayout(w, h, 8, 8, {
+    bottomInsetPx: bottomInset,
+  });
   let blockedTiles: ReadonlySet<string> = new Set();
   /** Depth tiebreak counter (stable y-sorting via creation order). */
   let seqCounter = 0;
@@ -1276,12 +1319,14 @@ export function createKeepScene(width: number, height: number): KeepScene {
   let parade: ParadeState | null = null;
 
   /** Foreground marching lane, recomputed live so resizes stay sane.
-   * Capped at ~78% of the view height: the grid band runs to 0.97h and
-   * the bottom ~17% sits under the DOM action bar — a conga nobody can
-   * see is a wasted kazoo. */
+   * Capped just above the measured bottom chrome — a conga nobody can see is
+   * a wasted kazoo. (This used to be a flat `h * 0.78`, which on a 375×812
+   * phone put the lane's floor at 633px against chrome starting at 655: it
+   * happened to clear, but only because 0.78 and the chrome's real height
+   * were independently chosen and got lucky.) */
   function paradeLaneY(): number {
     const gridBottom = layout.originY + layout.rows * layout.tileH;
-    return Math.min(h * 0.78, gridBottom + layout.tileH * 0.55);
+    return Math.min(h - bottomInset - 12, gridBottom + layout.tileH * 0.55);
   }
 
   function paradeSpacing(): number {
@@ -2221,7 +2266,10 @@ export function createKeepScene(width: number, height: number): KeepScene {
     const old = layout;
     const level = lastState?.keep.level ?? 1;
     const bounds = gridBounds(level);
-    layout = computeGridLayout(w, h, bounds.cols, bounds.rows);
+    bottomInset = measureBottomChrome(h);
+    layout = computeGridLayout(w, h, bounds.cols, bounds.rows, {
+      bottomInsetPx: bottomInset,
+    });
     drawBackground();
     drawGridOverlay();
     drawFlash();

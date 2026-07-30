@@ -10,17 +10,22 @@
  * tested unit, so the shell has nothing left to get wrong.
  */
 
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { tuning as contentTuning } from "../content/tuning";
 import { keepLevels } from "../content/keep";
 import {
   buildXpBarModel,
   computeFillPaint,
+  createXpBar,
   formatXpCount,
   minAdvancePx,
+  xpBarAriaLabel,
   xpBarNextLabel,
   xpGainSinceLast,
 } from "./xpBar";
+import type { GameState } from "../core/state";
+import { installFakeDom } from "./fakeDom";
+import type { FakeDomHandle, FakeElement } from "./fakeDom";
 import { RENOWN_TOP_FLAIR_LEVEL, renownFlairForLevel } from "../content/flair";
 
 const levelXp = contentTuning.progression.levelXp;
@@ -240,10 +245,44 @@ describe("computeFillPaint — the tick floor as it is actually applied", () => 
   });
 });
 
+describe("xpBarAriaLabel — the strip's real button label (N6/failure 6)", () => {
+  it("names the level, the honest into/span, and the open-upgrades verb", () => {
+    const model = buildXpBarModel({ keepXp: 500, keep: { level: 3, placements: {} } });
+    const label = xpBarAriaLabel(model);
+    expect(label).toContain(`Keep level ${model.level}`);
+    expect(label).toContain(formatXpCount(model.into));
+    expect(label).toContain(formatXpCount(model.span));
+    expect(label).toContain("Open Keep upgrades.");
+    expect(label).not.toContain("ready");
+  });
+
+  it("says a tier is ready, once it is", () => {
+    const gate = levelXp[1] as number;
+    const model = buildXpBarModel({ keepXp: gate, keep: { level: 1, placements: {} } });
+    expect(model.ready).toBe(true);
+    expect(xpBarAriaLabel(model)).toContain("a tier is ready");
+  });
+});
+
 describe("xpBarNextLabel — the bar always names something to aim at", () => {
   it("below the top tier it names the next tier's headline", () => {
     const model = buildXpBarModel({ keepXp: 0, keep: { level: 1, placements: {} } });
     expect(xpBarNextLabel(model)).toBe(`Next: ${model.nextTierName as string}`);
+  });
+
+  /**
+   * ROUND 2G (hud-redesign doc §3/§4, failure 6): the Ready affordance IS
+   * the tap target now, so its OWN label carries the call to action — the
+   * carrot stays named (failure 7 must not regress into a bare "Ready!"),
+   * and a verb is added on top of it.
+   */
+  it("keeps naming the carrot AND adds the call to action once Ready", () => {
+    const gate = levelXp[1] as number;
+    const model = buildXpBarModel({ keepXp: gate, keep: { level: 1, placements: {} } });
+    expect(model.ready).toBe(true);
+    expect(xpBarNextLabel(model)).toBe(
+      `Ready — ${model.nextTierName as string}. Tap to grow the Keep.`,
+    );
   });
 
   it("at Renown it names the next FLOURISH and how far off it is", () => {
@@ -279,5 +318,192 @@ describe("xpBarNextLabel — the bar always names something to aim at", () => {
     const late = buildXpBarModel({ keepXp: topReq + 900, keep: { level: 12, placements: {} } });
     expect(late.renownNextIn).toBeLessThan(early.renownNextIn);
     expect(late.renownNextIn).toBeGreaterThanOrEqual(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE DOM SHELL — the half that was untested, and the half that broke
+// ---------------------------------------------------------------------------
+
+/**
+ * ROUND 2G REVIEW: two mutations survived the whole 2,230-test suite here.
+ *
+ *  1. The body of `bar.addEventListener("click", …)` replaced with a bare
+ *     `return;`. The bar still rendered, still pulsed gold, still carried its
+ *     aria-label, and swallowed every tap — while `xpBarNextLabel`'s "Tap to
+ *     grow the Keep." copy, which IS pinned above, kept asserting a call to
+ *     action the button no longer honoured.
+ *  2. `sync`'s `computeFillPaint(…)` replaced with `fill.style.width =
+ *     `${model.pct * 100}%``. That is the exact bypass `computeFillPaint` was
+ *     extracted to prevent, moved one frame up: at the Renown span a 4-XP care
+ *     action is a fraction of a pixel, so the late-game bar paints nothing and
+ *     reads as frozen. Extracting the decision raised the bar for an
+ *     accidental regression; only a test that drives `sync` closes the hole.
+ *
+ * Everything below drives the real `createXpBar` against `fakeDom.ts` — see
+ * that file for why a hand-rolled fake rather than jsdom (spec §1's dependency
+ * allowlist; vitest runs `node` here).
+ */
+describe("createXpBar — the widget, not the model", () => {
+  let dom: FakeDomHandle;
+
+  beforeEach(() => {
+    dom = installFakeDom();
+  });
+  afterEach(() => {
+    dom.uninstall();
+  });
+
+  const stateAt = (keepXp: number, level = 1): GameState =>
+    ({ keepXp, keep: { level, placements: {} } }) as GameState;
+
+  /** The strip, with a laid-out track so pixel painting is meaningful. */
+  function mountBar(deps: Parameters<typeof createXpBar>[0] = {}): {
+    readonly handle: ReturnType<typeof createXpBar>;
+    readonly root: FakeElement;
+    readonly track: FakeElement;
+  } {
+    const handle = createXpBar(deps);
+    const root = handle.el as unknown as FakeElement;
+    dom.ui.appendChild(root);
+    const track = root.querySelector(".pk-xpbar-track") as FakeElement;
+    track.clientWidth = 200;
+    return { handle, root, track };
+  }
+
+  it("a tap on the bar reaches onOpenUpgrades — the whole point of the Ready affordance", () => {
+    let opened = 0;
+    const { root, handle } = mountBar({ onOpenUpgrades: () => (opened += 1) });
+    handle.sync(stateAt(0));
+
+    const bar = root.querySelector(".pk-xpbar") as FakeElement;
+    expect(bar.disabled).toBe(false);
+    bar.click();
+    expect(opened).toBe(1);
+  });
+
+  it("taps while READY too — the state where the bar pulses gold to demand one", () => {
+    let opened = 0;
+    const ready = (levelXp[1] as number) + 160; // banked past the tier gate
+    const { root, handle } = mountBar({ onOpenUpgrades: () => (opened += 1) });
+    handle.sync(stateAt(ready));
+
+    const bar = root.querySelector(".pk-xpbar") as FakeElement;
+    expect(bar.classList.contains("pk-xpbar--ready")).toBe(true);
+    bar.click();
+    expect(opened).toBe(1);
+  });
+
+  it("the Build icon reaches onOpenBuild", () => {
+    let built = 0;
+    const { root, handle } = mountBar({ onOpenBuild: () => (built += 1) });
+    handle.sync(stateAt(0));
+
+    const build = root.querySelector(".pk-build-btn") as FakeElement;
+    expect(build.disabled).toBe(false);
+    build.click();
+    expect(built).toBe(1);
+  });
+
+  it("omitting a callback yields a DISABLED control — inert, but never lying", () => {
+    const { root, handle } = mountBar({});
+    handle.sync(stateAt(0));
+
+    const bar = root.querySelector(".pk-xpbar") as FakeElement;
+    const build = root.querySelector(".pk-build-btn") as FakeElement;
+    expect(bar.disabled).toBe(true);
+    expect(build.disabled).toBe(true);
+    // And no handler was attached at all, so there is nothing to swallow.
+    expect(bar.listenerCount("click")).toBe(0);
+    expect(build.listenerCount("click")).toBe(0);
+  });
+
+  it("the 'Tap to grow the Keep.' line is INSIDE the button it instructs you to tap", () => {
+    let opened = 0;
+    const ready = (levelXp[1] as number) + 160;
+    const { root, handle } = mountBar({ onOpenUpgrades: () => (opened += 1) });
+    handle.sync(stateAt(ready));
+
+    const bar = root.querySelector(".pk-xpbar") as FakeElement;
+    const next = root.querySelector(".pk-xpbar-next") as FakeElement;
+    expect(next.textContent).toContain("Tap to grow the Keep.");
+    // Round 2G shipped this line as a SIBLING of the button: the one string
+    // in the game that literally instructs a tap was the one part of the
+    // widget that did not accept one.
+    expect(next.closest(".pk-xpbar")).toBe(bar);
+    expect(opened).toBe(0);
+  });
+
+  it("names the Keep in VISIBLE text, not only in the aria-label", () => {
+    const { root, handle } = mountBar({});
+    handle.sync(stateAt(30));
+
+    const chip = root.querySelector(".pk-xpbar-chip") as FakeElement;
+    // "Lv 1" under a single Pip reads as the PET's level to a new player.
+    expect(chip.textContent).toContain("Keep");
+    expect(chip.textContent).toContain("Lv 1");
+  });
+
+  it("paints the fill in PIXELS through computeFillPaint, not a raw percentage", () => {
+    const { root, handle, track } = mountBar({});
+    handle.sync(stateAt(30));
+
+    const fill = root.querySelector(".pk-xpbar-fill") as FakeElement;
+    expect(fill.style.getPropertyValue("width")).toMatch(/px$/);
+    expect(Number.parseFloat(fill.style.getPropertyValue("width"))).toBeCloseTo(200 * (30 / (levelXp[1] as number)), 4);
+    expect(track.clientWidth).toBe(200);
+  });
+
+  it("a sub-pixel grant still advances the fill by the 2px floor — the bar always acknowledges you", () => {
+    const { root, handle } = mountBar({});
+    handle.sync(stateAt(30));
+    const fill = root.querySelector(".pk-xpbar-fill") as FakeElement;
+    const before = Number.parseFloat(fill.style.getPropertyValue("width"));
+
+    // +1 XP over a 100-XP span on a 200px track is 2px exactly; the
+    // interesting case is smaller still, so use a fraction of that.
+    handle.sync(stateAt(30.05));
+    const after = Number.parseFloat(fill.style.getPropertyValue("width"));
+    expect(after - before).toBeGreaterThanOrEqual(2);
+  });
+
+  it("spawns a +N chip on a gain, and none on the first sync (nothing to compare to)", () => {
+    const { root, handle } = mountBar({});
+    handle.sync(stateAt(30));
+    expect(root.querySelectorAll(".pk-xpbar-gain")).toHaveLength(0);
+
+    handle.sync(stateAt(34));
+    const chips = root.querySelectorAll(".pk-xpbar-gain");
+    expect(chips).toHaveLength(1);
+    expect(chips[0]?.textContent).toBe("+4");
+  });
+
+  it("the sr-only status announces level/ready EDGES only, never a bare XP tick (N6)", () => {
+    const { root, handle } = mountBar({});
+    const sr = root.querySelector(".pk-sr-only") as FakeElement;
+    expect(sr.getAttribute("role")).toBe("status");
+
+    handle.sync(stateAt(30));
+    expect(sr.textContent).toBe("Keep level 1");
+
+    // An ordinary grant must not rewrite the live region.
+    sr.textContent = "SENTINEL";
+    handle.sync(stateAt(34));
+    expect(sr.textContent).toBe("SENTINEL");
+
+    // Crossing into Ready is news, and does.
+    handle.sync(stateAt((levelXp[1] as number) + 10));
+    expect(sr.textContent).toBe("Keep level 1 — a tier is ready");
+  });
+
+  it("setHidden drives the strip's own class — the documented alternative to z-indexing it", () => {
+    const { root, handle } = mountBar({});
+    handle.sync(stateAt(0));
+    expect(root.classList.contains("pk-keepstrip")).toBe(true);
+
+    handle.setHidden(true);
+    expect(root.classList.contains("pk-keepstrip--hide")).toBe(true);
+    handle.setHidden(false);
+    expect(root.classList.contains("pk-keepstrip--hide")).toBe(false);
   });
 });
