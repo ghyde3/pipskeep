@@ -14,22 +14,23 @@ Phase-gate log and decision journal, per spec §13–§15. Append entries; never
 | 5 — The Keep | **gate passed** | 2026-07-29 |
 | 6 — Polish, PWA, onboarding | **gate passed** | 2026-07-29 |
 
+### Round 2G — HUD legibility — 2026-07-30 — GATE PASSED
+**2286 tests.** Oracle visual pass → two builders → integrate → three verifiers → fixer → re-gate.
+
+- **The Oracle's finding reframed the round:** eight of the ten "measured failures" it was handed had *already been fixed inside round 2F, after 2F's own audit wrote them down*. A builder given the raw list would have "fixed" working code. It verified each in the running game before designing — e.g. the XP track was already 209.7px, not the 56px on the list. **Lesson: a stale finding is worse than no finding; re-verify before acting on an audit from a previous round.**
+- **The real problem was design, not bugs.** Measured `.pk-topbar` at 375×812: **223px with one Pip, 291px with five** — the header *grew 68px as a reward for playing well* — and with the action bar that was **46.1% of the screen as chrome**, leaving a 375×253 band of actual world.
+- **The redesign, now shipped:** a 96px cast strip (roster chips carrying per-Pip need combs and alert rings) + a **72px Keep strip in the thumb zone that is one full-width button** + the action bar = constant chrome regardless of roster size. Playfield roughly doubled. Floats over the world went 5 → 1.
+- **Cut, not kept:** the 14-chip satchel row (−86px, re-homed to the Items sheet), the four need numerals, the single-Pip need bars, the identity row, the `i` badge, the separate Keep chip, the sound-toggle float. Several proposed additions were *refused before being built*.
+- **Verified by me in the browser:** the Doorstep now leads with "Lv 1 ▸ Ready — The Forest trail is waiting", names XP waiting and homecomings; the loot reveal shows "+7 Keep XP"; the Ready affordance is a real button with the label "Keep level 1, 100 of 100 experience banked — a tier is ready. Open Keep upgrades."
+- **A live spec violation found and fixed (N1):** `topBar.ts` keyed sulking off `activity` and never `isSulking`, violating spec §16 v1.3's own standing rule — so a Pip with `sulking: true, activity: "idle"` and needs at 0/0/0/0 got **no badge at all** while others did. `focusView.ts` never mentioned sulking. Both fixed; the activity-only signature was deleted rather than deprecated.
+- Also fixed: celebrations now clear the chrome via a measured `--pk-hud-top` (two hardcoded `172px` literals deleted — the banner had been printing straight through the XP bar at five Pips); speech bubbles clamped to the viewport; starter-Pip camouflage (1.05:1 body-vs-ground); roster overflow at six Pips; purchase now closes the upgrade card so celebrations don't play behind it.
+
 ## ⏸ PAUSED MID-ROUND — resume here (2026-07-30)
 
 Two workflows were stopped mid-flight at the owner's request. **The tree is GREEN — 2285 tests, clean build, `tsc` clean** — so this is a safe stopping point, but two rounds are functionally complete and *unverified*.
 
-### Round 2G — HUD legibility — BUILD DONE, FIX STAGE NEVER RAN
-Reached: Oracle design ✅ → both builders ✅ → integrate ✅ (2230 tests green at that point) → all three verifiers ✅ → **stopped before the fixer**.
-- `docs/hud-redesign.md` (702 lines) is the Oracle's spec; the HUD, XP bar, Doorstep, loot-reveal and build-sheet work is IN the tree and passing.
-- **Its verifiers reported 4 blockers and 11 majors that are NOT yet fixed.** They are listed below verbatim; they are the resume work-list.
-
-**Blockers (2G):**
-1. `src/ui/xpBar.ts` — the Ready affordance's click handler can be gutted to an inert `return` with zero test failures; `createXpBar` has no DOM tests at all. (This is the *same inert-chip bug* 2G existed to fix, now untested rather than unfixed.)
-2. `src/ui/lootReveal.ts` — the `+N Keep XP` chip is never asserted in the DOM, so it can be blanked and hidden with the suite fully green.
-3. `src/ui/progression.css:49` — the "why is this bar grey" pill is completely hidden under the Keep strip; when a Pip is away the player sees six dead buttons with no explanation.
-4. `src/ui/welcome.ts:398` — the day-2 return still reports only decay for a new player; its one gain-shaped number is a forecast that never reaches the XP bar.
-
-**Notable majors (2G):** starter Pip is camouflaged against its own field (1.05:1 body-vs-ground contrast, `content/palette.ts:59`); speech bubbles run up to 71.5px off the left edge; the +XP flight chip is 15×13px at 2.08:1 contrast and lands on the numerals; cooldown counter at 2.26:1; onboarding Skip overlaps the sound toggle; upgrade-card title runs under its close button; the bottom 35px of the Keep plot sits permanently behind the Keep strip; no build card names its decoration set; three of five headline DOM factories (`createTopBar`, `createDoorstep`, `createLootRevealModal`) have no tests at all.
+### Round 2G — HUD legibility — ✅ COMPLETE (see the gate log above)
+Resumed and gated 2026-07-30 at 2286 tests. No outstanding blockers.
 
 ### Round 2H — Pip lifecycle — DESIGN ONLY
 Reached: **lifecycle bible ✅ only.** Stopped before any core builder ran.

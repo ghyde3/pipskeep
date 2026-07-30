@@ -302,10 +302,23 @@ const CHIP_LIFETIME_MS = 950;
  * upgrades." (hud-redesign doc §2.8) — the strip's one real `role="status"`
  * text lives on a separate, rarely-updated `<span>` (see N6 in the module
  * doc); THIS is the static, always-current aria-label on the tappable
- * button itself, which changing does not announce anything by itself. */
+ * button itself, which changing does not announce anything by itself.
+ *
+ * IT SAYS WHAT THE SCREEN SAYS, BANKED FORM INCLUDED. `buildXpBarModel`
+ * already fixed the visible numerals — `into` keeps climbing past `span`
+ * while a Ready tier waits to be paid for, so the raw form printed
+ * "460 / 300", which reads as a bug rather than as progress in hand. This
+ * label was left on the raw form, so a browser check at a Ready tier found
+ * the bar showing "100 / 100 · banked" while the button announced "194 of
+ * 100 experience": the identical defect, surviving in the one layer nobody
+ * looks at. A screen-reader user gets the same sentence a sighted one does.
+ */
 export function xpBarAriaLabel(model: XpBarModel): string {
+  const counts = model.ready
+    ? `${formatXpCount(model.span)} of ${formatXpCount(model.span)} experience banked`
+    : `${formatXpCount(model.into)} of ${formatXpCount(model.span)} experience`;
   return (
-    `Keep level ${model.level}, ${formatXpCount(model.into)} of ${formatXpCount(model.span)} experience` +
+    `Keep level ${model.level}, ${counts}` +
     (model.ready ? " — a tier is ready" : "") +
     ". Open Keep upgrades."
   );

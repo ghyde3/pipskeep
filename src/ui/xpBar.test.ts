@@ -262,6 +262,33 @@ describe("xpBarAriaLabel — the strip's real button label (N6/failure 6)", () =
     expect(model.ready).toBe(true);
     expect(xpBarAriaLabel(model)).toContain("a tier is ready");
   });
+
+  /**
+   * Caught in the browser at 375×812, not by any assertion here: at a Ready
+   * tier the bar READ "100 / 100 · banked" while the button ANNOUNCED "194 of
+   * 100 experience". `buildXpBarModel.numerals` had been fixed for the
+   * banked-overflow case; this label had not, so the "reads as a bug" defect
+   * survived intact in the assistive-tech layer. The two must agree.
+   */
+  it("announces the BANKED form while a tier waits, never the raw overflow", () => {
+    const gate = levelXp[1] as number;
+    const model = buildXpBarModel({
+      keepXp: gate + 94,
+      keep: { level: 1, placements: {} },
+    });
+    expect(model.ready).toBe(true);
+    // The overflow is real in the model…
+    expect(model.into).toBeGreaterThan(model.span);
+
+    const label = xpBarAriaLabel(model);
+    // …and must not reach the ear as "194 of 100".
+    expect(label).not.toContain(`${formatXpCount(model.into)} of`);
+    expect(label).toContain(
+      `${formatXpCount(model.span)} of ${formatXpCount(model.span)} experience banked`,
+    );
+    // The visible numerals and the spoken label agree about the span.
+    expect(model.numerals).toContain("banked");
+  });
 });
 
 describe("xpBarNextLabel — the bar always names something to aim at", () => {
