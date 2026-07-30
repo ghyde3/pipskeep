@@ -162,6 +162,178 @@ describe("migrate fixtures", () => {
     expect(withSulker.save.state.pips["pip-1"]?.activity).toBe("sulking");
     expect(withSulker.save.state.pips["pip-2"]?.sulking).toBe(false);
   });
+
+  it("v5 → v6 derives the Album from every pip already owned (bible §11.3)", () => {
+    const result = migrate(loadFixture(5));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const { pipdex, sanctuary } = result.save.state;
+
+    // Nothing could have been retired before this round shipped.
+    expect(sanctuary).toEqual({ pips: {}, order: [] });
+    expect(result.save.state.lastSanctuaryOutcome).toBeNull();
+
+    // The v5 fixture: pip-1 is a grovepip evolved FROM mosspip (shiny
+    // false, evolved.variantId "verdant"); pip-2 is a shiny mosspip
+    // pipling. Both LIVE species are caught; the veteran never loses
+    // credit for either.
+    expect(pipdex.entries["grovepip"]?.caughtAt).not.toBeNull();
+    expect(pipdex.entries["grovepip"]?.caughtCount).toBe(1);
+    // The frozen portrait's genome is the BIRTH genome (mosspip) — a
+    // Pip's genome never changes on evolution.
+    expect(pipdex.entries["grovepip"]?.firstPortrait?.genome.speciesId).toBe(
+      "mosspip",
+    );
+
+    expect(pipdex.entries["mosspip"]?.caughtAt).not.toBeNull();
+    expect(pipdex.entries["mosspip"]?.caughtCount).toBe(1);
+    expect(pipdex.entries["mosspip"]?.shinyCaughtAt).not.toBeNull(); // pip-2's genome.shiny is true
+    // The evolution's gift-variant leaf lands on the BASE (mosspip) page.
+    expect(pipdex.entries["mosspip"]?.variantsCaught["verdant"]).toBe(88000000);
+
+    expect(pipdex.formsCaught).toBe(2);
+
+    // Never backfilled ABOVE the truth: nothing here was ever owned as a
+    // lanternpip, snowpip, etc.
+    expect(pipdex.entries["lanternpip"]?.caughtAt ?? null).toBeNull();
+
+    // Seen-only Field notes: the v5 fixture is at Keep level 2, which
+    // unlocks the Meadow (eggSpecies ["mosspip", "cloudpip"]) among
+    // others — cloudpip is knowable but was never owned.
+    expect(pipdex.entries["cloudpip"]?.seenAt).not.toBeNull();
+    expect(pipdex.entries["cloudpip"]?.caughtAt).toBeNull();
+  });
+
+  /**
+   * ROUND 2C REVIEW: v6 → v7 adds `flair` (docs/retention-bible.md §4.3).
+   * Round 2C shipped 22 `kind: "flair"` milestone rewards with nowhere to
+   * store them and nothing to draw them, so every long-haul target paid
+   * literally nothing. v6 saves already existed by then, hence a version of
+   * its own — and the step has one real job beyond seeding the field.
+   */
+  it("v6 → v7 seeds flair, and re-derives the founder veteran's Album stamp from the milestone they were already granted", () => {
+    // A real v6 blob that predates the field entirely.
+    const v6 = loadFixture(6) as {
+      readonly state: Record<string, unknown>;
+      readonly [k: string]: unknown;
+    };
+    expect(v6.state["flair"], "the v6 fixture must NOT have flair").toBeUndefined();
+    const plain = migrate(v6);
+    expect(plain.ok, "a v6 save without `flair` must still load").toBe(true);
+    if (!plain.ok) return;
+    expect(plain.save.state.flair).toEqual({});
+
+    // A v5 veteran migrating all the way through: the step above grants the
+    // hidden `founder` milestone, whose reward IS `album-founder-stamp`.
+    // Granting the milestone without the flourish would leave the
+    // apology-in-flair as the last place flair still paid nothing.
+    const veteran = migrate(loadFixture(5));
+    expect(veteran.ok).toBe(true);
+    if (!veteran.ok) return;
+    const founderAt = veteran.save.state.milestones.earned["founder"];
+    expect(founderAt, "a v5 save is granted the founder milestone").toBeDefined();
+    expect(veteran.save.state.flair["album-founder-stamp"]).toBe(founderAt);
+  });
+
+  it("v6 → v7 changes NOTHING except adding flair", () => {
+    const v6 = loadFixture(6) as { readonly state: Record<string, unknown> };
+    const result = migrate(v6);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const after = result.save.state as unknown as Record<string, unknown>;
+    for (const [key, value] of Object.entries(v6.state)) {
+      expect(JSON.stringify(after[key]), `state.${key} was altered`).toBe(
+        JSON.stringify(value),
+      );
+    }
+    const added = Object.keys(after).filter((k) => !(k in v6.state));
+    expect(added).toEqual(["flair"]);
+  });
+
+  /**
+   * ROUND 2C INTEGRATE GATE. The round's whole premise is that a returning
+   * player is REWARDED for having shown up before (bible §11.3: the
+   * migration is "a gift, never a reset"). Two obligations follow, and this
+   * test is the one place both are held at once:
+   *
+   *   1. every Pip the player already owns is marked caught in the Album —
+   *      derived generically from `pips`, so it keeps holding when the
+   *      fixture or the species registry changes;
+   *   2. NOTHING the v5 save already contained is dropped, renamed or
+   *      rewritten by the step that adds nine new fields.
+   *
+   * (2) is the half that was missing. A migration that silently loses an
+   * egg, a placement or an rng cursor while adding a shiny new Album is the
+   * exact failure this round must not ship, and "the migration ran without
+   * throwing" does not detect it.
+   */
+  it("v5 → v6 marks every owned Pip caught and loses nothing that was already there", () => {
+    const before = loadFixture(5) as {
+      readonly seed: number;
+      readonly savedAt: number;
+      readonly state: Record<string, unknown>;
+    };
+    const result = migrate(before);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const after = result.save.state as unknown as Record<string, unknown>;
+    const pipdex = result.save.state.pipdex;
+
+    // --- (1) Every owned Pip's LIVE species is caught, generically ---
+    const ownedPips = Object.values(result.save.state.pips);
+    expect(ownedPips.length).toBeGreaterThan(0);
+    for (const pip of ownedPips) {
+      const entry = pipdex.entries[pip.speciesId];
+      expect(entry, `${pip.name} (${pip.speciesId}) has no Album page`).toBeDefined();
+      expect(
+        entry?.caughtAt,
+        `${pip.name} is owned but ${pip.speciesId} is not marked caught`,
+      ).not.toBeNull();
+      // A frozen first portrait exists for anything caught (bible §1.4) —
+      // the Album must be able to DRAW the page, not just count it.
+      expect(entry?.firstPortrait, `${pip.speciesId} has no frozen portrait`).not.toBeNull();
+    }
+    // The completion counter agrees with the entries (no double-count, no
+    // undercount) for the distinct live species owned.
+    const distinctOwned = new Set(ownedPips.map((p) => p.speciesId));
+    expect(pipdex.formsCaught).toBe(distinctOwned.size);
+
+    // --- (2) No lost data: every pre-round field survives untouched ---
+    // Deep-equality per field, driven by the FIXTURE's own key list, so a
+    // future field added to v5 is covered automatically rather than needing
+    // this list to be maintained by hand. `lastCatchup` is the one honest
+    // exception: it is a transient echo that LOAD_SAVE nulls by contract.
+    const transient = new Set(["lastCatchup"]);
+    for (const key of Object.keys(before.state)) {
+      if (transient.has(key)) continue;
+      expect(after[key], `state.${key} was changed or dropped by the migration`).toEqual(
+        before.state[key],
+      );
+    }
+    // Envelope, too: the seed decides the whole RNG universe, and savedAt
+    // is what CATCHUP measures the absence from.
+    expect(result.save.seed).toBe(before.seed);
+    expect(result.save.savedAt).toBe(before.savedAt);
+
+    // Every Pip is still present, by id, with its needs and age intact —
+    // spelled out because "no Pip is ever lost" is a §4.4 tone rule, not
+    // merely a data-integrity nicety.
+    const beforePips = before.state["pips"] as Record<string, { needs: unknown; ageMs: number }>;
+    expect(Object.keys(result.save.state.pips).sort()).toEqual(
+      Object.keys(beforePips).sort(),
+    );
+    for (const [id, pip] of Object.entries(result.save.state.pips)) {
+      expect(pip.needs).toEqual(beforePips[id]?.needs);
+      expect(pip.ageMs).toBe(beforePips[id]?.ageMs);
+    }
+
+    // And the gift half of "a gift, never a reset": the hidden founder
+    // milestone is granted, and the streak arrives with FULL grace rather
+    // than mid-punishment (bible §11.1).
+    expect(result.save.state.milestones.earned["founder"]).toBeDefined();
+    expect(result.save.state.streak.current).toBe(0);
+    expect(result.save.state.streak.graceBanked).toBeGreaterThan(0);
+  });
 });
 
 describe("migrate error handling", () => {

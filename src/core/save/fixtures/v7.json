@@ -1,0 +1,416 @@
+{
+  "schemaVersion": 7,
+  "seed": 1337,
+  "savedAt": 90000000,
+  "state": {
+    "pips": {
+      "pip-1": {
+        "id": "pip-1",
+        "speciesId": "grovepip",
+        "name": "Mosspip",
+        "genome": {
+          "speciesId": "mosspip",
+          "palette": "fern",
+          "pattern": "plain",
+          "accessorySlots": 1,
+          "personalityId": "curious",
+          "shiny": false
+        },
+        "personalityId": "curious",
+        "lifeStage": "adult",
+        "hatchedAt": 0,
+        "ageMs": 90000000,
+        "happinessIntegral": 6300000000,
+        "needs": {
+          "hunger": 52.5,
+          "cleanliness": 71,
+          "happiness": 64.25,
+          "energy": 88
+        },
+        "activity": "onExpedition",
+        "pendingSulk": false,
+        "sulking": false,
+        "readyToEvolve": false,
+        "evolved": {
+          "variantId": "verdant",
+          "evolvedAt": 88000000
+        },
+        "lastGiftItemId": "shiny-pebble",
+        "expedition": {
+          "expeditionId": "mossy-hollow",
+          "departedAt": 89400000,
+          "durationMs": 1800000
+        },
+        "needsUpdatedAt": 90000000
+      },
+      "pip-2": {
+        "id": "pip-2",
+        "speciesId": "mosspip",
+        "name": "Sprout",
+        "genome": {
+          "speciesId": "mosspip",
+          "palette": "moss",
+          "pattern": "speckled",
+          "accessorySlots": 1,
+          "personalityId": "clingy",
+          "shiny": true
+        },
+        "personalityId": "clingy",
+        "lifeStage": "pipling",
+        "hatchedAt": 82800000,
+        "ageMs": 7200000,
+        "happinessIntegral": 216000000,
+        "needs": {
+          "hunger": 42,
+          "cleanliness": 40,
+          "happiness": 30,
+          "energy": 33
+        },
+        "activity": "assignedJob",
+        "pendingSulk": false,
+        "sulking": false,
+        "readyToEvolve": false,
+        "evolved": null,
+        "lastGiftItemId": null,
+        "expedition": null,
+        "needsUpdatedAt": 90000000
+      }
+    },
+    "rosterOrder": [
+      "pip-1",
+      "pip-2"
+    ],
+    "activePipId": "pip-1",
+    "inventory": {
+      "berry": 2,
+      "stew": 1
+    },
+    "resources": {
+      "moss": 5,
+      "pebble": 12,
+      "wood": 9,
+      "fiber": 4
+    },
+    "rngState": {
+      "genesis": 305419896,
+      "dialogue": 2596069104,
+      "quirks": 4041261184,
+      "mood-display": 19088743,
+      "job": 1122867
+    },
+    "seed": 1337,
+    "keep": {
+      "level": 2,
+      "placements": {
+        "place-1": {
+          "itemId": "gathering-station",
+          "x": 2,
+          "y": 3
+        },
+        "place-2": {
+          "itemId": "cozy-lantern",
+          "x": 0,
+          "y": 0
+        }
+      }
+    },
+    "jobs": {
+      "pip-2": {
+        "jobId": "gathering",
+        "stationPlacementId": "place-1",
+        "assignedAt": 88800000,
+        "lastProducedAt": 90000000
+      }
+    },
+    "rosterUpgradePurchased": false,
+    "cooldowns": {
+      "pip-1": {
+        "clean": 89940000,
+        "pet": 89985000
+      }
+    },
+    "lastLineIndex": {
+      "pip-1": {
+        "content": 1,
+        "refusal": 0
+      },
+      "pip-2": {
+        "sulking": 2
+      }
+    },
+    "createdAt": 0,
+    "lastTickAt": 90000000,
+    "lastCareOutcome": {
+      "action": "pet",
+      "pipId": "pip-1",
+      "at": 89985000,
+      "applied": true,
+      "dialogueContext": "content",
+      "lineId": "curious/content/1",
+      "line": "placeholder"
+    },
+    "lastCatchup": null,
+    "eggs": [
+      {
+        "id": "egg-1",
+        "state": "incubating",
+        "foundAt": 86400000,
+        "rarity": "common",
+        "incubationMs": 7200000,
+        "incubationStartedAt": 86460000,
+        "sourceExpeditionId": "forest"
+      },
+      {
+        "id": "egg-2",
+        "state": "pipping",
+        "foundAt": 80000000,
+        "rarity": "common",
+        "incubationMs": 7200000,
+        "incubationStartedAt": 80100000,
+        "sourceExpeditionId": null
+      }
+    ],
+    "pendingReveals": [
+      {
+        "pipId": "pip-2",
+        "expeditionId": "meadow",
+        "completedAt": 89000000,
+        "items": [
+          "berry",
+          "fiber",
+          "berry"
+        ],
+        "egg": {
+          "id": "egg-3",
+          "state": "found",
+          "foundAt": 89000000,
+          "rarity": "common",
+          "incubationMs": 7200000,
+          "incubationStartedAt": null,
+          "sourceExpeditionId": "meadow"
+        }
+      }
+    ],
+    "nextPipNumber": 10,
+    "nextEggNumber": 4,
+    "nextPlacementNumber": 3,
+    "lastAssignOutcome": null,
+    "lastHatchOutcome": null,
+    "lastJobOutcome": null,
+    "lastEvolveOutcome": null,
+    "onboarding": {
+      "completed": true,
+      "step": "done"
+    },
+    "pipdex": {
+      "entries": {
+        "mosspip": {
+          "speciesId": "mosspip",
+          "seenAt": 0,
+          "caughtAt": 0,
+          "caughtCount": 2,
+          "firstPortrait": {
+            "pipId": "pip-1",
+            "name": "Mosspip",
+            "genome": {
+              "speciesId": "mosspip",
+              "palette": "fern",
+              "pattern": "plain",
+              "accessorySlots": 1,
+              "personalityId": "curious",
+              "shiny": false
+            },
+            "personalityId": "curious",
+            "lifeStageAtCatch": "adult",
+            "sourceExpeditionId": null
+          },
+          "shinyCaughtAt": 82800000,
+          "variantsCaught": {
+            "verdant": 88000000
+          },
+          "knownBiomes": [
+            "meadow",
+            "bramblewick",
+            "forest"
+          ]
+        },
+        "grovepip": {
+          "speciesId": "grovepip",
+          "seenAt": null,
+          "caughtAt": 88000000,
+          "caughtCount": 1,
+          "firstPortrait": {
+            "pipId": "pip-1",
+            "name": "Mosspip",
+            "genome": {
+              "speciesId": "mosspip",
+              "palette": "fern",
+              "pattern": "plain",
+              "accessorySlots": 1,
+              "personalityId": "curious",
+              "shiny": false
+            },
+            "personalityId": "curious",
+            "lifeStageAtCatch": "adult",
+            "sourceExpeditionId": null
+          },
+          "shinyCaughtAt": null,
+          "variantsCaught": {},
+          "knownBiomes": []
+        },
+        "cloudpip": {
+          "speciesId": "cloudpip",
+          "seenAt": 90000000,
+          "caughtAt": null,
+          "caughtCount": 0,
+          "firstPortrait": null,
+          "shinyCaughtAt": null,
+          "variantsCaught": {},
+          "knownBiomes": [
+            "meadow",
+            "snowdrift"
+          ]
+        },
+        "pebblepip": {
+          "speciesId": "pebblepip",
+          "seenAt": 90000000,
+          "caughtAt": null,
+          "caughtCount": 0,
+          "firstPortrait": null,
+          "shinyCaughtAt": null,
+          "variantsCaught": {},
+          "knownBiomes": [
+            "bramblewick",
+            "forest"
+          ]
+        }
+      },
+      "discoveryOrder": [
+        "mosspip",
+        "grovepip",
+        "cloudpip",
+        "pebblepip"
+      ],
+      "formsSeen": 3,
+      "formsCaught": 2,
+      "variantsCaught": 1,
+      "shiniesCaught": 1,
+      "unreadEntryIds": []
+    },
+    "sanctuary": {
+      "pips": {
+        "pip-9": {
+          "pip": {
+            "id": "pip-9",
+            "speciesId": "tidepip",
+            "name": "Old Friend",
+            "genome": {
+              "speciesId": "tidepip",
+              "palette": "cockle",
+              "pattern": "ripple",
+              "accessorySlots": 1,
+              "personalityId": "lazy",
+              "shiny": false
+            },
+            "personalityId": "lazy",
+            "lifeStage": "adult",
+            "hatchedAt": 1000000,
+            "ageMs": 8000000,
+            "happinessIntegral": 560000000,
+            "needs": {
+              "hunger": 80,
+              "cleanliness": 80,
+              "happiness": 80,
+              "energy": 100
+            },
+            "activity": "idle",
+            "pendingSulk": false,
+            "sulking": false,
+            "readyToEvolve": false,
+            "evolved": null,
+            "lastGiftItemId": null,
+            "expedition": null,
+            "needsUpdatedAt": 60000000
+          },
+          "retiredAt": 60000000,
+          "retiredFromKeepLevel": 2,
+          "visits": 0
+        }
+      },
+      "order": [
+        "pip-9"
+      ]
+    },
+    "lastSanctuaryOutcome": null,
+    "streak": {
+      "current": 4,
+      "longest": 9,
+      "lastVisitDay": 12,
+      "totalVisitDays": 15,
+      "graceBanked": 1,
+      "graceRefilledOnDay": 5,
+      "rainDays": 2,
+      "rewardedForDay": 4,
+      "pendingChoices": [
+        {
+          "kind": "keepsake",
+          "offers": [
+            "welcome-sign",
+            "moss-tuft",
+            "wind-chime"
+          ],
+          "forDay": 5
+        }
+      ]
+    },
+    "dayOffsetMs": 14400000,
+    "counters": {
+      "feeds": 12,
+      "careActions": 30,
+      "expeditionsTotal": 5,
+      "expeditions.meadow": 3
+    },
+    "milestones": {
+      "earned": {
+        "first-feed": 100000
+      },
+      "pendingCelebrations": [
+        "first-trip-home"
+      ]
+    },
+    "bounties": {
+      "day": 3,
+      "slots": [
+        {
+          "templateId": "hand-out-snacks",
+          "slot": 0,
+          "target": 4,
+          "progress": 2,
+          "completedAt": null,
+          "rerolled": false,
+          "params": {},
+          "stale": false
+        }
+      ],
+      "rerollsUsed": 1,
+      "dayBonusGranted": false
+    },
+    "eggPity": {
+      "meadow": 3,
+      "lanterngrotto": 5
+    },
+    "activeEvents": [
+      "berry-glut"
+    ],
+    "keepsakes": {
+      "moss-tuft": 1
+    },
+    "flair": {
+      "album-first-page-ribbon": 1740000000000,
+      "album-curator-stamp": 1740000000001,
+      "album-ledger-frame": 1740000000002,
+      "pip-card-old-friend-title": 1740000000003,
+      "sanctuary-gate-sign": 1740000000004
+    }
+  }
+}

@@ -22,8 +22,13 @@ import {
   formatDurationShort,
   formatGrowUpCountdown,
   lifeStageLabel,
+  masteryBadgeFor,
   personalityBlurb,
+  pityNoteFor,
+  canOfferRetire,
 } from "./focusView";
+import { tripsForTier } from "../core/progression/mastery";
+import { expeditions } from "../content/expeditions";
 
 const needs = (overrides: Partial<PipNeeds> = {}): PipNeeds => ({
   hunger: 80,
@@ -94,6 +99,37 @@ function makeState(
     lastJobOutcome: null,
     lastEvolveOutcome: null,
     onboarding: { completed: true, step: "done" },
+    pipdex: {
+      entries: {},
+      discoveryOrder: [],
+      formsSeen: 0,
+      formsCaught: 0,
+      variantsCaught: 0,
+      shiniesCaught: 0,
+      unreadEntryIds: [],
+    },
+    sanctuary: { pips: {}, order: [] },
+    lastSanctuaryOutcome: null,
+    // ROUND 2C — progression stack defaults (docs/retention-bible.md).
+    streak: {
+      current: 0,
+      longest: 0,
+      lastVisitDay: null,
+      totalVisitDays: 0,
+      graceBanked: 2,
+      graceRefilledOnDay: null,
+      rainDays: 0,
+      rewardedForDay: null,
+      pendingChoices: [],
+    },
+    dayOffsetMs: 0,
+    counters: {},
+    milestones: { earned: {}, pendingCelebrations: [] },
+    bounties: { day: null, slots: [], rerollsUsed: 0, dayBonusGranted: false },
+    eggPity: {},
+    activeEvents: [],
+    keepsakes: {},
+    flair: {},
     ...overrides,
   };
 }
@@ -360,5 +396,143 @@ describe("buildFocusModel — the whole panel model", () => {
 
   it("returns null for an unknown pip instead of crashing", () => {
     expect(buildFocusModel(makeState(), "pip-99", 0)).toBeNull();
+  });
+
+  /** ROUND-2C REVIEW FIX: `pip-card-old-friend-title` /
+   * `pip-card-well-travelled-title` were `kind: "flair"` milestone rewards
+   * (mastery tier 5 in one biome, tier 3 in all six) that granted and drew
+   * nothing at all. Bible §4.3 asks for "a title on a Pip's card". */
+  it("carries earned flair TITLES, and none at all on a fresh save", () => {
+    expect(buildFocusModel(makeState(), "pip-1", 0)?.flairTitles).toEqual([]);
+
+    const titled = buildFocusModel(
+      { ...makeState(), flair: { "pip-card-old-friend-title": 5, "album-curator-stamp": 6 } },
+      "pip-1",
+      0,
+    );
+    expect(titled?.flairTitles.join(" ")).toContain("Old Friend of the Trail");
+    // Album flair does NOT leak onto a Pip's card.
+    expect(titled?.flairTitles.join(" ")).not.toContain("Curator");
+  });
+});
+
+describe("masteryBadgeFor — a subtle rank, never a numbers dump (bible §6.3)", () => {
+  it("is null below tier 1", () => {
+    const pip = makePip(); // no mastery at all
+    expect(masteryBadgeFor(pip, "meadow")).toBeNull();
+  });
+
+  it("shows filled/hollow pips plus the tier title once tier 1 is reached", () => {
+    const meadowDurationMs = expeditions.meadow.durationMs;
+    const tripsNeeded = tripsForTier(1, meadowDurationMs, tuning);
+    const pip = makePip({ mastery: { meadow: tripsNeeded } });
+    const badge = masteryBadgeFor(pip, "meadow");
+    expect(badge).not.toBeNull();
+    expect(badge).toContain("●");
+    expect(badge).toMatch(/knows the path/i);
+  });
+
+  it("never appears for a raw trip count on an unrelated biome", () => {
+    const pip = makePip({ mastery: { forest: 999 } });
+    expect(masteryBadgeFor(pip, "meadow")).toBeNull();
+  });
+
+  it("flows through buildExpeditionRow untouched for the other six existing fields", () => {
+    const state = makeState();
+    const meadow = row(state, "meadow");
+    expect(meadow.masteryBadge).toBeNull();
+    expect(meadow.status).toBe("available"); // existing field, unaffected
+  });
+});
+
+describe("pityNoteFor — visible, always, phrased as encouragement (bible §7)", () => {
+  it("is null for a common-only pool (Bramblewick has nothing rarer to chase)", () => {
+    const state = makeState({ keep: { level: 2, placements: {} } });
+    expect(pityNoteFor(state, "bramblewick")).toBeNull();
+  });
+
+  it("shows the counter/threshold for an uncommon pool, unhidden", () => {
+    const state = makeState({ eggPity: { meadow: 3 } });
+    const note = pityNoteFor(state, "meadow");
+    expect(note).toContain("3/");
+    expect(note).toMatch(/cloudpip/i); // meadow's only uncommon species
+  });
+
+  it("encourages without a bare countdown once the guarantee is close", () => {
+    const threshold = tuning.retention.eggPity.thresholdByRarity["uncommon"] as number;
+    const state = makeState({ eggPity: { meadow: threshold } });
+    expect(pityNoteFor(state, "meadow")).toMatch(/guaranteed/i);
+  });
+
+  it("flows through buildExpeditionRow's meadow row", () => {
+    const state = makeState({ eggPity: { meadow: 1 } });
+    expect(row(state, "meadow").pityNote).toMatch(/1\//);
+  });
+
+  it("picks 'an' before a vowel-leading species name (Forest's Emberpip)", () => {
+    const state = makeState({ keep: { level: 2, placements: {} } });
+    expect(pityNoteFor(state, "forest")).toContain("an Emberpip");
+  });
+
+  it("names both tied rarest-tier species on a pool with no single rarest (Snowdrift)", () => {
+    const state = makeState({ keep: { level: 2, placements: {} } });
+    const note = pityNoteFor(state, "snowdrift");
+    expect(note).toMatch(/snowpip or cloudpip/i);
+  });
+});
+
+/**
+ * The Long Meadow door (round 2C, docs/retention-bible.md §2.3). The focus
+ * view draws "Send to the Long Meadow" only when core says the tap can
+ * actually succeed — see `canOfferRetire`'s doc comment for why offering a
+ * button that can only apologise is the worse design.
+ */
+describe("canOfferRetire — the focus view's Long Meadow door", () => {
+  function twoPipState(overrides: Partial<PipState> = {}): GameState {
+    const a = makePip({ id: "pip-1", ...overrides });
+    const b = makePip({ id: "pip-2" });
+    return makeState({
+      pip: a,
+      pips: { "pip-1": a, "pip-2": b },
+      rosterOrder: ["pip-1", "pip-2"],
+    } as Partial<GameState> & { pip?: PipState });
+  }
+
+  it("is false for the last Pip — the Keep is never left empty", () => {
+    const state = makeState();
+    expect(state.rosterOrder).toHaveLength(1);
+    expect(canOfferRetire(state, state.activePipId)).toBe(false);
+  });
+
+  it("is true for an ordinary Idle Pip once there is someone to hold the fort", () => {
+    expect(canOfferRetire(twoPipState(), "pip-1")).toBe(true);
+  });
+
+  it("is TRUE for a Sulking Pip — a change of scene, never disposal (bible §2.3)", () => {
+    const state = twoPipState({ activity: PipActivity.Sulking, sulking: true });
+    expect(canOfferRetire(state, "pip-1")).toBe(true);
+  });
+
+  it("is true for a Resting Pip and one on a job (they travel fine)", () => {
+    expect(canOfferRetire(twoPipState({ activity: PipActivity.Resting }), "pip-1")).toBe(
+      true,
+    );
+    expect(
+      canOfferRetire(twoPipState({ activity: PipActivity.AssignedJob }), "pip-1"),
+    ).toBe(true);
+  });
+
+  it("is false while loot is in flight, so no reveal is ever stranded", () => {
+    for (const activity of [PipActivity.OnExpedition, PipActivity.Returning]) {
+      const state = twoPipState({
+        activity,
+        expedition: { expeditionId: "meadow", departedAt: 0, durationMs: 300_000 },
+      });
+      expect(canOfferRetire(state, "pip-1"), activity).toBe(false);
+    }
+  });
+
+  it("is false for an id that is not in the roster (defensive)", () => {
+    expect(canOfferRetire(twoPipState(), "pip-nobody")).toBe(false);
   });
 });

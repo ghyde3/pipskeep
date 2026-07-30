@@ -1,0 +1,468 @@
+/**
+ * Dailies (docs/retention-bible.md §3/§4/§5): the floating entry button
+ * and the browsable streak/bounties/milestones sheet. Own stylesheet, own
+ * class prefix (`pk-daily-*`) — edits nothing in ui.css or modals.css,
+ * same self-containment rule soundToggle.css follows.
+ *
+ * z-index 5 for the entry button mirrors soundToggle.css's note: above the
+ * world, under every sheet/modal so an open surface always wins. The sheet
+ * itself uses 21 — one above the existing `.pk-sheet-wrap`'s 20 so the
+ * (rare) case of both being present resolves predictably, though in
+ * practice only one bottom sheet is ever open at a time.
+ */
+
+.pk-daily-entry {
+  pointer-events: auto;
+  position: absolute;
+  left: 12px;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 178px);
+  z-index: 5;
+
+  appearance: none;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px solid rgba(95, 138, 94, 0.25);
+  border-radius: 50%;
+  background: rgba(255, 253, 246, 0.94);
+  color: #b1782a;
+  cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  box-shadow: 0 3px 10px rgba(61, 74, 61, 0.18);
+  transition: transform 90ms ease;
+}
+
+.pk-daily-entry:active {
+  transform: scale(0.92);
+}
+
+.pk-daily-entry:focus-visible {
+  outline: 3px solid #7cc283;
+  outline-offset: 2px;
+}
+
+.pk-daily-entry-icon {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.pk-daily-entry-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: #f27d9d;
+  color: #fffdf6;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 16px;
+  text-align: center;
+  opacity: 0;
+  transform: scale(0.6);
+  transition:
+    opacity 160ms ease,
+    transform 160ms ease;
+}
+
+.pk-daily-entry-badge--on {
+  opacity: 1;
+  transform: scale(1);
+}
+
+/* ---------- The sheet ---------- */
+
+.pk-daily-wrap {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  visibility: hidden;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, sans-serif;
+  color: #3d4a3d;
+}
+
+.pk-daily-wrap--open {
+  visibility: visible;
+  z-index: 21;
+}
+
+.pk-daily-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(61, 74, 61, 0.25);
+  opacity: 0;
+  transition: opacity 220ms ease;
+}
+
+.pk-daily-wrap--open .pk-daily-backdrop {
+  pointer-events: auto;
+  opacity: 1;
+}
+
+.pk-daily-sheet {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  max-height: 72vh;
+  overflow-y: auto;
+  background: #fffdf6;
+  border-radius: 22px 22px 0 0;
+  box-shadow: 0 -6px 24px rgba(61, 74, 61, 0.18);
+  padding: 8px 14px calc(env(safe-area-inset-bottom, 0px) + 16px);
+  transform: translateY(105%);
+  transition: transform 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.pk-daily-wrap--open .pk-daily-sheet {
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.pk-daily-handle {
+  width: 40px;
+  height: 4.5px;
+  border-radius: 3px;
+  background: rgba(95, 138, 94, 0.3);
+  margin: 4px auto 8px;
+}
+
+.pk-daily-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.pk-daily-tab {
+  flex: 1;
+  appearance: none;
+  border: 1.5px solid rgba(95, 138, 94, 0.25);
+  border-radius: 12px;
+  background: #ffffff;
+  color: #3d4a3d;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 700;
+  padding: 8px 4px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.pk-daily-tab--active {
+  background: #7cc283;
+  border-color: #5f8a5e;
+  color: #fffdf6;
+}
+
+.pk-daily-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 120px;
+}
+
+.pk-daily-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pk-daily-headline {
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.pk-daily-streak-stats {
+  display: flex;
+  gap: 8px;
+}
+
+.pk-daily-stat {
+  flex: 1;
+  background: rgba(95, 138, 94, 0.08);
+  border-radius: 12px;
+  padding: 8px 6px;
+  text-align: center;
+}
+
+.pk-daily-stat-value {
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.pk-daily-stat-label {
+  font-size: 10.5px;
+  opacity: 0.65;
+  margin-top: 1px;
+}
+
+.pk-daily-note {
+  font-size: 12.5px;
+  opacity: 0.75;
+  line-height: 1.4;
+}
+
+.pk-daily-reward-line {
+  font-size: 13px;
+  font-weight: 700;
+  background: rgba(246, 183, 60, 0.16);
+  color: #9c6f2e;
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+
+.pk-daily-choice {
+  background: rgba(95, 138, 94, 0.08);
+  border-radius: 14px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pk-daily-choice-title {
+  font-size: 13.5px;
+  font-weight: 800;
+}
+
+.pk-daily-choice-offers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.pk-daily-choice-btn,
+.pk-daily-reroll {
+  appearance: none;
+  border: 1.5px solid rgba(95, 138, 94, 0.3);
+  border-radius: 10px;
+  background: #ffffff;
+  color: #3d4a3d;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 7px 10px;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.pk-daily-track {
+  height: 8px;
+  border-radius: 5px;
+  background: rgba(95, 138, 94, 0.15);
+  overflow: hidden;
+}
+
+.pk-daily-fill {
+  height: 100%;
+  border-radius: 5px;
+  background: #7cc283;
+  transition: width 260ms ease;
+}
+
+.pk-daily-bounty,
+.pk-daily-milestone {
+  background: #ffffff;
+  border: 1.5px solid rgba(95, 138, 94, 0.18);
+  border-radius: 14px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.pk-daily-bounty--done {
+  border-color: rgba(124, 194, 131, 0.55);
+  background: rgba(124, 194, 131, 0.08);
+}
+
+.pk-daily-bounty--stale {
+  opacity: 0.6;
+}
+
+.pk-daily-milestone--earned {
+  border-color: rgba(124, 194, 131, 0.55);
+  background: rgba(124, 194, 131, 0.08);
+}
+
+.pk-daily-milestone--locked {
+  opacity: 0.75;
+}
+
+.pk-daily-bounty-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.pk-daily-bounty-name {
+  font-size: 13.5px;
+  font-weight: 800;
+}
+
+.pk-daily-bounty-check {
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+}
+
+.pk-daily-bounty-reward {
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+/* ---------- The Doorstep (docs/retention-bible.md §10) ----------
+ * Same visual language as modals.css's away sheet (cream card, soft-green
+ * border, springy pop) — a deliberately close cousin, since this IS that
+ * sheet, extended with two new sections (bible §10.4). z-index matches
+ * `.pk-away`'s 2-inside-`.pk-phase4` convention when mounted there by the
+ * integrator; mounted standalone (as in this round's own verification) it
+ * simply needs to sit above the world, hence 30 here. */
+
+.pk-doorstep {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  visibility: hidden;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, sans-serif;
+  color: #3d4a3d;
+}
+
+.pk-doorstep--open {
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.pk-doorstep-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(61, 74, 61, 0.4);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+  opacity: 0;
+  transition: opacity 240ms ease;
+}
+
+.pk-doorstep--open .pk-doorstep-backdrop {
+  opacity: 1;
+}
+
+.pk-doorstep-card {
+  position: relative;
+  /* border-box + max-width: this project has no global box-sizing reset,
+     so with content-box the horizontal padding and border are ADDED to
+     the vw width and the page scrolls sideways at 375px (measured on
+     .pk-pipdex during the round-2C browser smoke). Guarded by
+     src/ui/layers.test.ts. */
+  box-sizing: border-box;
+  width: min(420px, 94vw);
+  max-width: 100%;
+  max-height: 84vh;
+  overflow-y: auto;
+  background: #fffdf6;
+  border: 1.5px solid rgba(95, 138, 94, 0.25);
+  border-radius: 22px;
+  box-shadow: 0 12px 40px rgba(61, 74, 61, 0.3);
+  padding: 22px 20px calc(env(safe-area-inset-bottom, 0px) + 20px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transform: translateY(20px) scale(0.94);
+  opacity: 0;
+  transition:
+    transform 340ms cubic-bezier(0.34, 1.56, 0.64, 1),
+    opacity 220ms ease;
+}
+
+.pk-doorstep--open .pk-doorstep-card {
+  transform: translateY(0) scale(1);
+  opacity: 1;
+}
+
+.pk-doorstep-title {
+  font-size: 20px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.pk-doorstep-elapsed {
+  font-size: 13px;
+  text-align: center;
+  opacity: 0.7;
+  margin-top: -4px;
+}
+
+.pk-doorstep-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 4px;
+}
+
+.pk-doorstep-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pk-doorstep-heading {
+  font-size: 11.5px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.55;
+}
+
+.pk-doorstep-line {
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.pk-doorstep-nudge {
+  background: rgba(246, 183, 60, 0.16);
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+
+.pk-doorstep-nudge .pk-doorstep-line {
+  font-weight: 700;
+  color: #9c6f2e;
+}
+
+.pk-doorstep-dismiss {
+  appearance: none;
+  border: none;
+  border-radius: 14px;
+  min-height: 46px;
+  margin-top: 6px;
+  padding: 12px 16px;
+  background: #7cc283;
+  color: #fffdf6;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 800;
+  cursor: pointer;
+  touch-action: manipulation;
+  box-shadow: 0 2px 0 rgba(61, 107, 68, 0.4);
+  transition: transform 90ms ease;
+}
+
+.pk-doorstep-dismiss:active {
+  transform: scale(0.97);
+}

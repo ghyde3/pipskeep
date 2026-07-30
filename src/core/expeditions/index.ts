@@ -102,6 +102,39 @@ export interface ExpeditionContent {
   readonly registry?: ExpeditionRegistryView;
   readonly tuning?: ExpeditionTuning;
   readonly pools?: DialoguePoolsView;
+  /**
+   * ROUND 2C (docs/retention-bible.md §9) — the already-composed,
+   * already-clamped extra loot-bonus roll chance for THIS ONE trip
+   * (mastery + streak + event, via `core/progression/multipliers.ts`'s
+   * `effectiveLootBonusChance`), passed straight through to
+   * `rollExpeditionLoot`'s 5th parameter. Omitted (`undefined`) preserves
+   * the pre-round-2C fallback exactly (see that function's doc comment).
+   * Used by `settleExpeditionReturn`'s single-trip call site.
+   */
+  readonly effectiveLootBonusChance?: number;
+  /**
+   * The per-pip variant `processDueExpeditionReturns` needs (it may settle
+   * SEVERAL different pips' trips in one call): given the returning
+   * PipState and the expedition id, return that trip's already-composed
+   * bonus chance. Takes precedence over `effectiveLootBonusChance` at that
+   * call site; omitted preserves old behaviour exactly.
+   */
+  readonly resolveLootBonusChance?: (pip: PipState, expeditionId: string) => number;
+  /**
+   * ROUND 2C (docs/retention-bible.md §6.3/§8.4) — the already-composed,
+   * already-clamped-and-ceilinged egg chance for THIS ONE trip (the
+   * biome's base `eggChance` plus mastery's top-tier bonus points plus any
+   * active event's, via `core/progression/multipliers.ts`'s
+   * `applyEggChanceBonus(effectiveEggChanceBonusPoints(...))`). Omitted
+   * (`undefined`) uses `expedition.eggChance` verbatim — the pre-round-2C
+   * behaviour, byte-identical (the egg roll is ONE `stream.chance` call
+   * whatever the probability, so cursor parity is free).
+   */
+  readonly effectiveEggChance?: number;
+  /** The per-pip variant `processDueExpeditionReturns` needs, exactly like
+   * `resolveLootBonusChance` — it may settle several pips' trips in one
+   * call, each with its own mastery. */
+  readonly resolveEggChance?: (pip: PipState, expeditionId: string) => number;
 }
 
 /**
@@ -381,27 +414,59 @@ export interface LootRoll {
 
 /**
  * Roll one completed trip's loot from the given stream, per the module
- * doc's RNG contract (base rolls with Curious bonus rolls interleaved,
+ * doc's RNG contract (base rolls with a bonus-chance roll interleaved,
  * then the egg-chance roll). Empty loot table → no items (defensive;
  * content validation forbids it), egg roll still consumed.
+ *
+ * ROUND 2C (docs/retention-bible.md §9.2) — the bonus-roll chance
+ * generalises from "iff Curious" to "iff the EFFECTIVE chance > 0", where
+ * effective = Curious's own +10% PLUS mastery/streak/event bonuses,
+ * summed-then-clamped by `core/progression/multipliers.ts`. `effectiveBonusChance`
+ * is that already-composed, already-clamped number:
+ *
+ * - OMITTED (`undefined`): falls back to the pre-round-2C formula —
+ *   `curious ? tuning.quirks.curiousLootBonus : 0` — so every existing
+ *   call site (this module's own `processDueExpeditionReturns`/
+ *   `settleExpeditionReturn` when their `content.effectiveLootBonusChance`
+ *   is unset, and every test that calls this function directly) consumes
+ *   BYTE-IDENTICAL rolls to before this round. This is the load-bearing
+ *   compatibility contract — do not change the fallback.
+ * - PROVIDED: used DIRECTLY as the per-base-roll bonus chance, replacing
+ *   (not adding to) the internal Curious-only calculation — the caller is
+ *   expected to have already folded Curious's own contribution into the
+ *   sum via `effectiveLootBonusChance({ curious, ... }, tuning)`, so a
+ *   fresh save with no mastery/streak/event and a non-Curious pip still
+ *   passes `0`, and a Curious one with nothing else active still passes
+ *   exactly `tuning.quirks.curiousLootBonus` — identical to the fallback
+ *   path either way.
+ *
+ * `effectiveEggChance` is the same story for the EGG roll (bible §6.3's
+ * mastery-top-tier bonus and §8.4's event bonus, summed/clamped/ceilinged
+ * by `multipliers.ts` before it gets here): omitted uses
+ * `expedition.eggChance` verbatim. Either way the egg roll is exactly ONE
+ * `stream.chance` call, so this cannot shift a single cursor byte.
  */
 export function rollExpeditionLoot(
   stream: RngStream,
   expedition: ExpeditionView,
   personalityId: string,
   tuning: ExpeditionTuning = contentTuning,
+  effectiveBonusChance?: number,
+  effectiveEggChance?: number,
 ): LootRoll {
   const items: string[] = [];
   const curious = personalityId === CURIOUS_PERSONALITY_ID;
+  const bonusChance =
+    effectiveBonusChance ?? (curious ? tuning.quirks.curiousLootBonus : 0);
   if (expedition.lootTable.length > 0) {
     for (let i = 0; i < expedition.lootRolls; i++) {
       items.push(pickWeighted(stream, expedition.lootTable));
-      if (curious && stream.chance(tuning.quirks.curiousLootBonus)) {
+      if (bonusChance > 0 && stream.chance(bonusChance)) {
         items.push(pickWeighted(stream, expedition.lootTable));
       }
     }
   }
-  const eggFound = stream.chance(expedition.eggChance);
+  const eggFound = stream.chance(effectiveEggChance ?? expedition.eggChance);
   return { items, eggFound };
 }
 
@@ -447,6 +512,8 @@ export function settleExpeditionReturn<S extends ExpeditionStateSlice>(
     def,
     pip?.personalityId ?? "",
     tuning,
+    content.effectiveLootBonusChance,
+    content.effectiveEggChance,
   );
 
   const egg = loot.eggFound
@@ -520,12 +587,35 @@ export function processDueExpeditionReturns<S extends ExpeditionStateSlice>(
       ...next,
       pips: { ...next.pips, [entry.pipId]: returning.pip },
     };
+    // ROUND 2C: resolve THIS pip's already-composed bonus chances (if the
+    // caller supplied resolvers) into the flat fields
+    // settleExpeditionReturn reads — omitted resolvers preserve old
+    // behaviour exactly.
+    let perTripContent: ExpeditionContent = content;
+    if (content.resolveLootBonusChance !== undefined) {
+      perTripContent = {
+        ...perTripContent,
+        effectiveLootBonusChance: content.resolveLootBonusChance(
+          pip,
+          entry.expedition.expeditionId,
+        ),
+      };
+    }
+    if (content.resolveEggChance !== undefined) {
+      perTripContent = {
+        ...perTripContent,
+        effectiveEggChance: content.resolveEggChance(
+          pip,
+          entry.expedition.expeditionId,
+        ),
+      };
+    }
     next = settleExpeditionReturn(
       next,
       entry.pipId,
       entry.expedition,
       entry.returnAt,
-      content,
+      perTripContent,
     );
   }
   return next;

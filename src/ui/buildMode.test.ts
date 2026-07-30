@@ -105,9 +105,8 @@ describe("rearrange rows — placements + who works there (spec §6.2)", () => {
       type: "PLACE_ITEM",
       itemId: "gathering-station",
       x: 1,
-      y: 1,
-    });
-    state = rootReducer(state, { type: "PLACE_ITEM", itemId: "moss-tuft", x: 6, y: 6 });
+      y: 1, at: 0 });
+    state = rootReducer(state, { type: "PLACE_ITEM", itemId: "moss-tuft", x: 6, y: 6, at: 0 });
     state = rootReducer(state, {
       type: "ASSIGN_JOB",
       pipId: state.activePipId,

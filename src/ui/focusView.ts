@@ -27,6 +27,19 @@
  * Architecture: `buildFocusModel` + friends are PURE (state in, view
  * model out — node-testable, no DOM); `createFocusView` is the dumb DOM
  * shell that renders the model and dispatches actions.
+ *
+ * ROUND 2C ADDITIVE (docs/retention-bible.md §6 mastery, §7 egg pity):
+ * `ExpeditionRowModel` gained two nullable fields — `masteryBadge` (a
+ * filled/hollow-pip rank plus the tier's title, e.g. "●●●○○ Knows where
+ * the nests are"; never a raw trip count or percentage, per the task's
+ * "subtle indicator, not a numbers dump") and `pityNote` (the visible,
+ * always-shown pity countdown, phrased as encouragement — "Toward a
+ * Cloudpip: 5/8 — getting close." — never hidden, never a slot-machine
+ * percentage). Both are computed by `masteryBadgeFor`/`pityNoteFor` and
+ * spliced onto every existing branch via a thin wrapper around the
+ * original (renamed, unexported) row builder, so none of the seven
+ * existing return sites needed editing. `buildFocusModel`/`FocusModel`
+ * and every existing field are otherwise untouched.
  */
 
 import type { Clock } from "../core/clock";
@@ -42,12 +55,21 @@ import type { JobOutcome } from "../core/keep/jobs";
 import type { PlacementId } from "../core/keep";
 import { EXPEDITION_IDS, expeditions } from "../content/expeditions";
 import { tuning } from "../content/tuning";
+import type { Tuning } from "../content/tuning";
 import { jobs as contentJobs } from "../content/jobs";
 import { placeables } from "../content/placeables";
 import { personalities } from "../content/personalities";
 import type { PersonalityId } from "../content/personalities";
 import { species } from "../content/species";
 import { pickSpeciesLine } from "../content/speciesLines";
+import { masteryTier, masteryTitle, maxMasteryTier } from "../core/progression/mastery";
+import { earnedFlairOfKind } from "../content/flair";
+import {
+  guaranteedDrawPool,
+  pityThresholdFor,
+  rarestTierInPool,
+} from "../core/progression/pity";
+import { eventAdjustedPityThreshold } from "../core/progression/events";
 import {
   moodColors,
   needColors,
@@ -55,6 +77,7 @@ import {
   needWarnColor,
   resolvePipPalette,
 } from "../content/palette";
+import { retireRefusal } from "../core/sanctuary";
 import { peekDisplayedMood } from "./topBar";
 import { sound } from "../app/sound";
 
@@ -163,6 +186,12 @@ export interface ExpeditionRowModel {
    * "Supervised"); null when the row needs no chip. */
   readonly badge: string | null;
   readonly sendable: boolean;
+  /** ROUND 2C (bible §6.3) — this Pip's mastery rank on this biome, as
+   * filled/hollow pips plus the tier title; null below tier 1. */
+  readonly masteryBadge: string | null;
+  /** ROUND 2C (bible §7.2) — the visible egg-pity countdown for this
+   * biome; null for a common-only pool (nothing rarer to chase). */
+  readonly pityNote: string | null;
 }
 
 export interface FocusModel {
@@ -172,6 +201,11 @@ export interface FocusModel {
   readonly personalityName: string;
   readonly blurb: string;
   readonly stageLabel: string;
+  /** Earned FLAIR titles (bible §4.3's "a title on a Pip's card") — the
+   * `mastery-tier-5-any-biome` / `mastery-tier-3-all-biomes` milestone
+   * rewards, which were `kind: "flair"` and paid literally nothing before
+   * this round's fix. An honourific, never a rank or a score. */
+  readonly flairTitles: readonly string[];
   readonly mood: string;
   readonly needs: Readonly<Record<NeedId, number>>;
   readonly expeditions: readonly ExpeditionRowModel[];
@@ -335,13 +369,85 @@ function occupantOf(
   return null;
 }
 
+/**
+ * ROUND 2C (bible §6.3) — a subtle per-Pip, per-biome mastery indicator:
+ * filled/hollow pips plus the tier's title (e.g. "●●●○○ Knows where the
+ * nests are"). Deliberately never a raw trip count or bonus percentage —
+ * the task's "a subtle rank/pips indicator, not a numbers dump". Null
+ * below tier 1 (nothing to show yet).
+ */
+export function masteryBadgeFor(
+  pip: PipState,
+  expeditionId: string,
+  tuningArg: Tuning = tuning,
+): string | null {
+  const def = expeditions[expeditionId as keyof typeof expeditions];
+  if (def === undefined) return null;
+  const trips = pip.mastery?.[expeditionId] ?? 0;
+  const tier = masteryTier(trips, def.durationMs, tuningArg);
+  if (tier <= 0) return null;
+  const max = maxMasteryTier(tuningArg);
+  const dots = "●".repeat(tier) + "○".repeat(Math.max(0, max - tier));
+  const title = masteryTitle(tier, def.name);
+  return title !== null ? `${dots} ${title}` : dots;
+}
+
+/**
+ * ROUND 2C (bible §7.2) — the visible egg-pity countdown for a biome,
+ * phrased as encouragement rather than a raw probability ("full
+ * disclosure" — the counter itself is never hidden — without reading as a
+ * slot machine). Null for a common-only pool (nothing rarer to chase,
+ * bible §7.1 — "the UI shows the odds and no counter") or a biome with no
+ * declared egg pool.
+ */
+export function pityNoteFor(
+  state: GameState,
+  expeditionId: string,
+  tuningArg: Tuning = tuning,
+): string | null {
+  const def = expeditions[expeditionId as keyof typeof expeditions];
+  const pool = def?.eggSpecies;
+  if (pool === undefined || pool.length === 0) return null;
+  const rarityPool = pool.map((id) => ({ id, rarity: species[id]?.rarity ?? "common" }));
+  const rarestTier = rarestTierInPool(rarityPool);
+  const baseThreshold = pityThresholdFor(rarityPool, tuningArg);
+  if (rarestTier === null || baseThreshold === null) return null;
+
+  const threshold =
+    eventAdjustedPityThreshold(
+      baseThreshold,
+      expeditionId,
+      state.activeEvents,
+      tuningArg,
+    ) ?? baseThreshold;
+  const counter = state.eggPity[expeditionId] ?? 0;
+  const remaining = Math.max(0, threshold - counter);
+
+  // Kindness tiebreak (bible §7.2): name the specific still-uncaught
+  // species the guarantee would prefer, same as the guaranteed hatch
+  // itself would pick.
+  const isCaught = (speciesId: string): boolean =>
+    state.pipdex.entries[speciesId]?.caughtAt != null;
+  const guaranteed = guaranteedDrawPool(rarityPool, rarestTier, isCaught);
+  const names = guaranteed.map((entry) => species[entry.id]?.name ?? entry.id).join(" or ");
+  const article = /^[aeiou]/i.test(names) ? "an" : "a";
+
+  const tail =
+    remaining === 0
+      ? " — guaranteed next hatch!"
+      : remaining <= 2
+        ? " — getting close."
+        : "";
+  return `Toward ${article} ${names}: ${counter}/${threshold}${tail}`;
+}
+
 /** Build one expedition row for the focus view. Pure. */
-export function buildExpeditionRow(
+function buildExpeditionRowBase(
   state: GameState,
   pip: PipState,
   expeditionId: string,
   now: number,
-): ExpeditionRowModel | null {
+): Omit<ExpeditionRowModel, "masteryBadge" | "pityNote"> | null {
   const def = expeditions[expeditionId as keyof typeof expeditions];
   if (def === undefined) return null;
 
@@ -462,6 +568,27 @@ export function buildExpeditionRow(
   };
 }
 
+/**
+ * Public entry point (unchanged signature/behaviour for every existing
+ * field): wraps `buildExpeditionRowBase` and splices on the two ROUND 2C
+ * fields (`masteryBadge`/`pityNote`) so none of the seven branches above
+ * needed touching.
+ */
+export function buildExpeditionRow(
+  state: GameState,
+  pip: PipState,
+  expeditionId: string,
+  now: number,
+): ExpeditionRowModel | null {
+  const base = buildExpeditionRowBase(state, pip, expeditionId, now);
+  if (base === null) return null;
+  return {
+    ...base,
+    masteryBadge: masteryBadgeFor(pip, expeditionId),
+    pityNote: pityNoteFor(state, expeditionId),
+  };
+}
+
 /** The whole panel's view model. Pure: state + now in, model out. */
 export function buildFocusModel(
   state: GameState,
@@ -486,6 +613,9 @@ export function buildFocusModel(
       pip.personalityId,
     blurb: personalityBlurb(pip.personalityId),
     stageLabel: lifeStageLabel(pip.lifeStage),
+    flairTitles: earnedFlairOfKind(state.flair, "pipTitle").map(
+      (def) => `${def.glyph} ${def.name}`,
+    ),
     mood: peekDisplayedMood(state, pip),
     needs: { ...pip.needs },
     expeditions: rows,
@@ -503,10 +633,33 @@ export const ASSIGN_BLOCK_COPY: Readonly<Record<string, string>> = {
   unknownPip: "Hmm — who? The Keep has no record of that Pip.",
 };
 
+/**
+ * Should the focus view draw "Send to the Long Meadow" for this Pip?
+ *
+ * Delegates to `core/sanctuary`'s single legality rule (`retireRefusal`),
+ * so the button can never disagree with the reducer. Deliberately TRUE for
+ * a Sulking Pip (bible §2.3: a Pip having a bad week should be allowed a
+ * change of scene — the refusal list is structural, never moral), and
+ * false only for a Pip with loot in flight or the last Pip in the Keep,
+ * because offering a tap that can only apologise is worse than not
+ * offering it.
+ */
+export function canOfferRetire(state: GameState, pipId: string): boolean {
+  return retireRefusal(state, pipId) === null;
+}
+
 export interface FocusViewDeps {
   dispatch(action: GameAction): void;
   getState(): GameState;
   clock: Clock;
+  /**
+   * Open the Long Meadow's retire confirmation for this Pip (round 2C —
+   * `ui/sanctuary.ts` owns that dialog and its copy; this view only owns
+   * the affordance). OPTIONAL: when omitted the button is not drawn at
+   * all, which is what keeps every pre-2C focusView test — each of which
+   * builds its own deps object — passing untouched.
+   */
+  openRetireConfirm?(pipId: string): void;
 }
 
 export interface FocusView {
@@ -677,6 +830,12 @@ export function createFocusView(deps: FocusViewDeps): FocusView {
     const kind = document.createElement("div");
     kind.className = "pk-focus-kind";
     kind.textContent = `${model.speciesName} · ${model.personalityName} · ${model.stageLabel}`;
+    const titles =
+      model.flairTitles.length > 0 ? document.createElement("div") : null;
+    if (titles !== null) {
+      titles.className = "pk-focus-titles";
+      titles.textContent = model.flairTitles.join(" · ");
+    }
     const blurb = document.createElement("div");
     blurb.className = "pk-focus-blurb";
     blurb.textContent = model.blurb;
@@ -693,7 +852,9 @@ export function createFocusView(deps: FocusViewDeps): FocusView {
     // line does (see the two `applyX()` calls below).
     greetingEl = document.createElement("div");
     greetingEl.className = "pk-focus-greeting";
-    head.append(name, kind, blurb, greetingEl, moodRow);
+    head.append(name, kind);
+    if (titles !== null) head.appendChild(titles);
+    head.append(blurb, greetingEl, moodRow);
     applyGreeting();
 
     // In-panel refusal line (the pip says no, in its own voice).
@@ -755,6 +916,22 @@ export function createFocusView(deps: FocusViewDeps): FocusView {
       flavor.className = "pk-exp-flavor";
       flavor.textContent = row.flavor;
       card.append(top, flavor);
+
+      // ROUND 2C (bible §6.3/§7.2) — additive, subtle: a mastery rank line
+      // and the visible pity countdown, each omitted when there's nothing
+      // to show yet (tier 0 / a common-only pool).
+      if (row.masteryBadge !== null) {
+        const mastery = document.createElement("div");
+        mastery.className = "pk-exp-mastery";
+        mastery.textContent = row.masteryBadge;
+        card.appendChild(mastery);
+      }
+      if (row.pityNote !== null) {
+        const pity = document.createElement("div");
+        pity.className = "pk-exp-pity";
+        pity.textContent = row.pityNote;
+        card.appendChild(pity);
+      }
 
       if (row.note !== null) {
         const note = document.createElement("div");
@@ -862,7 +1039,11 @@ export function createFocusView(deps: FocusViewDeps): FocusView {
           unassign.textContent = "Take a break";
           unassign.addEventListener("click", () => {
             sound("ui.tap");
-            deps.dispatch({ type: "UNASSIGN_JOB", pipId: model.pipId });
+            deps.dispatch({
+              type: "UNASSIGN_JOB",
+              pipId: model.pipId,
+              at: deps.clock.now(),
+            });
           });
           card.appendChild(unassign);
         }
@@ -870,6 +1051,33 @@ export function createFocusView(deps: FocusViewDeps): FocusView {
         workList.appendChild(card);
       }
       workEls.push(workTitle, workList);
+    }
+
+    // --- The Long Meadow (round 2C, docs/retention-bible.md §2.3) ---
+    // Deliberately LAST and deliberately quiet: a warm side door, never a
+    // headline action. Drawn only when `openRetireConfirm` was wired AND
+    // core says it is legal right now, so the player never taps a button
+    // whose only possible answer is an apology. `ui/sanctuary.ts` owns the
+    // confirmation, its copy, and the dispatch — this is just the door.
+    const meadowEls: HTMLElement[] = [];
+    const openRetire = deps.openRetireConfirm;
+    if (openRetire !== undefined && canOfferRetire(state, model.pipId)) {
+      const meadow = document.createElement("div");
+      meadow.className = "pk-focus-meadow";
+      const meadowBtn = document.createElement("button");
+      meadowBtn.type = "button";
+      meadowBtn.className = "pk-meadow-send";
+      meadowBtn.textContent = "Send to the Long Meadow";
+      meadowBtn.title = "They'll help out at the meadow sanctuary — visit any time";
+      meadowBtn.addEventListener("click", () => {
+        sound("ui.tap");
+        openRetire(model.pipId);
+      });
+      const meadowNote = document.createElement("div");
+      meadowNote.className = "pk-focus-meadow-note";
+      meadowNote.textContent = "Visit any time, and ask them home whenever you like.";
+      meadow.append(meadowBtn, meadowNote);
+      meadowEls.push(meadow);
     }
 
     panel.append(
@@ -881,6 +1089,7 @@ export function createFocusView(deps: FocusViewDeps): FocusView {
       expTitle,
       expList,
       ...workEls,
+      ...meadowEls,
     );
   };
 

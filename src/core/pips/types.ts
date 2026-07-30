@@ -173,4 +173,15 @@ export interface PipState {
   expedition: ActiveExpedition | null;
   /** Clock timestamp (ms) of the last needs recompute. */
   needsUpdatedAt: number;
+  /**
+   * ROUND 2C — expedition mastery (docs/retention-bible.md §6):
+   * expeditionId → completed-trip count. Optional exactly like `sulking`
+   * above — `undefined ≡ {}` — so no existing fixture needs an edit.
+   * Forward-only (never decays, never resets); lives on `PipState` so it
+   * travels to the Long Meadow and back automatically on retire/retrieve,
+   * and survives evolution untouched. Read via
+   * `core/progression/mastery.ts`'s pure derivation functions — no tier is
+   * ever stored, only trips.
+   */
+  mastery?: Readonly<Record<string, number>>;
 }

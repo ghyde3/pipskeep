@@ -5,7 +5,9 @@
       "name": "pipskeep-dev",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],
-      "port": 5317
+      "port": 5317,
+      "// autoPort": "false on purpose: vite.config.ts pins port 5317 with strictPort, since 5173/3000/5000/8080 are taken by other local projects. An assigned PORT would be ignored and strictPort would then fail.",
+      "autoPort": false
     }
   ]
 }

@@ -126,6 +126,37 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
     lastJobOutcome: null,
     lastEvolveOutcome: null,
     onboarding: { completed: true, step: "done" },
+    pipdex: {
+      entries: {},
+      discoveryOrder: [],
+      formsSeen: 0,
+      formsCaught: 0,
+      variantsCaught: 0,
+      shiniesCaught: 0,
+      unreadEntryIds: [],
+    },
+    sanctuary: { pips: {}, order: [] },
+    lastSanctuaryOutcome: null,
+    // ROUND 2C — progression stack defaults (docs/retention-bible.md).
+    streak: {
+      current: 0,
+      longest: 0,
+      lastVisitDay: null,
+      totalVisitDays: 0,
+      graceBanked: 2,
+      graceRefilledOnDay: null,
+      rainDays: 0,
+      rewardedForDay: null,
+      pendingChoices: [],
+    },
+    dayOffsetMs: 0,
+    counters: {},
+    milestones: { earned: {}, pendingCelebrations: [] },
+    bounties: { day: null, slots: [], rerollsUsed: 0, dayBonusGranted: false },
+    eggPity: {},
+    activeEvents: [],
+    keepsakes: {},
+    flair: {},
     ...overrides,
   };
 }
@@ -245,7 +276,7 @@ describe("assignment legality (spec §6.2/§4.7)", () => {
     const working = rootReducer(makeState(), {
       type: "ASSIGN_JOB", pipId: "pip-1", stationPlacementId: "place-1", at: T0,
     });
-    const idle = rootReducer(working, { type: "UNASSIGN_JOB", pipId: "pip-1" });
+    const idle = rootReducer(working, { type: "UNASSIGN_JOB", pipId: "pip-1", at: 0 });
     expect(idle.pips["pip-1"]?.activity).toBe(PipActivity.Idle);
     expect(idle.jobs).toEqual({});
     expect(idle.lastJobOutcome).toEqual({
@@ -261,8 +292,7 @@ describe("assignment legality (spec §6.2/§4.7)", () => {
       type: "ASSIGN_JOB", pipId: "pip-1", stationPlacementId: "place-1", at: T0,
     });
     const removed = rootReducer(working, {
-      type: "REMOVE_ITEM", placementId: "place-1",
-    });
+      type: "REMOVE_ITEM", placementId: "place-1", at: 0 });
     expect(removed.keep.placements["place-1"]).toBeUndefined();
     expect(removed.pips["pip-1"]?.activity).toBe(PipActivity.Idle);
     expect(removed.jobs).toEqual({});

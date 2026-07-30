@@ -126,6 +126,10 @@ export function buildUpgradeCardModel(state: GameState): UpgradeCardModel {
 export interface UpgradeCardDeps {
   dispatch(action: GameAction): void;
   getState(): GameState;
+  /** ROUND 2C: both purchases are streak VISIT DAYS (docs/retention-bible.md
+   * §3.2 "buy something"), so they carry an `at` timestamp — buying a Keep
+   * level is a session the player played. */
+  now(): number;
 }
 
 export interface UpgradeCard {
@@ -194,7 +198,7 @@ export function createUpgradeCard(deps: UpgradeCardDeps): UpgradeCard {
       buy.disabled = !next.affordable;
       buy.addEventListener("click", () => {
         sound("ui.tap");
-        deps.dispatch({ type: "PURCHASE_KEEP_LEVEL" });
+        deps.dispatch({ type: "PURCHASE_KEEP_LEVEL", at: deps.now() });
       });
       section.appendChild(buy);
       if (!next.affordable && next.missingLabel !== "") {
@@ -236,7 +240,7 @@ export function createUpgradeCard(deps: UpgradeCardDeps): UpgradeCard {
         buy.disabled = !model.roster.affordable;
         buy.addEventListener("click", () => {
           sound("ui.tap");
-          deps.dispatch({ type: "PURCHASE_ROSTER_UPGRADE" });
+          deps.dispatch({ type: "PURCHASE_ROSTER_UPGRADE", at: deps.now() });
         });
         section.appendChild(buy);
         if (!model.roster.affordable && model.roster.missingLabel !== "") {

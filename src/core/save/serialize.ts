@@ -40,6 +40,15 @@ import type {
   PipState,
   TraitGenome,
 } from "../pips/types";
+import type {
+  PipdexEntry,
+  PipdexPortrait,
+  PipdexState,
+} from "../pipdex";
+import type { SanctuaryOutcome, SanctuaryRecord, SanctuaryState } from "../sanctuary";
+import type { StreakChoice, StreakChoiceKind, StreakState } from "../progression/streak";
+import type { MilestoneState } from "../progression/milestones";
+import type { BountiesState, BountyInstance } from "../progression/bounties";
 import { CARE_ACTIONS } from "../pips/care";
 import type { CareAction, CareOutcome, CooldownsByPip } from "../pips/care";
 import { DIALOGUE_CONTEXTS } from "../pips/mood";
@@ -53,6 +62,26 @@ import type { KeepState, Placement, PlacementId } from "../keep";
 import type { JobAssignment, JobOutcome, JobsByPip } from "../keep/jobs";
 
 /**
+ * v7 (round 2C review): one new REQUIRED top-level slice — `flair`
+ * (`flairId → earnedAt`, docs/retention-bible.md §4.3). Round 2C shipped 22
+ * `kind: "flair"` milestone rewards against no state field, no serializer
+ * entry and no renderer, so every long-haul target in the game — 14/14 The
+ * Album, 21/21 the Grove Ledger, the 30-day streak, 100 bounties — paid
+ * literally nothing while the UI promised "a flourish for the Album". It gets
+ * a version of its own rather than being folded into v6 because v6 saves
+ * already existed by the time review caught it; `MIGRATIONS[6]` seeds the
+ * field and re-derives the `founder` veteran's Album stamp.
+ *
+ * v6 (round 2C — docs/retention-bible.md §11): two new REQUIRED
+ * top-level slices — `pipdex` (the Album, §1) and `sanctuary` (the Long
+ * Meadow, §2) — plus the matching transient echo `lastSanctuaryOutcome`.
+ * Both are additive-only data (spec §4.4's guardrail: nothing in this
+ * round ever removes a Pip or clears an Album entry). Migrated saves
+ * derive `pipdex` from every Pip already owned (bible §11.3 — "never
+ * backfill a counter above the truth, never below what is provable") and
+ * seed `sanctuary` empty (nothing could have been retired before this
+ * round shipped).
+ *
  * v5 (round 2A finding #2): per-pip `sulking: boolean` — the Sulking
  * penalty (spec §4.4) is now an orthogonal flag alongside `activity`, not
  * solely the `activity === "sulking"` enum value, so "Resting AND still
@@ -71,7 +100,7 @@ import type { JobAssignment, JobOutcome, JobsByPip } from "../keep/jobs";
  * `nextPlacementNumber`, per-pip `evolved` records, and the two new
  * transient outcome echoes (job, evolve). v2, Phase 4: keepLevel, eggs,
  * pendingReveals, id counters.) */
-export const CURRENT_SCHEMA_VERSION = 5;
+export const CURRENT_SCHEMA_VERSION = 7;
 
 /** The on-disk envelope (spec §8). */
 export interface SaveBlob {
@@ -415,6 +444,12 @@ function validatePipState(
       rec["needsUpdatedAt"],
       p(path, "needsUpdatedAt"),
     ),
+    // ROUND 2C — expedition mastery (v6, bible §6.1): optional exactly
+    // like `sulking` above — absent stays absent, so a pre-mastery pip
+    // round-trips byte-for-byte with no field materialising from nothing.
+    ...(rec["mastery"] !== undefined
+      ? { mastery: validateNumberRecord(rec["mastery"], p(path, "mastery")) }
+      : {}),
   };
 }
 
@@ -531,6 +566,241 @@ function passThroughTransient(value: unknown, path: string): unknown {
   return expectRecord(value, path);
 }
 
+/** ROUND 2C — the Album (v6, docs/retention-bible.md §1.4). The frozen
+ * first-portrait snapshot inside a `PipdexEntry`. */
+function validatePipdexPortrait(value: unknown, path: string): PipdexPortrait {
+  const rec = expectRecord(value, path);
+  return {
+    pipId: expectString(rec["pipId"], p(path, "pipId")),
+    name: expectString(rec["name"], p(path, "name")),
+    genome: validateGenome(rec["genome"], p(path, "genome")),
+    personalityId: expectString(rec["personalityId"], p(path, "personalityId")),
+    lifeStageAtCatch: expectOneOf(
+      rec["lifeStageAtCatch"],
+      p(path, "lifeStageAtCatch"),
+      LIFE_STAGES,
+    ),
+    sourceExpeditionId: expectStringOrNull(
+      rec["sourceExpeditionId"],
+      p(path, "sourceExpeditionId"),
+    ),
+  };
+}
+
+/** One species' Album page. `expectedSpeciesId` mirrors `validatePipState`'s
+ * key/id referential check (the entry's own `speciesId` must match the
+ * record key it is stored under). */
+function validatePipdexEntry(
+  value: unknown,
+  path: string,
+  expectedSpeciesId: string,
+): PipdexEntry {
+  const rec = expectRecord(value, path);
+  const speciesId = expectString(rec["speciesId"], p(path, "speciesId"));
+  if (speciesId !== expectedSpeciesId) {
+    fail(
+      "invalid-field",
+      p(path, "speciesId"),
+      `pipdex entry speciesId ${JSON.stringify(speciesId)} does not match its record key ${JSON.stringify(expectedSpeciesId)}`,
+    );
+  }
+  const firstPortraitValue = rec["firstPortrait"];
+  return {
+    speciesId,
+    seenAt: expectNumberOrNull(rec["seenAt"], p(path, "seenAt")),
+    caughtAt: expectNumberOrNull(rec["caughtAt"], p(path, "caughtAt")),
+    caughtCount: expectFiniteNumber(rec["caughtCount"], p(path, "caughtCount")),
+    firstPortrait:
+      firstPortraitValue === null
+        ? null
+        : validatePipdexPortrait(firstPortraitValue, p(path, "firstPortrait")),
+    shinyCaughtAt: expectNumberOrNull(rec["shinyCaughtAt"], p(path, "shinyCaughtAt")),
+    variantsCaught: validateNumberRecord(
+      rec["variantsCaught"],
+      p(path, "variantsCaught"),
+    ),
+    knownBiomes: validateStringArray(rec["knownBiomes"], p(path, "knownBiomes")),
+  };
+}
+
+/** The whole Album (v6). `discoveryOrder` is referentially checked against
+ * `entries` (same bar as `rosterOrder` vs `pips`). */
+function validatePipdexState(value: unknown, path: string): PipdexState {
+  const rec = expectRecord(value, path);
+  const entriesRec = expectRecord(rec["entries"], p(path, "entries"));
+  const entries: Record<string, PipdexEntry> = {};
+  for (const [speciesId, entry] of Object.entries(entriesRec)) {
+    entries[speciesId] = validatePipdexEntry(
+      entry,
+      p(p(path, "entries"), speciesId),
+      speciesId,
+    );
+  }
+  const discoveryOrder = validateStringArray(
+    rec["discoveryOrder"],
+    p(path, "discoveryOrder"),
+  );
+  discoveryOrder.forEach((speciesId, i) => {
+    if (entries[speciesId] === undefined) {
+      fail(
+        "invalid-field",
+        `${p(path, "discoveryOrder")}[${i}]`,
+        `discoveryOrder references unknown species ${JSON.stringify(speciesId)}`,
+      );
+    }
+  });
+  return {
+    entries,
+    discoveryOrder,
+    formsSeen: expectFiniteNumber(rec["formsSeen"], p(path, "formsSeen")),
+    formsCaught: expectFiniteNumber(rec["formsCaught"], p(path, "formsCaught")),
+    variantsCaught: expectFiniteNumber(rec["variantsCaught"], p(path, "variantsCaught")),
+    shiniesCaught: expectFiniteNumber(rec["shiniesCaught"], p(path, "shiniesCaught")),
+    unreadEntryIds: validateStringArray(
+      rec["unreadEntryIds"],
+      p(path, "unreadEntryIds"),
+    ),
+  };
+}
+
+/** ROUND 2C — the Long Meadow (v6, docs/retention-bible.md §2.6). A
+ * resident's whole `PipState`, verbatim — same referential bar as an
+ * active pip (`validatePipState`'s key/id match). */
+function validateSanctuaryRecord(
+  value: unknown,
+  path: string,
+  expectedId: string,
+): SanctuaryRecord {
+  const rec = expectRecord(value, path);
+  return {
+    pip: validatePipState(rec["pip"], p(path, "pip"), expectedId),
+    retiredAt: expectFiniteNumber(rec["retiredAt"], p(path, "retiredAt")),
+    retiredFromKeepLevel: expectFiniteNumber(
+      rec["retiredFromKeepLevel"],
+      p(path, "retiredFromKeepLevel"),
+    ),
+    visits: expectFiniteNumber(rec["visits"], p(path, "visits")),
+  };
+}
+
+/** The whole Long Meadow (v6). `order` is referentially checked against
+ * `pips` (same bar as `rosterOrder` vs the active roster). */
+function validateSanctuaryState(value: unknown, path: string): SanctuaryState {
+  const rec = expectRecord(value, path);
+  const pipsRec = expectRecord(rec["pips"], p(path, "pips"));
+  const pips: Record<PipId, SanctuaryRecord> = {};
+  for (const [pipId, record] of Object.entries(pipsRec)) {
+    pips[pipId] = validateSanctuaryRecord(
+      record,
+      p(p(path, "pips"), pipId),
+      pipId,
+    );
+  }
+  const order = validateStringArray(rec["order"], p(path, "order"));
+  order.forEach((pipId, i) => {
+    if (pips[pipId] === undefined) {
+      fail(
+        "invalid-field",
+        `${p(path, "order")}[${i}]`,
+        `sanctuary order references unknown resident ${JSON.stringify(pipId)}`,
+      );
+    }
+  });
+  return { pips, order };
+}
+
+/** ROUND 2C — the daily streak (v6, docs/retention-bible.md §3.5). */
+const STREAK_CHOICE_KINDS: readonly StreakChoiceKind[] = [
+  "keepsake",
+  "basketEgg",
+  "bountyEgg",
+];
+
+function validateStreakChoice(value: unknown, path: string): StreakChoice {
+  const rec = expectRecord(value, path);
+  return {
+    kind: expectOneOf(rec["kind"], p(path, "kind"), STREAK_CHOICE_KINDS),
+    offers: validateStringArray(rec["offers"], p(path, "offers")),
+    forDay: expectFiniteNumber(rec["forDay"], p(path, "forDay")),
+  };
+}
+
+function validateStreakState(value: unknown, path: string): StreakState {
+  const rec = expectRecord(value, path);
+  const pendingRaw = rec["pendingChoices"];
+  if (!Array.isArray(pendingRaw)) {
+    fail(
+      "invalid-field",
+      p(path, "pendingChoices"),
+      `expected an array, got ${describeValue(pendingRaw)}`,
+    );
+  }
+  return {
+    current: expectFiniteNumber(rec["current"], p(path, "current")),
+    longest: expectFiniteNumber(rec["longest"], p(path, "longest")),
+    lastVisitDay: expectNumberOrNull(rec["lastVisitDay"], p(path, "lastVisitDay")),
+    totalVisitDays: expectFiniteNumber(rec["totalVisitDays"], p(path, "totalVisitDays")),
+    graceBanked: expectFiniteNumber(rec["graceBanked"], p(path, "graceBanked")),
+    graceRefilledOnDay: expectNumberOrNull(
+      rec["graceRefilledOnDay"],
+      p(path, "graceRefilledOnDay"),
+    ),
+    rainDays: expectFiniteNumber(rec["rainDays"], p(path, "rainDays")),
+    rewardedForDay: expectNumberOrNull(rec["rewardedForDay"], p(path, "rewardedForDay")),
+    pendingChoices: pendingRaw.map((choice, i) =>
+      validateStreakChoice(choice, `${p(path, "pendingChoices")}[${i}]`),
+    ),
+  };
+}
+
+/** ROUND 2C — milestones (v6, bible §4). */
+function validateMilestoneState(value: unknown, path: string): MilestoneState {
+  const rec = expectRecord(value, path);
+  return {
+    earned: validateNumberRecord(rec["earned"], p(path, "earned")),
+    pendingCelebrations: validateStringArray(
+      rec["pendingCelebrations"],
+      p(path, "pendingCelebrations"),
+    ),
+  };
+}
+
+/** ROUND 2C — daily bounties (v6, bible §5.1). */
+function validateBountyInstance(value: unknown, path: string): BountyInstance {
+  const rec = expectRecord(value, path);
+  return {
+    templateId: expectString(rec["templateId"], p(path, "templateId")),
+    slot: expectFiniteNumber(rec["slot"], p(path, "slot")),
+    target: expectFiniteNumber(rec["target"], p(path, "target")),
+    progress: expectFiniteNumber(rec["progress"], p(path, "progress")),
+    completedAt: expectNumberOrNull(rec["completedAt"], p(path, "completedAt")),
+    rerolled: expectBoolean(rec["rerolled"], p(path, "rerolled")),
+    params: (() => {
+      const paramsRec = expectRecord(rec["params"], p(path, "params"));
+      const out: Record<string, string> = {};
+      for (const [key, entry] of Object.entries(paramsRec)) {
+        out[key] = expectString(entry, p(p(path, "params"), key));
+      }
+      return out;
+    })(),
+    stale: expectBoolean(rec["stale"], p(path, "stale")),
+  };
+}
+
+function validateBountiesState(value: unknown, path: string): BountiesState {
+  const rec = expectRecord(value, path);
+  const slotsRaw = rec["slots"];
+  if (!Array.isArray(slotsRaw)) {
+    fail("invalid-field", p(path, "slots"), `expected an array, got ${describeValue(slotsRaw)}`);
+  }
+  return {
+    day: expectNumberOrNull(rec["day"], p(path, "day")),
+    slots: slotsRaw.map((slot, i) => validateBountyInstance(slot, `${p(path, "slots")}[${i}]`)),
+    rerollsUsed: expectFiniteNumber(rec["rerollsUsed"], p(path, "rerollsUsed")),
+    dayBonusGranted: expectBoolean(rec["dayBonusGranted"], p(path, "dayBonusGranted")),
+  };
+}
+
 function validateGameState(value: unknown, path: string): GameState {
   const rec = expectRecord(value, path);
 
@@ -600,6 +870,25 @@ function validateGameState(value: unknown, path: string): GameState {
     }
   }
 
+  // ROUND 2C — THE ONE-PLACE INVARIANT (bible §2.6/§14 risk 3): every
+  // PipId lives in EXACTLY ONE of `pips` or `sanctuary.pips`. Never both.
+  // ("Never neither" isn't independently checkable from a static blob —
+  // an id simply absent from both never appears in this save at all —
+  // but a hand-edited or corrupted save putting the SAME id in both is
+  // exactly the double-render/double-decay bug the bible calls the
+  // sharpest new failure mode in the round, so it is worth catching here
+  // too, not just in the reducer's randomised property test.)
+  const sanctuary = validateSanctuaryState(rec["sanctuary"], p(path, "sanctuary"));
+  for (const pipId of Object.keys(sanctuary.pips)) {
+    if (pips[pipId] !== undefined) {
+      fail(
+        "invalid-field",
+        p(p(p(path, "sanctuary"), "pips"), pipId),
+        `pip ${JSON.stringify(pipId)} exists in BOTH the active roster and the Long Meadow`,
+      );
+    }
+  }
+
   return {
     pips,
     rosterOrder,
@@ -662,6 +951,28 @@ function validateGameState(value: unknown, path: string): GameState {
       p(path, "lastEvolveOutcome"),
     ) as EvolveOutcome | null,
     onboarding: validateOnboarding(rec["onboarding"], p(path, "onboarding")),
+    // ROUND 2C (v6, docs/retention-bible.md §1/§2/§11). `sanctuary` was
+    // already parsed above (the one-place invariant cross-check needs it
+    // alongside `pips`).
+    pipdex: validatePipdexState(rec["pipdex"], p(path, "pipdex")),
+    sanctuary,
+    lastSanctuaryOutcome: passThroughTransient(
+      rec["lastSanctuaryOutcome"],
+      p(path, "lastSanctuaryOutcome"),
+    ) as SanctuaryOutcome | null,
+    // ROUND 2C (v6, docs/retention-bible.md §11) — the progression stack.
+    streak: validateStreakState(rec["streak"], p(path, "streak")),
+    dayOffsetMs: expectFiniteNumber(rec["dayOffsetMs"], p(path, "dayOffsetMs")),
+    counters: validateNumberRecord(rec["counters"], p(path, "counters")),
+    milestones: validateMilestoneState(rec["milestones"], p(path, "milestones")),
+    bounties: validateBountiesState(rec["bounties"], p(path, "bounties")),
+    eggPity: validateNumberRecord(rec["eggPity"], p(path, "eggPity")),
+    activeEvents: validateStringArray(rec["activeEvents"], p(path, "activeEvents")),
+    keepsakes: validateNumberRecord(rec["keepsakes"], p(path, "keepsakes")),
+    // v7: earned flair (docs/retention-bible.md §4.3). Strictly required —
+    // `MIGRATIONS[6]` seeds it for every v6 save, so a blob reaching here
+    // without it is genuinely malformed, not merely old.
+    flair: validateNumberRecord(rec["flair"], p(path, "flair")),
   };
 }
 

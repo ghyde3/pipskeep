@@ -110,6 +110,37 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
     lastJobOutcome: null,
     lastEvolveOutcome: null,
     onboarding: { completed: true, step: "done" },
+    pipdex: {
+      entries: {},
+      discoveryOrder: [],
+      formsSeen: 0,
+      formsCaught: 0,
+      variantsCaught: 0,
+      shiniesCaught: 0,
+      unreadEntryIds: [],
+    },
+    sanctuary: { pips: {}, order: [] },
+    lastSanctuaryOutcome: null,
+    // ROUND 2C — progression stack defaults (docs/retention-bible.md).
+    streak: {
+      current: 0,
+      longest: 0,
+      lastVisitDay: null,
+      totalVisitDays: 0,
+      graceBanked: 2,
+      graceRefilledOnDay: null,
+      rainDays: 0,
+      rewardedForDay: null,
+      pendingChoices: [],
+    },
+    dayOffsetMs: 0,
+    counters: {},
+    milestones: { earned: {}, pendingCelebrations: [] },
+    bounties: { day: null, slots: [], rerollsUsed: 0, dayBonusGranted: false },
+    eggPity: {},
+    activeEvents: [],
+    keepsakes: {},
+    flair: {},
     ...overrides,
   };
 }
@@ -125,7 +156,7 @@ describe("PURCHASE_KEEP_LEVEL (spec §6.3/§9)", () => {
         berry: 2,
       },
     });
-    const next = rootReducer(state, { type: "PURCHASE_KEEP_LEVEL" });
+    const next = rootReducer(state, { type: "PURCHASE_KEEP_LEVEL", at: 0 });
     expect(next.keep.level).toBe(2);
     expect(next.resources).toEqual({
       wood: surplus,
@@ -142,7 +173,7 @@ describe("PURCHASE_KEEP_LEVEL (spec §6.3/§9)", () => {
     const state = makeState({
       resources: { wood: (cost.wood ?? 0) - 1, fiber: (cost.fiber ?? 0) + 5 },
     });
-    expect(rootReducer(state, { type: "PURCHASE_KEEP_LEVEL" })).toBe(state);
+    expect(rootReducer(state, { type: "PURCHASE_KEEP_LEVEL", at: 0 })).toBe(state);
   });
 
   it("refuses at max level (no level 4 in content)", () => {
@@ -150,7 +181,7 @@ describe("PURCHASE_KEEP_LEVEL (spec §6.3/§9)", () => {
       keep: { level: 3, placements: {} },
       resources: { wood: 999, fiber: 999, shell: 999, driftwood: 999 },
     });
-    expect(rootReducer(state, { type: "PURCHASE_KEEP_LEVEL" })).toBe(state);
+    expect(rootReducer(state, { type: "PURCHASE_KEEP_LEVEL", at: 0 })).toBe(state);
   });
 
   it("level 2 → 3 costs the level-3 bundle, to the last unit", () => {
@@ -159,7 +190,7 @@ describe("PURCHASE_KEEP_LEVEL (spec §6.3/§9)", () => {
       keep: { level: 2, placements: {} },
       resources: { ...cost } as Record<string, number>,
     });
-    const next = rootReducer(state, { type: "PURCHASE_KEEP_LEVEL" });
+    const next = rootReducer(state, { type: "PURCHASE_KEEP_LEVEL", at: 0 });
     expect(next.keep.level).toBe(3);
     for (const amount of Object.values(next.resources)) {
       expect(amount).toBe(0);
@@ -179,7 +210,7 @@ describe("PURCHASE_KEEP_LEVEL (spec §6.3/§9)", () => {
     expect(locked.lastAssignOutcome).toMatchObject({ ok: false, reason: "locked" });
     expect(locked.pips["pip-1"]?.activity).toBe(PipActivity.Idle);
 
-    const upgraded = rootReducer(state, { type: "PURCHASE_KEEP_LEVEL" });
+    const upgraded = rootReducer(state, { type: "PURCHASE_KEEP_LEVEL", at: 0 });
     const sent = rootReducer(upgraded, send);
     expect(sent.lastAssignOutcome).toMatchObject({ ok: true, expeditionId: "forest" });
     expect(sent.pips["pip-1"]?.activity).toBe(PipActivity.OnExpedition);
@@ -204,19 +235,19 @@ describe("PURCHASE_ROSTER_UPGRADE + the HATCH_EGG cap (spec §7.4)", () => {
   it("requires Keep level 3 (content prerequisite) and refuses below it", () => {
     expect(keepUpgrades[ROSTER_UPGRADE_ID]?.prerequisiteLevel).toBe(3);
     const early = atCap({ keep: { level: 2, placements: {} } });
-    expect(rootReducer(early, { type: "PURCHASE_ROSTER_UPGRADE" })).toBe(early);
+    expect(rootReducer(early, { type: "PURCHASE_ROSTER_UPGRADE", at: 0 })).toBe(early);
   });
 
   it("deducts the content cost exactly, once — a second purchase refuses", () => {
     const state = atCap();
-    const bought = rootReducer(state, { type: "PURCHASE_ROSTER_UPGRADE" });
+    const bought = rootReducer(state, { type: "PURCHASE_ROSTER_UPGRADE", at: 0 });
     expect(bought.rosterUpgradePurchased).toBe(true);
     expect(bought.resources).toEqual({ wood: 0, shell: 1, driftwood: 0 });
     expect(keepUpgrades[ROSTER_UPGRADE_ID]?.cost).toEqual(tuning.rosterUpgradeCost);
-    expect(rootReducer(bought, { type: "PURCHASE_ROSTER_UPGRADE" })).toBe(bought);
+    expect(rootReducer(bought, { type: "PURCHASE_ROSTER_UPGRADE", at: 0 })).toBe(bought);
 
     const broke = atCap({ resources: { wood: 9 } });
-    expect(rootReducer(broke, { type: "PURCHASE_ROSTER_UPGRADE" })).toBe(broke);
+    expect(rootReducer(broke, { type: "PURCHASE_ROSTER_UPGRADE", at: 0 })).toBe(broke);
   });
 
   it("raises the hatch cap 3 → 5: 4th hatch blocked before, allowed after", () => {
@@ -238,7 +269,7 @@ describe("PURCHASE_ROSTER_UPGRADE + the HATCH_EGG cap (spec §7.4)", () => {
     expect(blocked.eggs.find((e) => e.id === "egg-1")?.state).toBe(EggState.Pipping);
 
     // Buy the upgrade: the SAME egg now hatches...
-    const upgraded = rootReducer(state, { type: "PURCHASE_ROSTER_UPGRADE" });
+    const upgraded = rootReducer(state, { type: "PURCHASE_ROSTER_UPGRADE", at: 0 });
     const four = rootReducer(upgraded, { type: "HATCH_EGG", eggId: "egg-1", at: T0 });
     expect(four.lastHatchOutcome).toMatchObject({ ok: true, eggId: "egg-1" });
     expect(four.rosterOrder).toHaveLength(4);

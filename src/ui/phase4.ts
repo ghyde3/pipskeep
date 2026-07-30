@@ -17,6 +17,17 @@
  *   loot-reveal queue plays sequentially; live returns auto-open the
  *   reveal after a beat. `openLootReveal()` is exposed so other UI (top
  *   bar, focus view) can summon the moment for an already-waiting queue.
+ *
+ * ROUND 2C (docs/retention-bible.md §10): the "while you were away" slot
+ * is now THE DOORSTEP (`ui/welcome.ts`) — the same sheet with the streak,
+ * today's bounty checklist and exactly one nudge folded in as extra
+ * sections. `awaySheet.ts` is unchanged and still does the work:
+ * `deriveDoorstepModel` calls `deriveAwaySheet` for the greeting, the
+ * per-pip need arrows and the homecoming tease, which is why
+ * `awaySheet.test.ts`'s pinned copy still holds. `createAwaySheet` (the
+ * plain DOM shell) is no longer mounted by the app — the Doorstep replaced
+ * it one-for-one at the same mount point, with the same `onDismiss`
+ * contract and the same under-3-minutes suppression.
  */
 
 import "./modals.css";
@@ -34,7 +45,8 @@ import {
   createLootRevealModal,
   createRevealQueueController,
 } from "./lootReveal";
-import { AWAY_SHEET_MIN_ELAPSED_MS, createAwaySheet, deriveAwaySheet } from "./awaySheet";
+import { AWAY_SHEET_MIN_ELAPSED_MS } from "./awaySheet";
+import { createDoorstep, deriveDoorstepModel } from "./welcome";
 
 // ---------------------------------------------------------------------------
 // Pure: state-transition → effects
@@ -237,7 +249,20 @@ export function initPhase4Ui(
     if (script !== null) modal.play(script);
   };
 
-  const sheet = createAwaySheet({
+  // ROUND 2C: the away sheet grew up into THE DOORSTEP (docs/retention-
+  // bible.md §10 — the exact swap `ui/welcome.ts`'s module doc specifies).
+  // Same mount (inside `.pk-phase4`, so `.pk-doorstep`'s z-index resolves
+  // INSIDE that stacking context, above the reveal beneath it), same
+  // `onDismiss` → play the queued reveal contract, same
+  // null-under-3-minutes rule (deriveDoorstepModel delegates to the
+  // untouched deriveAwaySheet for it). The reveal therefore stays exactly
+  // where bible §10.2 wants it: last, and undiluted.
+  //
+  // `openLootReveal`'s `sheet.isOpen()` guard below is what enforces the
+  // round's #1 rule — AT MOST ONE blocking surface on open. A reveal that
+  // arrives while the Doorstep is up does not stack on top of it; it waits
+  // for "Come in", which then plays it.
+  const sheet = createDoorstep({
     mount: root,
     onDismiss: () => openLootReveal(),
   });
@@ -246,7 +271,12 @@ export function initPhase4Ui(
 
   const maybeShowSheet = (summary: CatchupSummary, state: GameState): void => {
     if (modal.isOpen() || sheet.isOpen()) return;
-    const model = deriveAwaySheet(summary, state);
+    // `now` is load-bearing, not decoration: the Doorstep's streak section is
+    // a PROJECTION of `state.streak` forward to this moment (see welcome.ts's
+    // module doc). Opening the app is not a visit, so without it the sheet
+    // paints a streak that has already lapsed and the welcome-back moment
+    // never fires.
+    const model = deriveDoorstepModel(summary, state, clock.now());
     if (model !== null) sheet.show(model);
   };
 

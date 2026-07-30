@@ -62,6 +62,15 @@ import { initPhase5Ui } from "../ui/phase5";
 // pattern as phase4/phase5 — a static import that fails the build
 // loudly if the module goes missing.
 import { initOnboarding, runStarterPick } from "../ui/onboarding";
+// Round 2C dailies (docs/retention-bible.md §3/§4/§5) — same
+// parallel-module, static-import pattern as phase4/phase5/onboarding.
+import { initDailiesUi } from "../ui/dailies";
+// Round 2C destinations: the Album (§1) and the Long Meadow (§2), plus the
+// one thumb-zone menu that reaches them (see ui/navMenu.ts for why it is a
+// menu and not three more floating buttons).
+import { createPipdexView } from "../ui/pipdex";
+import { createSanctuaryView } from "../ui/sanctuary";
+import { createNavMenu } from "../ui/navMenu";
 import { showRecoveryModal } from "../ui/recovery";
 // Round 2A sound (amends spec §12): the `sound(slotId)` seam is no longer
 // a no-op — app/audio/ synthesizes every cue procedurally. initSound is
@@ -269,6 +278,20 @@ async function startGame(
   // the top bar's "!" chip and the return toast wire up to it.
   const phase4 = initPhase4Ui(store, clock);
 
+  // --- Round 2C destinations: the Album + the Long Meadow ---
+  // Created BEFORE the UI overlay because the focus view's "Send to the
+  // Long Meadow" button dispatches into the sanctuary view's confirm
+  // dialog, so `initUi` needs the seam to hand down. Both are dumb
+  // controllers over the store (`ui/pipdex.ts`, `ui/sanctuary.ts`); they
+  // mount their own DOM here and get synced in the subscription below.
+  const pipdexView = createPipdexView({ getState: () => store.getState() });
+  const sanctuaryView = createSanctuaryView({
+    dispatch: (a) => store.dispatch(a),
+    getState: () => store.getState(),
+    clock,
+  });
+  document.body.append(pipdexView.el, sanctuaryView.el);
+
   // --- DOM UI overlay ---
   const ui = initUi({
     mount: document.body,
@@ -276,6 +299,12 @@ async function startGame(
     clock,
     getBubbleAnchor: () => scene.getBubbleAnchor(),
     openReveal: () => phase4.openLootReveal(),
+    // The retire affordance lives in the focus view (that is where a Pip's
+    // own page is), but the dialog, its copy and its dispatch belong to
+    // ui/sanctuary.ts. The confirm sits ABOVE the focus view (z 26 vs 20,
+    // see src/ui/layers.test.ts) deliberately: the focus view stays open
+    // underneath, so cancelling returns the player exactly where they were.
+    openRetireConfirm: (pipId) => sanctuaryView.openRetireConfirm(pipId),
   });
 
   // The mute button — one small speaker, mounted into the UI root now
@@ -306,16 +335,64 @@ async function startGame(
     openFocus: () => ui.openFocus(),
   });
 
+  // --- Round 2C dailies (streak/bounties/milestones, docs/retention-
+  // bible.md) --- self-contained, same mounting pattern as
+  // mountSoundToggle above: its own floating entry button + sheet, no
+  // edits to any other ui/ module. Also owns the session-lifecycle
+  // dispatches the progression core flagged as "for the app layer"
+  // (SET_DAY_OFFSET / SET_ACTIVE_EVENTS / REFRESH_BOUNTIES /
+  // CLAIM_STREAK_REWARD, plus CLAIM_MILESTONE so milestone rewards auto-bank
+  // like everything else) — all idempotent, safe at every boot and foreground
+  // return. The Doorstep (src/ui/welcome.ts) is wired in by `initPhase4Ui`
+  // above, at its away-sheet call site — do NOT add a second one here, or
+  // §10.1's "at most ONE blocking surface on open" breaks.
+  // `mountEntry: false` — the Nook menu below owns the thumb-zone entry
+  // point now. The dailies module's own floating "☀" button landed on top
+  // of the Phase 5 Keep bar's Build button at 375px (same left edge, a
+  // lower z-index), so consolidating was a fix, not a preference.
+  const dailies = initDailiesUi({
+    mount: document.body,
+    store,
+    clock,
+    mountEntry: false,
+  });
+
+  // --- The Nook menu: the one way in to all three 2C destinations ---
+  // ONE SURFACE AT A TIME is enforced here, in the only module that can see
+  // all of them: every pick closes the others first. Without this, the
+  // Album (z 22) simply painted over an open focus view (z 20) and the
+  // player had two live overlays with two backdrops — the same "resolved by
+  // z-index luck" bug the Phase 5 keep bar had.
+  const navMenu = createNavMenu({
+    mount: document.body,
+    getState: () => store.getState(),
+    onPick: (id) => {
+      ui.closeSurfaces();
+      pipdexView.close();
+      sanctuaryView.close();
+      dailies.close();
+      if (id === "album") pipdexView.open();
+      else if (id === "meadow") sanctuaryView.open();
+      else if (id === "today") dailies.open();
+    },
+  });
+
   // --- Store → scene/UI reactions ---
   let prevState = store.getState();
   scene.sync(prevState);
   ui.sync(prevState);
+  pipdexView.sync(prevState);
+  sanctuaryView.sync(prevState);
+  navMenu.sync(prevState);
 
   store.subscribe((state) => {
     const prev = prevState;
     prevState = state;
     scene.sync(state);
     ui.sync(state);
+    pipdexView.sync(state);
+    sanctuaryView.sync(state);
+    navMenu.sync(state);
     watchAlerts(prev, state);
 
     if (state.lastCareOutcome !== prev.lastCareOutcome && state.lastCareOutcome !== null) {

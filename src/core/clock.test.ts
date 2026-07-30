@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { FakeClock, SystemClock, isoStamp } from "./clock";
+import {
+  FakeClock,
+  SystemClock,
+  isoStamp,
+  localDayOffsetMs,
+  monthDayFromMs,
+} from "./clock";
 
 describe("FakeClock", () => {
   it("starts at 0 by default", () => {
@@ -75,6 +81,48 @@ describe("isoStamp", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("monthDayFromMs — round 2C events (bible §8.3)", () => {
+  it("reads the UTC calendar month/day", () => {
+    expect(monthDayFromMs(0)).toEqual({ month: 1, day: 1 });
+    expect(monthDayFromMs(Date.UTC(2026, 6, 29))).toEqual({ month: 7, day: 29 });
+    expect(monthDayFromMs(Date.UTC(2026, 11, 25))).toEqual({ month: 12, day: 25 });
+  });
+});
+
+describe("localDayOffsetMs — the streak day-boundary offset (bible §3.1)", () => {
+  it("puts the day boundary at dayStartHour LOCAL time, whatever the test runner's timezone is", () => {
+    const dayStartHour = 4;
+    const referenceMs = Date.now();
+    const offset = localDayOffsetMs(dayStartHour, referenceMs);
+    const HOUR_MS = 3_600_000;
+    const DAY_MS = 24 * HOUR_MS;
+    const dayIndex = (at: number) => Math.floor((at - offset) / DAY_MS);
+
+    // "Today at dayStartHour, local time" — built from LOCAL Date fields,
+    // so this is honest whatever timezone the runner happens to be in.
+    const ref = new Date(referenceMs);
+    const boundary = new Date(
+      ref.getFullYear(),
+      ref.getMonth(),
+      ref.getDate(),
+      dayStartHour,
+      0,
+      0,
+      0,
+    ).getTime();
+
+    // Flat for the hour approaching the boundary, then +1 exactly at it.
+    expect(dayIndex(boundary - 1)).toBe(dayIndex(boundary - HOUR_MS));
+    expect(dayIndex(boundary + 1) - dayIndex(boundary - 1)).toBe(1);
+  });
+
+  it("reads no ambient time beyond its explicit reference — same reference, same output", () => {
+    const a = localDayOffsetMs(4, 1_000_000);
+    const b = localDayOffsetMs(4, 1_000_000);
+    expect(a).toBe(b);
   });
 });
 

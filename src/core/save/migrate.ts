@@ -21,6 +21,20 @@
 
 import { CURRENT_SCHEMA_VERSION, fromSaveBlob, isPlainRecord } from "./serialize";
 import type { SaveBlob, SaveBlobError } from "./serialize";
+import { createEmptyPipdex, markCaught, markSeen, markVariantCaught } from "../pipdex";
+import type { PipdexPortrait, PipdexState } from "../pipdex";
+import { createEmptySanctuary } from "../sanctuary";
+import { expeditions as contentExpeditions } from "../../content/expeditions";
+import type { LifeStage } from "../pips/types";
+// ROUND 2C — PROGRESSION (docs/retention-bible.md, merged into the SAME
+// v5→v6 step as the Album/Long Meadow above — one version bump, per the
+// orchestrator's instruction to coordinate rather than double-bump). The
+// FLAIR field arrived later, in review, and needed v7 of its own because v6
+// saves already existed by then — see MIGRATIONS[6].
+import { createEmptyStreak } from "../progression/streak";
+import { createEmptyMilestones, grantFounderMilestone } from "../progression/milestones";
+import { createEmptyBounties } from "../progression/bounties";
+import { tuning as contentTuning } from "../../content/tuning";
 
 /**
  * One schema upgrade step: takes a raw vN blob, returns a raw v(N+1)
@@ -36,6 +50,114 @@ export type MigrationStep = (
  * migration must not assume validity: derive the next id counter from
  * the largest `pip-<n>` key actually present, falling back to key count.
  */
+/**
+ * v5 → v6 Album backfill (docs/retention-bible.md §11.3): "never backfill
+ * a counter above the truth, never below what is provable." For every
+ * pip already owned, mark its LIVE species caught at `hatchedAt` with a
+ * portrait frozen from its genome/name; a shiny genome sets the shiny
+ * stamp; an already-evolved pip's variant leaf lands on its BIRTH
+ * species' page (`genome.speciesId` — the immutable record, since the
+ * live `speciesId` already flipped). Then mark "seen" for every species
+ * in the egg pool of every expedition already unlocked at the save's
+ * Keep level (bible: "a slight over-grant of seen... costs nothing").
+ *
+ * Defensive throughout: a pre-v6 blob is not yet validated, so every read
+ * degrades to a safe default rather than throwing — a genuinely corrupt
+ * field surfaces at the final `fromSaveBlob` validation, same as every
+ * other migration step.
+ */
+function derivePipdex(pipsRaw: unknown, keepLevel: number, at: number): PipdexState {
+  let pipdex = createEmptyPipdex();
+  if (isPlainRecord(pipsRaw)) {
+    for (const [pipId, pipValue] of Object.entries(pipsRaw)) {
+      if (!isPlainRecord(pipValue)) continue;
+      const speciesId = pipValue["speciesId"];
+      const genomeValue = pipValue["genome"];
+      if (typeof speciesId !== "string" || !isPlainRecord(genomeValue)) continue;
+
+      const hatchedAt =
+        typeof pipValue["hatchedAt"] === "number" ? pipValue["hatchedAt"] : at;
+      const name = typeof pipValue["name"] === "string" ? pipValue["name"] : speciesId;
+      const personalityId =
+        typeof pipValue["personalityId"] === "string" ? pipValue["personalityId"] : "";
+      const lifeStageAtCatch: LifeStage =
+        pipValue["lifeStage"] === "pipling" ? "pipling" : "adult";
+      const birthSpeciesId =
+        typeof genomeValue["speciesId"] === "string"
+          ? genomeValue["speciesId"]
+          : speciesId;
+
+      const portrait: PipdexPortrait = {
+        pipId,
+        name,
+        genome: {
+          speciesId: birthSpeciesId,
+          palette: typeof genomeValue["palette"] === "string" ? genomeValue["palette"] : "",
+          pattern: typeof genomeValue["pattern"] === "string" ? genomeValue["pattern"] : "",
+          accessorySlots:
+            typeof genomeValue["accessorySlots"] === "number"
+              ? genomeValue["accessorySlots"]
+              : 0,
+          personalityId:
+            typeof genomeValue["personalityId"] === "string"
+              ? genomeValue["personalityId"]
+              : personalityId,
+          shiny: genomeValue["shiny"] === true,
+        },
+        personalityId,
+        lifeStageAtCatch,
+        sourceExpeditionId: null,
+      };
+
+      pipdex = markCaught(pipdex, speciesId, hatchedAt, portrait);
+
+      const evolved = pipValue["evolved"];
+      if (isPlainRecord(evolved) && typeof evolved["variantId"] === "string") {
+        const evolvedAt =
+          typeof evolved["evolvedAt"] === "number" ? evolved["evolvedAt"] : hatchedAt;
+        pipdex = markVariantCaught(pipdex, birthSpeciesId, evolved["variantId"], evolvedAt);
+      }
+    }
+  }
+
+  for (const expedition of Object.values(contentExpeditions)) {
+    if (expedition.unlockKeepLevel > keepLevel) continue;
+    for (const speciesId of expedition.eggSpecies ?? []) {
+      pipdex = markSeen(pipdex, speciesId, at, expedition.id);
+    }
+  }
+
+  return pipdex;
+}
+
+/**
+ * v5 → v6 progression-counter backfill (docs/retention-bible.md §11.3):
+ * "never backfill a counter above the truth, never below what is
+ * provable." Pre-v6 history is partly unknowable, so only the handful of
+ * counters directly reconstructable from the save's OWN shape are
+ * derived; everything else starts at 0 (a fresh save also starts every
+ * counter at 0, so this is not a special case — it is the honest floor).
+ */
+function deriveCounters(pipsRaw: unknown): Record<string, number> {
+  const pips = isPlainRecord(pipsRaw) ? Object.values(pipsRaw) : [];
+  const rosterSize = pips.length;
+  let evolutions = 0;
+  for (const pip of pips) {
+    if (isPlainRecord(pip) && pip["evolved"] !== null && pip["evolved"] !== undefined) {
+      evolutions++;
+    }
+  }
+  return {
+    // Every roster pip but the original starter was, at minimum, hatched
+    // from an egg (a provable lower bound, never the true count if any
+    // roster slot changed hands via the Long Meadow — but never higher).
+    eggsHatched: Math.max(0, rosterSize - 1),
+    evolutions,
+    // The player has visited at least once (this save exists).
+    visitDays: 1,
+  };
+}
+
 function derivePipCounter(pips: unknown): number {
   if (!isPlainRecord(pips)) return 1;
   const keys = Object.keys(pips);
@@ -196,6 +318,86 @@ export const MIGRATIONS: Readonly<Record<number, MigrationStep>> = {
           )
         : pips;
       out["state"] = { ...state, pips: migratedPips };
+    }
+    return out;
+  },
+
+  /**
+   * v5 → v6 (round 2C, docs/retention-bible.md §11): TWO agents' work
+   * merged into this ONE version bump (coordinated per the orchestrator's
+   * instruction — do not double-bump the schema version):
+   *
+   * - `pipdex` (the Album, §1) and `sanctuary` (the Long Meadow, §2), plus
+   *   the matching transient echo. `sanctuary` seeds empty — nothing could
+   *   have been retired before this round shipped — `pipdex` is DERIVED
+   *   from the existing save so a veteran never loses credit for Pips
+   *   they already own (see `derivePipdex` above).
+   * - The PROGRESSION stack (streak/milestones/bounties/counters/eggPity/
+   *   dayOffsetMs/activeEvents/keepsakes): `streak` arrives with FULL
+   *   GRACE (bible §11.1 — "full grace on arrival"), `counters` derives
+   *   the handful of provable lower bounds (`deriveCounters`, §11.3's
+   *   "never above the truth" rule), and a returning v5 player is granted
+   *   the one-time hidden `founder` milestone (§11.3 — "an
+   *   apology-in-flair for the history the save cannot prove... a GIFT,
+   *   never a reset"). Everything else seeds empty, exactly like a fresh
+   *   `createNewGame`.
+   */
+  5: (blob) => {
+    const out: Record<string, unknown> = { ...blob, schemaVersion: 6 };
+    const state = blob["state"];
+    if (isPlainRecord(state)) {
+      const keepLevel =
+        isPlainRecord(state["keep"]) && typeof state["keep"]["level"] === "number"
+          ? state["keep"]["level"]
+          : 1;
+      const at = typeof blob["savedAt"] === "number" ? blob["savedAt"] : 0;
+      out["state"] = {
+        ...state,
+        pipdex: derivePipdex(state["pips"], keepLevel, at),
+        sanctuary: createEmptySanctuary(),
+        lastSanctuaryOutcome: null,
+        streak: createEmptyStreak(contentTuning),
+        dayOffsetMs: 0,
+        counters: deriveCounters(state["pips"]),
+        milestones: grantFounderMilestone(createEmptyMilestones(), at),
+        bounties: createEmptyBounties(),
+        eggPity: {},
+        activeEvents: [],
+        keepsakes: {},
+      };
+    }
+    return out;
+  },
+
+  /**
+   * v6 → v7: EARNED FLAIR (docs/retention-bible.md §4.3).
+   *
+   * Round 2C shipped 22 `kind: "flair"` milestone rewards against no state
+   * field, no serializer entry and no renderer, so every long-haul target in
+   * the game paid literally nothing. `GameState.flair` (`flairId → earnedAt`)
+   * is the fix, and it needs its own version because v6 saves already exist.
+   *
+   * The one seeded entry: a v5 veteran was granted the hidden `founder`
+   * milestone by the step above, and that milestone's reward IS a flourish
+   * (`album-founder-stamp`). Granting the milestone without the flair would
+   * make the apology-in-flair the last remaining place where flair paid
+   * nothing — so it is read back off `milestones.earned` here (whatever route
+   * the save took to v6) and stamped into the Album's cover.
+   *
+   * Forward-only, like every other flair grant: nothing removes an entry.
+   */
+  6: (blob) => {
+    const out: Record<string, unknown> = { ...blob, schemaVersion: 7 };
+    const state = blob["state"];
+    if (isPlainRecord(state)) {
+      const flair: Record<string, number> = {};
+      const milestones = state["milestones"];
+      const earned = isPlainRecord(milestones) ? milestones["earned"] : undefined;
+      const founderAt = isPlainRecord(earned) ? earned["founder"] : undefined;
+      if (typeof founderAt === "number") {
+        flair["album-founder-stamp"] = founderAt;
+      }
+      out["state"] = { ...state, flair };
     }
     return out;
   },

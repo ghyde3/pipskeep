@@ -16,6 +16,17 @@ Phase-gate log and decision journal, per spec §13–§15. Append entries; never
 
 ## Gate log
 
+### Round 2C — Full gamification stack — 2026-07-30
+Design-first again: `docs/retention-bible.md` planned every system with its numbers and its anti-dark-pattern justification before any feature code. **1553 tests** (was 1053). Save schema v5→v6 with migration + fixture.
+
+- **Shipped:** the Album (Pipdex with seen/caught tiers, frozen first portraits, shiny stamps, per-line gift-variant "Grove Ledger"), the **Long Meadow** (sanctuary), daily streak with a grace bank, 34 milestones, daily bounties, per-pip expedition mastery, visible egg pity counter, annually-recurring events, loot multipliers, and **the Doorstep** — one blocking surface on open, replacing what would otherwise have been five stacked modals.
+- **The structural problem is solved.** 14 collectable forms against a roster cap of 5 previously meant deleting Pips to collect. The Long Meadow has **unlimited capacity permanently** (a capped sanctuary just recreates the problem), retired Pips' needs snap once to 80/80/80/100 and then never change — they leave the decay loop entirely, so storage can never become punishment — and `ageMs`/`happinessIntegral` **freeze**, which stops the sanctuary becoming the optimal way to farm evolutions. `minStayMs` of 8h exists solely so "retire → ask home" isn't a free full heal routing around care. Verb pair is "Send to the Long Meadow" / "Ask them home", never release/store/delete.
+- **An exploit found and closed by the design pass:** `REMOVE_ITEM` refunds a placement's full cost, so any granted/free decoration would have been a resource printer. Fixed with a `granted` flag and a keepsakes shelf (refund 0, re-placeable free forever).
+- **The verification stage did its most valuable work yet.** A mutation tester found a **blocker** — nothing proved that a streak break preserved state outside `StreakState`, i.e. the exact guardrail I'd made non-negotiable. The fix is a strong test: build a real 3-day streak, bank a real milestone, run a control, then assert every other slice of `GameState` is byte-identical across a 100-day gap.
+- **Three majors, all real, all fixed:** 20 of 34 milestone rewards were `kind: "flair"` against **no registry, no state field and no renderer** — every long-haul target (14/14 Album, 21/21 Ledger, 30-day streak, 100 bounties) paid literally nothing. This is the same failure mode as `evolved.variantId`, and the fix cites spec v1.3's standing rule by name. The visit-day whitelist omitted every build/purchase action, so a session the player genuinely played could be recorded as an absence. And the Doorstep showed an already-lapsed streak then silently reset it with no welcome-back message — the one moment the whole forgiving-streak design existed for.
+- Guardrail held: rewards for showing up, never punishment for absence. Events recur **annually** so "you missed it" is always "it comes back", and the `availableWindow` field is consumed as *featured*, never *gating*.
+
+
 ### Round 2B — Big content expansion — 2026-07-29
 Design-first round: a 932-line content bible (`docs/content-bible.md`) planned everything, with the economy verified against the *real* loot roller rather than estimated, then three authors implemented it in parallel.
 

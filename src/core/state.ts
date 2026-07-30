@@ -135,6 +135,81 @@ import {
 import type { JobCatchupState, JobOutcome, JobsByPip, JobTick } from "./keep/jobs";
 import { spend } from "./economy";
 import type { ResourceBundle } from "./economy";
+// ROUND 2C — RETENTION (docs/retention-bible.md §1/§2, orchestrator
+// ruling: build the Album + the Long Meadow so a 14-form collection is
+// reachable without ever deleting a Pip, content-bible §9 risk 7).
+import {
+  createEmptyPipdex,
+  markCaught as markPipdexCaught,
+  markSeen as markPipdexSeen,
+  markVariantCaught as markPipdexVariantCaught,
+} from "./pipdex";
+import type { PipdexPortrait, PipdexState } from "./pipdex";
+import {
+  createEmptySanctuary,
+  retirePip as retireToSanctuary,
+  retrievePip as retrieveFromSanctuary,
+} from "./sanctuary";
+import type { SanctuaryOutcome, SanctuaryState } from "./sanctuary";
+// ROUND 2C — PROGRESSION (docs/retention-bible.md, the streak/milestone/
+// bounty/mastery/pity/event/multiplier stack). Every module below is
+// content-injectable and pure, per the established core/ pattern; this
+// file is where they're composed against the real GameState.
+import { canAfford } from "./economy";
+import {
+  createEmptyStreak,
+  dayIndex as streakDayIndex,
+  pickKeepsakeOffers,
+  resolveLadderReward,
+  streakLootBonus,
+  touchVisit,
+} from "./progression/streak";
+import type { StreakChoice, StreakState } from "./progression/streak";
+import {
+  claimMilestone,
+  createEmptyMilestones,
+  detectNewlyEarnable,
+  grantFounderMilestone,
+} from "./progression/milestones";
+import type { MilestoneMetricContext, MilestoneState } from "./progression/milestones";
+import {
+  applyBountyEvent,
+  createEmptyBounties,
+  ensureBountiesForDay,
+  replaceStaleBounties,
+  rerollBountySlot,
+} from "./progression/bounties";
+import type {
+  BountiesState,
+  BountyContext,
+  BountyProgressEvent,
+} from "./progression/bounties";
+import {
+  incrementMasteryTrips,
+  masteryBonusRollChance,
+  masteryEggChanceBonusPoints,
+  masteryTier,
+} from "./progression/mastery";
+import {
+  guaranteedDrawPool,
+  isPityGuaranteed,
+  pityThresholdFor,
+  rarestTierInPool,
+  updatePityCounter,
+} from "./progression/pity";
+import type { PitySpeciesEntry } from "./progression/pity";
+import {
+  applyEggChanceBonus,
+  effectiveEggChanceBonusPoints,
+  effectiveLootBonusChance,
+} from "./progression/multipliers";
+import {
+  activeEventEggChanceBonusPoints,
+  activeEventLootBonusChance,
+  eventAdjustedPityThreshold,
+} from "./progression/events";
+import { BOUNTY_TEMPLATES as contentBountyTemplates } from "../content/bountyTemplates";
+import { MILESTONES as contentMilestones } from "../content/milestones";
 
 /** Genesis stream (starter rolls at createNewGame). Its cursor persists
  * in `rngState` like every other stream (spec §2 rule 3). */
@@ -222,6 +297,63 @@ export interface GameState {
   /** Guided-onboarding progress (spec §10/§10.1). Fresh games start at
    * step "feed"; migrated saves arrive completed. */
   readonly onboarding: OnboardingState;
+  /** ROUND 2C — the Album (docs/retention-bible.md §1): seen/caught
+   * record, forever additive (spec §4.4's "never punish" guardrail —
+   * nothing in this round ever clears an entry). Migrated saves derive
+   * it from every Pip already owned (§11.3) so a veteran never loses
+   * credit. */
+  readonly pipdex: PipdexState;
+  /** ROUND 2C — the Long Meadow (docs/retention-bible.md §2): retired
+   * Pips, UNLIMITED capacity, permanently (a cap would recreate the
+   * delete-a-Pip problem it exists to solve — content-bible §9 risk 7).
+   * Residents are excluded from TICK/CATCHUP's per-pip pass by
+   * construction (they simply aren't in `pips`/`rosterOrder`) — that
+   * exclusion IS the freeze (§2.4), not a stored flag. */
+  readonly sanctuary: SanctuaryState;
+  /** Outcome of the most recent RETIRE_PIP / RETRIEVE_PIP (send-off or
+   * homecoming moment, or a friendly refusal) — parked like every other
+   * `last*Outcome` echo. Null until the first attempt. */
+  readonly lastSanctuaryOutcome: SanctuaryOutcome | null;
+  /** ROUND 2C — the daily streak (docs/retention-bible.md §3). A broken
+   * streak may cost only `current`'s bonus TIER — `longest`,
+   * `totalVisitDays` and `rainDays` are forward-only (spec §4.4's
+   * guardrail, restated for this round). */
+  readonly streak: StreakState;
+  /** ROUND 2C — the day-boundary offset streak/bounty day-indexing reads
+   * (bible §3.1): sets the LOCAL 04:00 boundary. Set at boot by
+   * `SET_DAY_OFFSET` (the app layer owns `Date`, spec §2 rule 2); `0`
+   * until then behaves like a UTC-midnight boundary — harmless, since a
+   * boundary shift can only ever gift a streak day, never take one. */
+  readonly dayOffsetMs: number;
+  /** ROUND 2C — forward-only counter bag milestones read
+   * (bible §4.1). Every entry only ever increases. */
+  readonly counters: Readonly<Record<string, number>>;
+  /** ROUND 2C — milestones earned + awaiting celebration (bible §4). */
+  readonly milestones: MilestoneState;
+  /** ROUND 2C — today's three bounties, level-aware and lazily
+   * regenerated (bible §5). */
+  readonly bounties: BountiesState;
+  /** ROUND 2C — visible, per-biome egg-pity counters (bible §7): misses
+   * since that biome's last rarest-tier hatch. Absent key ≡ 0. Never
+   * resets on absence — only ever by paying out. */
+  readonly eggPity: Readonly<Record<string, number>>;
+  /** ROUND 2C — ids of the events currently active (bible §8.3), set by
+   * the app layer's `SET_ACTIVE_EVENTS` (core never asks what day it is).
+   * A stale list can only ever have granted a bonus, never taken one. */
+  readonly activeEvents: readonly string[];
+  /** ROUND 2C — granted-but-unplaced decorations (bible §11.2): a
+   * streak/milestone keepsake reward lands here, re-placeable for FREE
+   * (never refunded on removal — `REMOVE_ITEM` returns a granted
+   * placement here instead of refunding resources, closing the
+   * free-decoration resource-printer exploit). Keyed by decoration id. */
+  readonly keepsakes: Readonly<Record<string, number>>;
+  /** ROUND 2C — earned FLAIR (bible §4.3): `flairId → earnedAt`. Pure
+   * decoration — the Album's cover stamps and page frame, the Long Meadow's
+   * gate signs, a Pip's title (`content/flair.ts` says where each one
+   * draws). Grants nothing, costs the economy nothing, and is FORWARD-ONLY:
+   * nothing in the game removes a flourish, so a break can never take one
+   * (bible §0.1). Absent key ≡ not earned. */
+  readonly flair: Readonly<Record<string, number>>;
 }
 
 /** What one EVOLVE_PIP request did — the UI's evolution-moment data
@@ -280,6 +412,7 @@ export type GameAction =
       readonly itemId: string;
       readonly x: number;
       readonly y: number;
+      readonly at: number;
     }
   /** Move an existing placement (spec §9). Same refusal contract. */
   | {
@@ -287,18 +420,19 @@ export type GameAction =
       readonly placementId: PlacementId;
       readonly x: number;
       readonly y: number;
+      readonly at: number;
     }
   /** Remove a placement (spec §9). A pip working at the removed station
    * is unassigned back to Idle (its job cannot outlive the station). */
-  | { readonly type: "REMOVE_ITEM"; readonly placementId: PlacementId }
+  | { readonly type: "REMOVE_ITEM"; readonly placementId: PlacementId; readonly at: number }
   /** Buy the NEXT Keep level (spec §6.3/§9): exact bundle deduction of
    * the content-defined cost. Refused (state unchanged) at max level or
    * when short. Level 2 unlocks Forest + the extra plot; level 3
    * unlocks Shore + makes the roster upgrade purchasable. */
-  | { readonly type: "PURCHASE_KEEP_LEVEL" }
+  | { readonly type: "PURCHASE_KEEP_LEVEL"; readonly at: number }
   /** Buy the roster upgrade (spec §7.4): cap 3 → 5. Requires Keep level
    * 3 (content prerequisite), not already owned, and the content cost. */
-  | { readonly type: "PURCHASE_ROSTER_UPGRADE" }
+  | { readonly type: "PURCHASE_ROSTER_UPGRADE"; readonly at: number }
   /** Put a pip to work at a placed Gathering Station (spec §6.2). */
   | {
       readonly type: "ASSIGN_JOB";
@@ -308,7 +442,7 @@ export type GameAction =
     }
   /** Return a working pip to Idle (spec §6.2: jobs never end on their
    * own). */
-  | { readonly type: "UNASSIGN_JOB"; readonly pipId: PipId }
+  | { readonly type: "UNASSIGN_JOB"; readonly pipId: PipId; readonly at: number }
   /** The player taps a glowing pip (spec §4.6): apply its evolution.
    * Legal ONLY when `readyToEvolve` — this action is the sole caller of
    * applyEvolution; TICK/CATCHUP never evolve. */
@@ -335,7 +469,59 @@ export type GameAction =
    * trusts it. Transient UI echoes are nulled so the swap does not replay
    * a stale care animation; callers follow up with CATCHUP over
    * `savedAt → now`, exactly like boot. */
-  | { readonly type: "LOAD_SAVE"; readonly state: GameState };
+  | { readonly type: "LOAD_SAVE"; readonly state: GameState }
+  /** ROUND 2C — "Send to the Long Meadow" (docs/retention-bible.md §2.3).
+   * Legal from Idle/Resting/Sulking/AssignedJob (a working pip is
+   * auto-unassigned first, mirroring REMOVE_ITEM); refused for
+   * OnExpedition/Returning (loot in flight) and the last active Pip. */
+  | { readonly type: "RETIRE_PIP"; readonly pipId: PipId; readonly at: number }
+  /** ROUND 2C — "Ask them home" (docs/retention-bible.md §2.5). Free,
+   * gated only by `minStayMs` (a settling-in period, not a countdown) and
+   * the roster cap (refused warmly, never a wall). */
+  | { readonly type: "RETRIEVE_PIP"; readonly pipId: PipId; readonly at: number }
+  /** ROUND 2C — the app layer's daily recomputation of the streak/bounty
+   * day-boundary offset (bible §3.1), via `core/clock.ts`'s
+   * `localDayOffsetMs`. Dispatched at boot and on `visibilitychange`; a
+   * DST/travel shift this produces can only ever gift a streak day, never
+   * take one (the `delta <= 0` no-op in `progression/streak.ts`). */
+  | { readonly type: "SET_DAY_OFFSET"; readonly offsetMs: number }
+  /** ROUND 2C — the app layer's resolved set of currently-active seasonal
+   * events (bible §8.3), via `core/progression/events.ts`'s
+   * `resolveActiveEvents` over a `monthDayFromMs`-derived date. Core never
+   * asks what day it is; a stale list can only ever grant a bonus, never
+   * take one. */
+  | { readonly type: "SET_ACTIVE_EVENTS"; readonly ids: readonly string[] }
+  /** ROUND 2C — grant a milestone's reward (bible §4). Idempotent:
+   * claiming an already-earned id is a no-op (no double-grant, tested). */
+  | { readonly type: "CLAIM_MILESTONE"; readonly id: string; readonly at: number }
+  /** ROUND 2C — the free daily bounty reroll (bible §5.4). Refused
+   * (state unchanged) once the free-reroll budget is spent. */
+  | { readonly type: "REROLL_BOUNTY"; readonly slot: number; readonly at: number }
+  /** ROUND 2C — lazily (re)generate today's bounty trio (bible §5.1).
+   * EXPLICIT rather than fired automatically from every care action (an
+   * integration-safety boundary — see `touchProgressionVisit`'s doc
+   * comment): the app layer dispatches this once per session/day-change,
+   * same spirit as `SET_DAY_OFFSET`/`SET_ACTIVE_EVENTS`. Idempotent for
+   * the same day (state unchanged by reference when already current). */
+  | { readonly type: "REFRESH_BOUNTIES"; readonly at: number }
+  /** ROUND 2C — bank the current streak day's ladder reward (bible §3.3):
+   * a plain grant auto-applies immediately; a choice day (5/7) parks a
+   * `StreakChoice` in `pendingChoices` for `RESOLVE_STREAK_CHOICE`.
+   * EXPLICIT rather than automatic (see `touchProgressionVisit`'s doc
+   * comment) — idempotent via `rewardedForDay`, so dispatching it more
+   * than once for the same streak day is a no-op. */
+  | { readonly type: "CLAIM_STREAK_REWARD"; readonly at: number }
+  /** ROUND 2C — resolve a WAITING streak/bounty choice reward (the day-5
+   * keepsake pick, the day-7 or bounty-day-clear egg pick, bible §3.3/
+   * §5.6). `forDay`+`kind` together identify the specific pending choice
+   * (idempotent — resolving an already-gone choice is a no-op). */
+  | {
+      readonly type: "RESOLVE_STREAK_CHOICE";
+      readonly kind: StreakChoice["kind"];
+      readonly forDay: number;
+      readonly choiceIndex: number;
+      readonly at: number;
+    };
 
 /**
  * Starter hunger (spec §10.1: "Hunger bar is visibly at ~60" so the
@@ -552,6 +738,18 @@ export function createNewGame(
     needs,
   });
 
+  // ROUND 2C: the starter is the player's first Album entry (bible
+  // §11.3 — a fresh game is exactly the "nothing provable" case the v6
+  // migration otherwise has to reconstruct).
+  const pipdex = markPipdexCaught(createEmptyPipdex(), starter.speciesId, now, {
+    pipId: starter.id,
+    name: starter.name,
+    genome: starter.genome,
+    personalityId: starter.personalityId,
+    lifeStageAtCatch: starter.lifeStage,
+    sourceExpeditionId: null,
+  });
+
   return {
     pips: { [starterId]: starter },
     rosterOrder: [starterId],
@@ -581,6 +779,22 @@ export function createNewGame(
     // The guided beats start at the first prompt (spec §10.1.3) — the
     // pick already happened, or this state could not exist.
     onboarding: { completed: false, step: "feed" },
+    pipdex,
+    sanctuary: createEmptySanctuary(),
+    lastSanctuaryOutcome: null,
+    // ROUND 2C: a fresh save starts with nothing to break — full grace,
+    // no counters, no bounties generated yet (the first visit action
+    // lazily generates day 0's trio), no active events (the app layer
+    // resolves and dispatches SET_ACTIVE_EVENTS at boot).
+    streak: createEmptyStreak(contentTuning),
+    dayOffsetMs: 0,
+    counters: {},
+    milestones: createEmptyMilestones(),
+    bounties: createEmptyBounties(),
+    eggPity: {},
+    activeEvents: [],
+    keepsakes: {},
+    flair: {},
   };
 }
 
@@ -596,6 +810,569 @@ function mapPips(
   return pips;
 }
 
+// ---------------------------------------------------------------------------
+// ROUND 2C — PROGRESSION composition helpers (docs/retention-bible.md).
+//
+// The base switch below (renamed `baseReducer`) is untouched Phase 0–2B
+// logic; `rootReducer` at the bottom of this section wraps it with the
+// progression stack's side effects (streak/bounty visit-touch, counters,
+// milestone detection) WITHOUT altering any existing action's own return
+// value — every `.toBe(state)` reference-equality contract the base
+// switch already promises (SET_ACTIVE_PIP, PURCHASE_KEEP_LEVEL,
+// ACKNOWLEDGE_REVEAL, MOVE_ITEM, …) is preserved because the wrapper is a
+// no-op whenever `baseReducer` itself returned the SAME reference (a true
+// structural refusal never touches progression state either).
+// ---------------------------------------------------------------------------
+
+/** Every expedition id unlocked at `level`, in registry order. */
+function unlockedExpeditionIdsAt(level: number): readonly string[] {
+  return Object.values(contentExpeditions)
+    .filter((exp) => exp.unlockKeepLevel <= level)
+    .map((exp) => exp.id);
+}
+
+/**
+ * The already-composed, already-clamped loot-bonus roll chance for ONE
+ * pip's trip on ONE biome (docs/retention-bible.md §9): Curious's own
+ * +10% (folded in here so `rollExpeditionLoot`'s override path replaces
+ * rather than adds to its internal calculation, per that function's doc
+ * comment) plus this pip's mastery tier in the biome plus the player's
+ * current streak tier plus any active event's contribution — summed then
+ * clamped by `core/progression/multipliers.ts`. A fresh save (no mastery,
+ * no streak, no event, non-Curious pip) evaluates to exactly 0; a Curious
+ * one evaluates to exactly `tuning.quirks.curiousLootBonus` — both
+ * BYTE-IDENTICAL to the pre-round-2C behaviour (the cursor-parity
+ * contract `rollExpeditionLoot`'s doc comment describes).
+ */
+function resolveLootBonusChanceFor(
+  state: GameState,
+  pip: PipState,
+  expeditionId: string,
+): number {
+  const expedition = contentExpeditions[expeditionId as keyof typeof contentExpeditions];
+  const durationMs = expedition?.durationMs ?? 0;
+  const trips = pip.mastery?.[expeditionId] ?? 0;
+  return effectiveLootBonusChance(
+    {
+      curious: pip.personalityId === "curious",
+      masteryBonusChance: masteryBonusRollChance(trips, durationMs, contentTuning),
+      streakBonusChance: streakLootBonus(state.streak, contentTuning),
+      eventBonusChance: activeEventLootBonusChance(state.activeEvents, contentTuning),
+    },
+    contentTuning,
+  );
+}
+
+/**
+ * The already-composed egg chance for ONE pip's trip on ONE biome
+ * (docs/retention-bible.md §6.3 mastery top tier + §8.4 event bonus): the
+ * biome's base `eggChance` plus the summed-then-clamped bonus POINTS, with
+ * `eggChanceCeiling` as a hard ceiling so a biome's odds can never become
+ * a certainty. This is the ONE call site of the egg-chance channel — the
+ * mirror of `resolveLootBonusChanceFor` for the loot channel, and the
+ * reason mastery tier 5's "small additive egg-chance bonus" and Lantern
+ * Nights' `eggChanceBonusPoints` are things that actually happen in game.
+ *
+ * A fresh save (no mastery, no event) evaluates to exactly the biome's
+ * base `eggChance`, so the egg roll is byte-identical to before this round
+ * — and because the roll is a single `stream.chance` call whatever the
+ * probability, the cursor cannot shift even when a bonus IS active.
+ */
+function resolveEggChanceFor(
+  state: GameState,
+  pip: PipState,
+  expeditionId: string,
+): number {
+  const expedition = contentExpeditions[expeditionId as keyof typeof contentExpeditions];
+  if (expedition === undefined) return 0;
+  const trips = pip.mastery?.[expeditionId] ?? 0;
+  const points = effectiveEggChanceBonusPoints(
+    {
+      masteryPoints: masteryEggChanceBonusPoints(
+        trips,
+        expedition.durationMs,
+        contentTuning,
+      ),
+      eventPoints: activeEventEggChanceBonusPoints(state.activeEvents, expeditionId),
+    },
+    contentTuning,
+  );
+  return applyEggChanceBonus(expedition.eggChance, points, contentTuning);
+}
+
+/** Structural species-rarity view for `progression/pity.ts`, built once
+ * from the real species registry (opaque ids — spec §2 rule 5). */
+const PITY_SPECIES_VIEW: Readonly<Record<string, PitySpeciesEntry>> = (() => {
+  const view: Record<string, PitySpeciesEntry> = {};
+  for (const entry of Object.values(contentSpecies)) {
+    view[entry.id] = { id: entry.id, rarity: entry.rarity };
+  }
+  return view;
+})();
+
+/** The rarity-tagged species pool for a biome's eggSpecies list (pity's
+ * own structural view — mirrors `eggSpeciesPoolFor`'s registry lookup,
+ * kept separate because pity wants rarity tags, not genome rolling
+ * shape). */
+function pitySpeciesPoolFor(expeditionId: string): readonly PitySpeciesEntry[] {
+  const ids =
+    (
+      contentExpeditions as Readonly<Record<string, { eggSpecies?: readonly string[] }>>
+    )[expeditionId]?.eggSpecies ?? [];
+  return ids
+    .map((id) => PITY_SPECIES_VIEW[id])
+    .filter((entry): entry is PitySpeciesEntry => entry !== undefined);
+}
+
+/** Everything a bounty needs to know about the player's CURRENT
+ * capabilities (bible §5.3) — built fresh from the real GameState. */
+function buildBountyContext(state: GameState): BountyContext {
+  const placedItemIds = new Set(
+    Object.values(state.keep.placements).map((p) => p.itemId),
+  );
+  const unlockedExpeditionIds = new Set(unlockedExpeditionIdsAt(state.keep.level));
+  const obtainableItemIds = new Set<string>();
+  for (const exp of Object.values(contentExpeditions)) {
+    if (exp.unlockKeepLevel > state.keep.level) continue;
+    for (const entry of exp.lootTable) obtainableItemIds.add(entry.itemId);
+  }
+  const rosterPips = state.rosterOrder
+    .map((id) => state.pips[id])
+    .filter((pip): pip is PipState => pip !== undefined);
+  const hasAdultPip = rosterPips.some((pip) => pip.lifeStage === LifeStage.Adult);
+  const hasAffordableDecoration = contentDecorations.some((deco) =>
+    canAfford(state.resources, deco.cost),
+  );
+  return {
+    keepLevel: state.keep.level,
+    rosterSize: state.rosterOrder.length,
+    hasAdultPip,
+    placedItemIds,
+    unlockedExpeditionIds,
+    obtainableItemIds,
+    hasAffordableDecoration,
+  };
+}
+
+/** Everything a milestone's metric might read (bible §4), composed from
+ * the real GameState — active roster AND Long Meadow residents both
+ * count for age/mastery metrics (retiring must never cost progress). */
+function buildMilestoneContext(state: GameState): MilestoneMetricContext {
+  const allPips = [
+    ...Object.values(state.pips),
+    ...Object.values(state.sanctuary.pips).map((record) => record.pip),
+  ];
+  let oldestPipAgeMs = 0;
+  let masteryTierAnyBiome = 0;
+  const biomeIds = Object.keys(contentExpeditions);
+  const bestTierPerBiome: Record<string, number> = {};
+  for (const pip of allPips) {
+    oldestPipAgeMs = Math.max(oldestPipAgeMs, pip.ageMs);
+    for (const biomeId of biomeIds) {
+      const trips = pip.mastery?.[biomeId] ?? 0;
+      const durationMs =
+        (contentExpeditions as Readonly<Record<string, { durationMs: number }>>)[biomeId]
+          ?.durationMs ?? 0;
+      const tier = masteryTier(trips, durationMs, contentTuning);
+      masteryTierAnyBiome = Math.max(masteryTierAnyBiome, tier);
+      bestTierPerBiome[biomeId] = Math.max(bestTierPerBiome[biomeId] ?? 0, tier);
+    }
+  }
+  const masteryTierAllBiomes =
+    biomeIds.length > 0
+      ? Math.min(...biomeIds.map((id) => bestTierPerBiome[id] ?? 0))
+      : 0;
+  return {
+    counters: state.counters,
+    albumForms: state.pipdex.formsCaught,
+    ledgerVariants: state.pipdex.variantsCaught,
+    streakLongest: state.streak.longest,
+    masteryTierAnyBiome,
+    masteryTierAllBiomes,
+    oldestPipAgeMs,
+    sanctuaryResidents: state.sanctuary.order.length,
+  };
+}
+
+/** Additively bump one or more counters by `amount` (default 1). Pure. */
+function bumpCounters(
+  counters: Readonly<Record<string, number>>,
+  ids: readonly string[],
+  amount = 1,
+): Readonly<Record<string, number>> {
+  if (ids.length === 0) return counters;
+  const next = { ...counters };
+  for (const id of ids) next[id] = (next[id] ?? 0) + amount;
+  return next;
+}
+
+/**
+ * ROUND 2C counters (bible §4.1) — every id this build's milestone
+ * registry actually reads. Derives what happened from the OUTCOME the
+ * base reducer just parked (never re-validates legality itself — the
+ * base switch already decided whether the action applied) plus, for
+ * ACKNOWLEDGE_REVEAL/PLACE_ITEM/PURCHASE_*, a before/after diff against
+ * `prev` (the pre-dispatch state).
+ */
+function bumpCountersForAction(
+  prev: GameState,
+  next: GameState,
+  action: GameAction,
+): GameState {
+  switch (action.type) {
+    case "FEED":
+    case "CLEAN":
+    case "PLAY":
+    case "PET":
+    case "GIVE_ITEM": {
+      if (next.lastCareOutcome?.applied !== true) return next;
+      const perActionCounter: Readonly<Record<string, string>> = {
+        FEED: "feeds",
+        CLEAN: "cleans",
+        PLAY: "plays",
+        PET: "pets",
+        GIVE_ITEM: "gifts",
+      };
+      const counterId = perActionCounter[action.type] as string;
+      return { ...next, counters: bumpCounters(next.counters, [counterId, "careActions"]) };
+    }
+    case "REST_TOGGLE": {
+      if (next.lastCareOutcome?.applied !== true) return next;
+      // "naps" counts STARTING a rest (the player-witnessed moment of
+      // putting a Pip down) — auto-wake is a TICK/CATCHUP event, not a
+      // dispatched visit, so it is not the moment this counter models.
+      const pip = next.pips[action.pipId];
+      const startedResting = pip?.activity === PipActivity.Resting;
+      const counterIds = startedResting ? ["naps", "careActions"] : ["careActions"];
+      return { ...next, counters: bumpCounters(next.counters, counterIds) };
+    }
+    case "ASSIGN_EXPEDITION": {
+      if (next.lastAssignOutcome?.ok !== true) return next;
+      return {
+        ...next,
+        counters: bumpCounters(next.counters, [
+          "expeditionsTotal",
+          `expeditions.${action.expeditionId}`,
+        ]),
+      };
+    }
+    case "ACKNOWLEDGE_REVEAL": {
+      // `itemsCollected` (a per-item COUNT, not a flat +1) is bumped
+      // separately in `applyProgressionEffects` via
+      // `itemsCollectedThisReveal` — this arm only handles the flat +1
+      // `eggsFound` counter.
+      const reveal = prev.pendingReveals[0];
+      if (reveal === undefined || reveal.egg === null) return next;
+      return { ...next, counters: bumpCounters(next.counters, ["eggsFound"]) };
+    }
+    case "HATCH_EGG": {
+      if (next.lastHatchOutcome?.ok !== true) return next;
+      const hatchling = next.pips[next.lastHatchOutcome.pipId];
+      const counterIds = ["eggsHatched"];
+      if (hatchling?.genome.shiny === true) counterIds.push("shiniesFound");
+      return { ...next, counters: bumpCounters(next.counters, counterIds) };
+    }
+    case "ASSIGN_JOB": {
+      if (next.lastJobOutcome?.action !== "assignJob" || !next.lastJobOutcome.ok) {
+        return next;
+      }
+      return { ...next, counters: bumpCounters(next.counters, ["jobsAssigned"]) };
+    }
+    case "EVOLVE_PIP": {
+      if (next.lastEvolveOutcome?.ok !== true) return next;
+      return { ...next, counters: bumpCounters(next.counters, ["evolutions"]) };
+    }
+    case "RETIRE_PIP": {
+      if (next.lastSanctuaryOutcome?.ok !== true) return next;
+      return { ...next, counters: bumpCounters(next.counters, ["sanctuaryArrivals"]) };
+    }
+    case "RETRIEVE_PIP": {
+      if (next.lastSanctuaryOutcome?.ok !== true) return next;
+      return { ...next, counters: bumpCounters(next.counters, ["sanctuaryReturns"]) };
+    }
+    case "PLACE_ITEM": {
+      if (next.keep === prev.keep) return next; // refused
+      const isDecoration = contentDecorations.some((d) => d.id === action.itemId);
+      if (!isDecoration) return next;
+      return { ...next, counters: bumpCounters(next.counters, ["decorationsPlaced"]) };
+    }
+    case "PURCHASE_KEEP_LEVEL": {
+      if (next.keep.level === prev.keep.level) return next; // refused
+      const counterId = `keepLevel${next.keep.level}Reached`;
+      return { ...next, counters: bumpCounters(next.counters, [counterId]) };
+    }
+    case "PURCHASE_ROSTER_UPGRADE": {
+      if (!next.rosterUpgradePurchased || prev.rosterUpgradePurchased) return next;
+      return { ...next, counters: bumpCounters(next.counters, ["rosterUpgradePurchased"]) };
+    }
+    default:
+      return next;
+  }
+}
+
+/** Item counts collected on THIS acknowledge (bible §4.1 `itemsCollected`
+ * — the raw count of items landed, egg or not). Kept as its own tiny
+ * helper because `bumpCountersForAction`'s ACKNOWLEDGE_REVEAL arm above
+ * needed a second pass anyway (a defensive style choice, not a
+ * requirement) — this is the actually-used implementation. */
+function itemsCollectedThisReveal(prev: GameState): number {
+  return prev.pendingReveals[0]?.items.length ?? 0;
+}
+
+/** Milestone-worthy roster-size / biome-coverage totals that are cheaper
+ * to RECOMPUTE than to diff (both are monotonic functions of already-
+ * forward-only counters, so recomputing can never regress them). */
+function withDerivedCounters(state: GameState): GameState {
+  let counters = state.counters;
+  if (state.rosterOrder.length >= 3 && (counters["rosterSizeReached3"] ?? 0) < 1) {
+    counters = bumpCounters(counters, ["rosterSizeReached3"]);
+  }
+  const biomesVisited = Object.keys(contentExpeditions).filter(
+    (id) => (counters[`expeditions.${id}`] ?? 0) > 0,
+  ).length;
+  if (biomesVisited !== (counters["biomesVisited"] ?? 0)) {
+    counters = { ...counters, biomesVisited };
+  }
+  return counters === state.counters ? state : { ...state, counters };
+}
+
+/** Mastery increments at the moment a trip's reveal is acknowledged (the
+ * player-witnessed "trip completed" moment, bible §6.1) — reads the
+ * PRE-dispatch reveal (`prev`, before ACKNOWLEDGE_REVEAL consumed it). */
+function applyMasteryForAction(
+  prev: GameState,
+  next: GameState,
+  action: GameAction,
+): GameState {
+  if (action.type !== "ACKNOWLEDGE_REVEAL") return next;
+  const reveal = prev.pendingReveals[0];
+  if (reveal === undefined) return next;
+  const pip = next.pips[reveal.pipId];
+  if (pip === undefined) return next;
+  const mastery = incrementMasteryTrips(pip.mastery, reveal.expeditionId);
+  return { ...next, pips: { ...next.pips, [pip.id]: { ...pip, mastery } } };
+}
+
+/** Bounty progress events implied by an action's OUTCOME (bible §5) —
+ * auto-banks completed bounties' rewards and the day-clear bonus egg
+ * choice the instant they fire (no claim step, per §5.4/§3.5's "auto-bank
+ * the instant they're earned"). */
+function applyBountyProgressForAction(
+  prev: GameState,
+  next: GameState,
+  action: GameAction,
+): GameState {
+  const events: BountyProgressEvent[] = [];
+  switch (action.type) {
+    case "FEED":
+      if (next.lastCareOutcome?.applied === true) events.push({ kind: "feed" });
+      break;
+    case "CLEAN":
+      if (next.lastCareOutcome?.applied === true) events.push({ kind: "clean" });
+      break;
+    case "PLAY":
+      if (next.lastCareOutcome?.applied === true) events.push({ kind: "play" });
+      break;
+    case "PET":
+      if (next.lastCareOutcome?.applied === true) events.push({ kind: "pet" });
+      break;
+    case "REST_TOGGLE":
+      if (
+        next.lastCareOutcome?.applied === true &&
+        next.pips[action.pipId]?.activity === PipActivity.Resting
+      ) {
+        events.push({ kind: "rest" });
+      }
+      break;
+    case "ASSIGN_EXPEDITION":
+      if (next.lastAssignOutcome?.ok === true) {
+        events.push({ kind: "expedition", expeditionId: action.expeditionId });
+      }
+      break;
+    case "ACKNOWLEDGE_REVEAL": {
+      const reveal = prev.pendingReveals[0];
+      if (reveal === undefined) break;
+      const counts: Record<string, number> = {};
+      for (const itemId of reveal.items) counts[itemId] = (counts[itemId] ?? 0) + 1;
+      for (const [itemId, amount] of Object.entries(counts)) {
+        events.push({ kind: "collect", itemId, amount });
+      }
+      break;
+    }
+    case "HATCH_EGG":
+      if (next.lastHatchOutcome?.ok === true) events.push({ kind: "hatch" });
+      break;
+    case "ASSIGN_JOB":
+      if (next.lastJobOutcome?.action === "assignJob" && next.lastJobOutcome.ok) {
+        const placedItemId =
+          next.keep.placements[next.lastJobOutcome.stationPlacementId]?.itemId;
+        events.push({ kind: "job", placedItemId });
+      }
+      break;
+    case "PLACE_ITEM":
+      if (next.keep !== prev.keep && contentDecorations.some((d) => d.id === action.itemId)) {
+        events.push({ kind: "place" });
+      }
+      break;
+    default:
+      break;
+  }
+
+  if (events.length === 0) return next;
+
+  let bounties = next.bounties;
+  let counters = next.counters;
+  for (const event of events) {
+    const result = applyBountyEvent(bounties, event, actionAt(action) ?? next.lastTickAt);
+    bounties = result.bounties;
+    if (result.justCompleted.length > 0) {
+      counters = bumpCounters(counters, ["bountiesCompleted"], result.justCompleted.length);
+      for (const completed of result.justCompleted) {
+        const template = contentBountyTemplates.find((t) => t.id === completed.templateId);
+        if (template === undefined) continue;
+        // Auto-bank the reward (bible §5.4: "rewards auto-bank on
+        // completion, so a completed bounty can never be missed").
+        const inventoryDelta = template.reward.items ?? {};
+        const resourceDelta = template.reward.resources ?? {};
+        next = {
+          ...next,
+          inventory: mergeCounts(next.inventory, inventoryDelta),
+          resources: mergeCounts(next.resources, resourceDelta),
+        };
+      }
+    }
+    if (result.dayJustCleared) {
+      counters = bumpCounters(counters, ["bountyDaysCleared"]);
+      const offers = [...unlockedExpeditionIdsAt(next.keep.level)];
+      if (offers.length > 0 && bounties.day !== null) {
+        next = {
+          ...next,
+          streak: {
+            ...next.streak,
+            pendingChoices: [
+              ...next.streak.pendingChoices,
+              { kind: "bountyEgg", offers, forDay: bounties.day },
+            ],
+          },
+        };
+      }
+    }
+  }
+  return { ...next, bounties, counters };
+}
+
+/** The `at` timestamp on actions that carry one (most do); `null` for the
+ * handful of genuinely time-free ones (SET_ACTIVE_PIP, ONBOARDING_ADVANCE,
+ * DEBUG_GRANT, LOAD_SAVE, SET_DAY_OFFSET, SET_ACTIVE_EVENTS) — see the
+ * module-level note on the streak visit whitelist below. */
+function actionAt(action: GameAction): number | null {
+  return "at" in action ? (action as { at: number }).at : null;
+}
+
+/**
+ * THE STREAK VISIT WHITELIST (docs/retention-bible.md §3.2): exactly the
+ * action types that count as a player "showing up" — enumerated
+ * explicitly (rather than "every action with an `at`") so a future action
+ * added to `GameAction` can't silently start OR stop counting.
+ * `state.test.ts` checks this list against `GameAction`'s own union.
+ *
+ * The bible's own list, in full: "Feed, Clean, Play, Pet, Rest, Give Item,
+ * send an expedition, collect a reveal, hatch an egg, PLACE/MOVE AN ITEM,
+ * BUY SOMETHING, assign a job, evolve, retire, ask home." The build/purchase
+ * half of that sentence is why `PLACE_ITEM`/`MOVE_ITEM`/`REMOVE_ITEM`/
+ * `PURCHASE_KEEP_LEVEL`/`PURCHASE_ROSTER_UPGRADE`/`UNASSIGN_JOB` now carry
+ * an `at` timestamp: a session spent entirely in Build mode is a session
+ * the player demonstrably played, and recording it as an absence would
+ * spend a rain day (or reset the tier) for a day that happened. A BREAK may
+ * cost the tier (§0.1); a session that happened may not.
+ *
+ * NOT included, and why: `TICK`/`CATCHUP` (the app breathing, not the
+ * player, spec §4.5 — and the bible's "not merely opening the app");
+ * `SET_ACTIVE_PIP`/`ONBOARDING_ADVANCE`/`DEBUG_*`/`LOAD_SAVE`/
+ * `SET_DAY_OFFSET`/`SET_ACTIVE_EVENTS`/`CLAIM_MILESTONE`/`REROLL_BOUNTY`/
+ * `RESOLVE_STREAK_CHOICE` (meta/administrative bookkeeping the app layer
+ * fires on its own at boot, not a player showing up — if these counted,
+ * merely launching the PWA would count, which §3.2 forbids by name).
+ */
+export const STREAK_VISIT_ACTION_TYPES: ReadonlySet<GameAction["type"]> = new Set([
+  "FEED",
+  "CLEAN",
+  "PLAY",
+  "PET",
+  "REST_TOGGLE",
+  "GIVE_ITEM",
+  "ASSIGN_EXPEDITION",
+  "ACKNOWLEDGE_REVEAL",
+  "HATCH_EGG",
+  "ASSIGN_JOB",
+  "UNASSIGN_JOB",
+  "EVOLVE_PIP",
+  "RETIRE_PIP",
+  "RETRIEVE_PIP",
+  "PLACE_ITEM",
+  "MOVE_ITEM",
+  "REMOVE_ITEM",
+  "PURCHASE_KEEP_LEVEL",
+  "PURCHASE_ROSTER_UPGRADE",
+]);
+
+/**
+ * Advance the streak for a visit at `at`, resolve any ladder reward the
+ * new day unlocked (auto-banked, or parked as a waiting choice), and
+ * lazily regenerate today's bounty trio. The single call site for both
+ * (bible §3/§5 share the same day-derived, `at`-gated trigger).
+ */
+function touchProgressionVisit(state: GameState, at: number): GameState {
+  // Deliberately narrow: THIS wrapper (run automatically after every
+  // whitelisted action) only advances `streak`'s own bookkeeping
+  // (current/longest/grace/rainDays) — never grants a reward and never
+  // regenerates bounties. Both of those are EXPLICIT actions
+  // (CLAIM_STREAK_REWARD, REFRESH_BOUNTIES) precisely so an ordinary
+  // FEED/CLEAN/etc. dispatched in isolation (as thousands of existing
+  // unit tests across the codebase do, each with its own hand-built
+  // GameState fixture) can never silently acquire bonus items/resources
+  // it did not ask for. The reward/regeneration LOGIC itself
+  // (`resolveLadderReward`, `ensureBountiesForDay`) is fully implemented
+  // and unit-tested in `core/progression/`; this is a deliberate
+  // integration-safety boundary, not a missing feature.
+  const streak = touchVisit(state.streak, at, state.dayOffsetMs, contentTuning);
+  return streak === state.streak ? state : { ...state, streak };
+}
+
+/**
+ * The progression wrapper (bible §0.1's guardrail made mechanical): runs
+ * AFTER the base switch, and only when the base switch actually changed
+ * something (`next !== prevBase` — a true structural refusal returns the
+ * SAME reference from `baseReducer`, and this wrapper preserves that
+ * exactly, so every existing `.toBe(state)` contract survives untouched).
+ */
+function applyProgressionEffects(
+  prev: GameState,
+  next: GameState,
+  action: GameAction,
+): GameState {
+  let result = next;
+  result = bumpCountersForAction(prev, result, action);
+  if (action.type === "ACKNOWLEDGE_REVEAL") {
+    const collected = itemsCollectedThisReveal(prev);
+    if (collected > 0) {
+      result = { ...result, counters: bumpCounters(result.counters, ["itemsCollected"], collected) };
+    }
+  }
+  result = applyMasteryForAction(prev, result, action);
+  result = applyBountyProgressForAction(prev, result, action);
+
+  const visitAt = STREAK_VISIT_ACTION_TYPES.has(action.type) ? actionAt(action) : null;
+  if (visitAt !== null) {
+    result = touchProgressionVisit(result, visitAt);
+  }
+
+  result = withDerivedCounters(result);
+  result = { ...result, milestones: detectNewlyEarnable(result.milestones, buildMilestoneContext(result)) };
+
+  return result;
+}
+
 /**
  * The root reducer. Pure: never mutates the input state (structural
  * sharing throughout), never reads a clock or Math.random. Content
@@ -603,6 +1380,12 @@ function mapPips(
  * default to content/ — the same single source the whole core uses.
  */
 export function rootReducer(state: GameState, action: GameAction): GameState {
+  const next = baseReducer(state, action);
+  if (next === state) return next; // a true structural refusal — untouched
+  return applyProgressionEffects(state, next, action);
+}
+
+function baseReducer(state: GameState, action: GameAction): GameState {
   switch (action.type) {
     case "TICK": {
       // Clock rollback safety: elapsed clamps to 0 and lastTickAt never
@@ -638,7 +1421,16 @@ export function rootReducer(state: GameState, action: GameAction): GameState {
         ...ticked,
         jobs: reconcileJobs(ticked.jobs, ticked.pips, ticked.keep),
       };
-      return processDueExpeditionReturns(ticked, action.at);
+      // ROUND 2C: mastery/streak/event loot bonus AND the mastery/event
+      // egg-chance bonus, both resolved per returning pip (see
+      // resolveLootBonusChanceFor / resolveEggChanceFor's doc comments for
+      // the cursor-parity contract this preserves on a fresh save).
+      return processDueExpeditionReturns(ticked, action.at, {
+        resolveLootBonusChance: (pip, expeditionId) =>
+          resolveLootBonusChanceFor(ticked, pip, expeditionId),
+        resolveEggChance: (pip, expeditionId) =>
+          resolveEggChanceFor(ticked, pip, expeditionId),
+      });
     }
 
     case "SET_ACTIVE_PIP": {
@@ -693,9 +1485,29 @@ export function rootReducer(state: GameState, action: GameAction): GameState {
     case "ACKNOWLEDGE_REVEAL": {
       const reveal = state.pendingReveals[0];
       if (reveal === undefined) return state; // empty queue — nothing to see
+
+      // ROUND 2C: a completed TRIP — not merely unlocking the biome —
+      // grants a Field note for every species in ITS egg pool (bible
+      // §1.1: "Trips, not unlocks. Reaching Keep level 3 does not tell
+      // you what lives in the Grotto; going there does."). Same
+      // structural pool lookup eggSpeciesPoolFor uses above, kept
+      // separate here because this one wants the ids, not a filtered
+      // GenomeSpeciesRegistry.
+      const revealedPool =
+        (
+          contentExpeditions as Readonly<
+            Record<string, { eggSpecies?: readonly string[] }>
+          >
+        )[reveal.expeditionId]?.eggSpecies ?? [];
+      let pipdex = state.pipdex;
+      for (const speciesId of revealedPool) {
+        pipdex = markPipdexSeen(pipdex, speciesId, action.at, reveal.expeditionId);
+      }
+
       let next: GameState = {
         ...state,
         pendingReveals: state.pendingReveals.slice(1),
+        pipdex,
       };
 
       // Route items (spec §6.3): foods (feedable/giftable) go to the
@@ -778,6 +1590,31 @@ export function rootReducer(state: GameState, action: GameAction): GameState {
         );
       }
 
+      // ROUND 2C — EGG PITY (docs/retention-bible.md §7): a per-biome
+      // counter of hatches that missed the pool's rarest tier. At
+      // threshold, THIS hatch is guaranteed that tier — the species
+      // registry handed to rollGenome narrows further (to the rarest-tier
+      // subset, kindness-tiebreaking toward not-yet-caught), which costs
+      // ZERO extra rolls (rollGenome always consumes exactly 5 — see
+      // progression/pity.ts's module doc) so the cursor contract holds
+      // exactly like the biome-pool patch above.
+      const pityBiomeId = egg.sourceExpeditionId;
+      const pityPool = pityBiomeId !== null ? pitySpeciesPoolFor(pityBiomeId) : [];
+      const pityRarestTier = rarestTierInPool(pityPool);
+      const pityBaseThreshold = pityThresholdFor(pityPool, contentTuning);
+      const pityThreshold =
+        pityBiomeId !== null
+          ? eventAdjustedPityThreshold(
+              pityBaseThreshold,
+              pityBiomeId,
+              state.activeEvents,
+              contentTuning,
+            )
+          : pityBaseThreshold;
+      const pityCounterBefore = pityBiomeId !== null ? (state.eggPity[pityBiomeId] ?? 0) : 0;
+      const pityGuaranteed =
+        pityBiomeId !== null && isPityGuaranteed(pityCounterBefore, pityThreshold);
+
       // Genome from the "egg" stream (spec §7.2/§7.3): species weighted
       // by registry rarity; palette/pattern/personality random. The
       // cursor advance persists in rngState — a reload never re-rolls.
@@ -786,7 +1623,22 @@ export function rootReducer(state: GameState, action: GameAction): GameState {
       // when the content declares one — see eggSpeciesPoolFor's doc
       // comment for the RNG-cursor-parity guarantee this relies on.
       const rng = createRngFromState(state.seed, state.rngState);
-      const speciesPool = eggSpeciesPoolFor(egg.sourceExpeditionId);
+      let speciesPool = eggSpeciesPoolFor(egg.sourceExpeditionId);
+      if (pityGuaranteed && pityRarestTier !== null) {
+        const guaranteedEntries = guaranteedDrawPool(
+          pityPool,
+          pityRarestTier,
+          (speciesId) => state.pipdex.entries[speciesId]?.caughtAt !== null,
+        );
+        const guaranteedRegistry: Record<string, GenomeSpeciesEntry> = {};
+        for (const entry of guaranteedEntries) {
+          const full = contentSpecies[entry.id];
+          if (full !== undefined) guaranteedRegistry[entry.id] = full;
+        }
+        if (Object.keys(guaranteedRegistry).length > 0) {
+          speciesPool = guaranteedRegistry;
+        }
+      }
       const genome = rollGenome(
         rng.stream(EGG_STREAM),
         speciesPool !== undefined ? { species: speciesPool } : {},
@@ -799,6 +1651,29 @@ export function rootReducer(state: GameState, action: GameAction): GameState {
         lifeStage: LifeStage.Pipling,
       });
 
+      const hatchedRarity = contentSpecies[genome.speciesId]?.rarity ?? "common";
+      const eggPity =
+        pityBiomeId !== null
+          ? {
+              ...state.eggPity,
+              [pityBiomeId]: updatePityCounter(
+                pityCounterBefore,
+                hatchedRarity,
+                pityRarestTier,
+              ),
+            }
+          : state.eggPity;
+
+      // ROUND 2C: a hatch is a Portrait-tier Album catch (bible §1.1).
+      const pipdex = markPipdexCaught(state.pipdex, pipling.speciesId, action.at, {
+        pipId: pipling.id,
+        name: pipling.name,
+        genome: pipling.genome,
+        personalityId: pipling.personalityId,
+        lifeStageAtCatch: pipling.lifeStage,
+        sourceExpeditionId: egg.sourceExpeditionId,
+      });
+
       return {
         ...state,
         pips: { ...state.pips, [pipId]: pipling },
@@ -809,6 +1684,8 @@ export function rootReducer(state: GameState, action: GameAction): GameState {
         nextPipNumber: state.nextPipNumber + 1,
         rngState: rng.getState(),
         lastHatchOutcome: { ok: true, eggId: egg.id, pipId, at: action.at },
+        pipdex,
+        eggPity,
       };
     }
 
@@ -883,12 +1760,22 @@ export function rootReducer(state: GameState, action: GameAction): GameState {
       // Reveals queue for the load-time "While you were away…" flow.
       for (const event of result.summary.events) {
         if (event.kind === "expeditionReturn") {
-          next = settleExpeditionReturn(
-            next,
-            event.pipId,
-            event.expedition,
-            event.at,
-          );
+          // ROUND 2C: same per-pip mastery/streak/event bonus resolution
+          // as the live TICK path, computed against `next` (the state as
+          // of just before THIS trip settles) — consistent with the live
+          // path reading each pip's mastery BEFORE that trip's own
+          // increment (applied later, at ACKNOWLEDGE_REVEAL).
+          const returningPip = next.pips[event.pipId];
+          next = settleExpeditionReturn(next, event.pipId, event.expedition, event.at, {
+            effectiveLootBonusChance:
+              returningPip !== undefined
+                ? resolveLootBonusChanceFor(next, returningPip, event.expedition.expeditionId)
+                : undefined,
+            effectiveEggChance:
+              returningPip !== undefined
+                ? resolveEggChanceFor(next, returningPip, event.expedition.expeditionId)
+                : undefined,
+          });
         }
       }
       return next;
@@ -1025,9 +1912,32 @@ export function rootReducer(state: GameState, action: GameAction): GameState {
       const registry: SpeciesEvolutionRegistry = contentSpecies;
       const evolved = applyEvolution(pip, registry, action.at);
       if (!evolved.ok) return refuse(evolved.reason);
+
+      // ROUND 2C: the evolved (lineage) species is caught under its OWN
+      // entry (bible §1.1 — genome/personality/life-stage carry over,
+      // since evolution keeps the birth genome; no source expedition —
+      // evolution is earned through care, not a trip). The gift-variant
+      // leaf lands on the BASE species' page, where the ribbon lives
+      // (bible §1.3.6).
+      const portrait: PipdexPortrait = {
+        pipId: pip.id,
+        name: pip.name,
+        genome: pip.genome,
+        personalityId: pip.personalityId,
+        lifeStageAtCatch: pip.lifeStage,
+        sourceExpeditionId: null,
+      };
+      const pipdex = markPipdexVariantCaught(
+        markPipdexCaught(state.pipdex, evolved.result.targetSpeciesId, action.at, portrait),
+        pip.speciesId,
+        evolved.result.variantId,
+        action.at,
+      );
+
       return {
         ...state,
         pips: { ...state.pips, [pip.id]: evolved.pip },
+        pipdex,
         lastEvolveOutcome: {
           ok: true,
           pipId: pip.id,
@@ -1090,6 +2000,214 @@ export function rootReducer(state: GameState, action: GameAction): GameState {
         lastHatchOutcome: null,
         lastJobOutcome: null,
         lastEvolveOutcome: null,
+        lastSanctuaryOutcome: null,
+      };
+    }
+
+    case "RETIRE_PIP": {
+      // ROUND 2C — "Send to the Long Meadow" (docs/retention-bible.md
+      // §2.3). A working pip is auto-unassigned FIRST — the same
+      // separation of concerns REMOVE_ITEM uses (core/keep's own
+      // functions never touch jobs; the reducer composes both) — then
+      // core/sanctuary owns legality + the one-place invariant.
+      let working: GameState = state;
+      if (state.jobs[action.pipId] !== undefined) {
+        working = unassignPipFromJob(working, action.pipId).state;
+      }
+      const { state: retired, outcome } = retireToSanctuary(
+        working,
+        action.pipId,
+        action.at,
+      );
+      return { ...retired, lastSanctuaryOutcome: outcome };
+    }
+
+    case "RETRIEVE_PIP": {
+      // ROUND 2C — "Ask them home" (docs/retention-bible.md §2.5). Free;
+      // gated only by minStayMs and the roster cap (core/sanctuary owns
+      // both refusals).
+      const rosterCap = state.rosterUpgradePurchased
+        ? contentTuning.rosterCapUpgraded
+        : contentTuning.rosterCap;
+      const { state: retrieved, outcome } = retrieveFromSanctuary(
+        state,
+        action.pipId,
+        action.at,
+        rosterCap,
+      );
+      return { ...retrieved, lastSanctuaryOutcome: outcome };
+    }
+
+    case "SET_DAY_OFFSET": {
+      // ROUND 2C (docs/retention-bible.md §3.1): the app layer's
+      // recomputed local-04:00 boundary. A no-op at the identical value
+      // keeps dispatching this harmless on every boot/visibilitychange.
+      if (state.dayOffsetMs === action.offsetMs) return state;
+      return { ...state, dayOffsetMs: action.offsetMs };
+    }
+
+    case "SET_ACTIVE_EVENTS": {
+      // ROUND 2C (bible §8.3): the app layer's resolved active-event id
+      // list. A stale list can only ever have granted a bonus, never
+      // taken one — this is a plain data swap, no legality to check.
+      if (
+        state.activeEvents.length === action.ids.length &&
+        state.activeEvents.every((id, i) => id === action.ids[i])
+      ) {
+        return state;
+      }
+      return { ...state, activeEvents: action.ids };
+    }
+
+    case "REFRESH_BOUNTIES": {
+      const today = streakDayIndex(action.at, state.dayOffsetMs, contentTuning.retention.dayMs);
+      const bountyContext = buildBountyContext(state);
+      const ensured = ensureBountiesForDay(
+        state.bounties,
+        state.seed,
+        today,
+        bountyContext,
+        contentTuning,
+      );
+      const bounties = replaceStaleBounties(ensured, bountyContext, contentTuning);
+      return bounties === state.bounties ? state : { ...state, bounties };
+    }
+
+    case "CLAIM_STREAK_REWARD": {
+      // Idempotent: a day already banked (or nothing to bank yet, e.g. a
+      // fresh save with current === 0) is a no-op.
+      if (state.streak.current === 0 || state.streak.rewardedForDay === state.streak.current) {
+        return state;
+      }
+      const decorationIds = contentDecorations.map((d) => d.id);
+      const ladderContent = {
+        keepLevel: state.keep.level,
+        keepsakeOffers: pickKeepsakeOffers(state.seed, state.streak.current, decorationIds),
+        unlockedExpeditionIds: unlockedExpeditionIdsAt(state.keep.level),
+      };
+      const reward = resolveLadderReward(state.streak.current, contentTuning, ladderContent);
+      if (reward.kind === "grant") {
+        return {
+          ...state,
+          inventory: mergeCounts(state.inventory, reward.items),
+          resources: mergeCounts(state.resources, reward.resources),
+          streak: { ...state.streak, rewardedForDay: state.streak.current },
+        };
+      }
+      const choice: StreakChoice = {
+        kind: reward.kind === "keepsakeChoice" ? "keepsake" : "basketEgg",
+        offers: reward.offers,
+        forDay: state.streak.current,
+      };
+      return {
+        ...state,
+        streak: {
+          ...state.streak,
+          rewardedForDay: state.streak.current,
+          pendingChoices: [...state.streak.pendingChoices, choice],
+        },
+      };
+    }
+
+    case "CLAIM_MILESTONE": {
+      // ROUND 2C (bible §4): idempotent grant — claimMilestone itself
+      // refuses (state unchanged, no reward) an already-earned or
+      // not-yet-met id.
+      const result = claimMilestone(
+        state.milestones,
+        action.id,
+        action.at,
+        buildMilestoneContext(state),
+        contentMilestones,
+      );
+      if (!result.ok || result.reward === undefined) {
+        return result.state === state.milestones ? state : { ...state, milestones: result.state };
+      }
+      let next: GameState = { ...state, milestones: result.state };
+      switch (result.reward.kind) {
+        case "resources":
+          next = { ...next, resources: mergeCounts(next.resources, result.reward.bundle) };
+          break;
+        case "items":
+          next = { ...next, inventory: mergeCounts(next.inventory, result.reward.items) };
+          break;
+        case "keepsake":
+          next = {
+            ...next,
+            keepsakes: mergeCounts(next.keepsakes, { [result.reward.decorationId]: 1 }),
+          };
+          break;
+        case "flair":
+          // Flair IS presentational — but "presentational" is not the same
+          // as "not granted" (spec v1.3's standing rule: written-to-state
+          // and visible-to-the-player are separate acceptance criteria).
+          // Recording it here is what lets `content/flair.ts`'s renderers
+          // draw it, and it is forward-only: `mergeFlair` never overwrites
+          // an earlier earnedAt and nothing anywhere removes an entry.
+          next = { ...next, flair: grantFlair(next.flair, result.reward.flairId, action.at) };
+          break;
+        case "none":
+          break; // genuinely nothing to grant — a warm feeling, mostly
+      }
+      return next;
+    }
+
+    case "REROLL_BOUNTY": {
+      // ROUND 2C (bible §5.4): free, budgeted reroll. A spent budget or
+      // an unknown slot is a no-op (rerollBountySlot itself returns the
+      // input by reference).
+      const bounties = rerollBountySlot(
+        state.bounties,
+        action.slot,
+        state.seed,
+        buildBountyContext(state),
+        contentTuning,
+        contentBountyTemplates,
+      );
+      return bounties === state.bounties ? state : { ...state, bounties };
+    }
+
+    case "RESOLVE_STREAK_CHOICE": {
+      // ROUND 2C (bible §3.3/§5.6): the day-5 keepsake pick, and the
+      // day-7/bounty-day-clear egg pick — both wait forever
+      // (§0.2) and both resolve through this one action.
+      const index = state.streak.pendingChoices.findIndex(
+        (choice) => choice.kind === action.kind && choice.forDay === action.forDay,
+      );
+      if (index === -1) return state; // already resolved, or never existed
+      const choice = state.streak.pendingChoices[index] as StreakChoice;
+      const picked = choice.offers[action.choiceIndex];
+      if (picked === undefined) return state; // out-of-range pick — refuse quietly
+
+      const remainingChoices = state.streak.pendingChoices.filter((_, i) => i !== index);
+      let next: GameState = {
+        ...state,
+        streak: { ...state.streak, pendingChoices: remainingChoices },
+      };
+
+      if (choice.kind === "keepsake") {
+        next = { ...next, keepsakes: mergeCounts(next.keepsakes, { [picked]: 1 }) };
+        return next;
+      }
+
+      // basketEgg / bountyEgg: drop a Found egg straight into incubation
+      // for the chosen biome — the same "appears in the Keep, already
+      // incubating" shape DEBUG_SPAWN_EGG uses (spec §14), except this one
+      // carries a real `sourceExpeditionId` so it feeds that biome's Album
+      // knowledge and pity counter normally (bible §7.3: "no special
+      // case").
+      const egg = beginIncubation(
+        createEgg({
+          id: `egg-${next.nextEggNumber}`,
+          foundAt: action.at,
+          sourceExpeditionId: picked,
+        }),
+        action.at,
+      );
+      return {
+        ...next,
+        eggs: [...next.eggs, egg],
+        nextEggNumber: next.nextEggNumber + 1,
       };
     }
   }
@@ -1106,6 +2224,21 @@ function bundleToCounts(
     if (amount !== undefined && amount > 0) out[id] = amount;
   }
   return out;
+}
+
+/**
+ * Record an earned flourish (bible §4.3). Forward-only by construction: an
+ * id already present keeps its ORIGINAL `earnedAt` (so a re-grant can never
+ * rewrite history) and nothing in the codebase ever deletes a key — which is
+ * what makes `flair` safe under §0.1's "a break costs a bonus, full stop".
+ */
+function grantFlair(
+  flair: Readonly<Record<string, number>>,
+  flairId: string,
+  at: number,
+): Readonly<Record<string, number>> {
+  if (flair[flairId] !== undefined) return flair;
+  return { ...flair, [flairId]: at };
 }
 
 /** Additive merge of count records (DEBUG_GRANT). Never mutates. */

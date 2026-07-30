@@ -298,7 +298,7 @@ export function initPhase5Ui(deps: Phase5UiDeps): Phase5Ui {
     if (def === null) return;
     deps.scene.enterPlacementMode(itemId, (x, y) => {
       const before = store.getState();
-      store.dispatch({ type: "PLACE_ITEM", itemId, x, y });
+      store.dispatch({ type: "PLACE_ITEM", itemId, x, y, at: clock.now() });
       const after = store.getState();
       endPlacement();
       if (after.keep.placements !== before.keep.placements) {
@@ -329,7 +329,7 @@ export function initPhase5Ui(deps: Phase5UiDeps): Phase5Ui {
       placement.itemId,
       (x, y) => {
         const before = store.getState();
-        store.dispatch({ type: "MOVE_ITEM", placementId, x, y });
+        store.dispatch({ type: "MOVE_ITEM", placementId, x, y, at: clock.now() });
         const after = store.getState();
         endPlacement();
         if (after.keep.placements !== before.keep.placements) {
@@ -352,7 +352,7 @@ export function initPhase5Ui(deps: Phase5UiDeps): Phase5Ui {
     );
     const workerName =
       worker !== undefined ? before.pips[worker[0]]?.name : undefined;
-    store.dispatch({ type: "REMOVE_ITEM", placementId });
+    store.dispatch({ type: "REMOVE_ITEM", placementId, at: clock.now() });
     const after = store.getState();
     if (after.keep.placements !== before.keep.placements) {
       sound("keep.remove");
@@ -392,6 +392,7 @@ export function initPhase5Ui(deps: Phase5UiDeps): Phase5Ui {
   const upgradeCard = createUpgradeCard({
     dispatch: (action) => store.dispatch(action),
     getState: () => store.getState(),
+    now: () => clock.now(),
   });
   root.appendChild(upgradeCard.el);
   // Rapid-tap streak on the Keep chip → the scene's cosmetic moment.

@@ -219,9 +219,8 @@ describe("reducer wiring + reload survival (Phase 5 gate)", () => {
       type: "PLACE_ITEM",
       itemId: "gathering-station",
       x: 2,
-      y: 2,
-    });
-    const two = rootReducer(one, { type: "PLACE_ITEM", itemId: "bed", x: 5, y: 5 });
+      y: 2, at: 0 });
+    const two = rootReducer(one, { type: "PLACE_ITEM", itemId: "bed", x: 5, y: 5, at: 0 });
     expect(two.keep.placements).toEqual({
       "place-1": { itemId: "gathering-station", x: 2, y: 2 },
       "place-2": { itemId: "bed", x: 5, y: 5 },
@@ -233,8 +232,7 @@ describe("reducer wiring + reload survival (Phase 5 gate)", () => {
       type: "PLACE_ITEM",
       itemId: "food-bowl",
       x: 2,
-      y: 2,
-    });
+      y: 2, at: 0 });
     expect(refused).toBe(two);
 
     // MOVE/REMOVE flow through the same core rules.
@@ -242,11 +240,10 @@ describe("reducer wiring + reload survival (Phase 5 gate)", () => {
       type: "MOVE_ITEM",
       placementId: "place-2",
       x: 0,
-      y: 6,
-    });
+      y: 6, at: 0 });
     expect(moved.keep.placements["place-2"]).toEqual({ itemId: "bed", x: 0, y: 6 });
-    expect(rootReducer(two, { type: "MOVE_ITEM", placementId: "nope", x: 0, y: 0 })).toBe(two);
-    const removed = rootReducer(moved, { type: "REMOVE_ITEM", placementId: "place-1" });
+    expect(rootReducer(two, { type: "MOVE_ITEM", placementId: "nope", x: 0, y: 0, at: 0 })).toBe(two);
+    const removed = rootReducer(moved, { type: "REMOVE_ITEM", placementId: "place-1", at: 0 });
     expect(removed.keep.placements["place-1"]).toBeUndefined();
   });
 
@@ -255,7 +252,7 @@ describe("reducer wiring + reload survival (Phase 5 gate)", () => {
     // resources) — even a grid-valid placement is refused unchanged.
     const fresh = createNewGame(7, T0);
     expect(
-      rootReducer(fresh, { type: "PLACE_ITEM", itemId: "food-bowl", x: 0, y: 0 }),
+      rootReducer(fresh, { type: "PLACE_ITEM", itemId: "food-bowl", x: 0, y: 0, at: 0 }),
     ).toBe(fresh);
 
     const granted = rootReducer(fresh, {
@@ -266,8 +263,7 @@ describe("reducer wiring + reload survival (Phase 5 gate)", () => {
       type: "PLACE_ITEM",
       itemId: "gathering-station",
       x: 2,
-      y: 2,
-    });
+      y: 2, at: 0 });
     // Exactly the content cost (round 2B: 3 Wood + 2 Fiber), all-or-nothing.
     expect(placed.keep.placements["place-1"]).toEqual({
       itemId: "gathering-station",
@@ -284,21 +280,20 @@ describe("reducer wiring + reload survival (Phase 5 gate)", () => {
       type: "MOVE_ITEM",
       placementId: "place-1",
       x: 4,
-      y: 4,
-    });
+      y: 4, at: 0 });
     expect(moved.resources).toEqual(placed.resources);
 
     // Tuck away = full refund (no stored-items inventory in MVP, so the
     // materials come back instead of the item going somewhere).
-    const removed = rootReducer(moved, { type: "REMOVE_ITEM", placementId: "place-1" });
+    const removed = rootReducer(moved, { type: "REMOVE_ITEM", placementId: "place-1", at: 0 });
     expect(removed.keep.placements["place-1"]).toBeUndefined();
     expect(removed.resources).toEqual({ wood: 10, fiber: 4 });
   });
 
   it("placements (and a standing job) survive serialize → wire → migrate deep-equal", () => {
     let state: GameState = freshWithResources();
-    state = rootReducer(state, { type: "PLACE_ITEM", itemId: "gathering-station", x: 1, y: 1 });
-    state = rootReducer(state, { type: "PLACE_ITEM", itemId: "cozy-lantern", x: 6, y: 6 });
+    state = rootReducer(state, { type: "PLACE_ITEM", itemId: "gathering-station", x: 1, y: 1, at: 0 });
+    state = rootReducer(state, { type: "PLACE_ITEM", itemId: "cozy-lantern", x: 6, y: 6, at: 0 });
     state = rootReducer(state, {
       type: "ASSIGN_JOB",
       pipId: state.activePipId,

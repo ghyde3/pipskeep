@@ -79,5 +79,13 @@ export default defineConfig({
     // core/ and content/ are pure logic — no DOM needed.
     environment: "node",
     include: ["src/**/*.test.ts"],
+    // Round 2C: `src/ui/layers.test.ts` asserts the z-index ladder against
+    // the actual stylesheets, and vitest's default (`css: false`) replaces
+    // every CSS import with an empty string — including `?raw`/`?inline`
+    // queries, so the ladder test silently read nothing. Turning processing
+    // on gives it real text. Safe under `environment: "node"`: nothing is
+    // injected into a document (there isn't one), the CSS is just parsed
+    // and handed back as a string.
+    css: true,
   },
 });

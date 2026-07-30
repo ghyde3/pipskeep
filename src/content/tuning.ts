@@ -656,6 +656,344 @@ export const tuning = {
     feastpot: { hunger: 100, happiness: 30, energy: 15 },
   },
 
+  /**
+   * ROUND 2C — RETENTION (docs/retention-bible.md). Every number the
+   * gamification stack reads, in one block, because they are all answers
+   * to the SAME question and must be read together:
+   *
+   *   "Does this reward showing up without ever punishing absence?"
+   *
+   * The orchestrator guardrail, restated here because this is the file
+   * where it would be violated first: a broken streak may cost a BONUS
+   * and nothing else — never progress, never an item, never a Pip. There
+   * is therefore no number in this block that can go DOWN except
+   * `streak.tierLootBonus` (a multiplier, i.e. a bonus) and
+   * `streak.graceMax` (a budget that refills on its own). Counters,
+   * Pipdex entries, milestones and mastery are monotonic by construction
+   * — see `docs/retention-bible.md` §0 for the full invariant list.
+   *
+   * ⚠️ THE ISOLATION RULE (the fragile invariant of this round, the
+   * equivalent of round 2B's level-1 wood ceiling). NOTHING in this block
+   * may be read by anything that computes need decay, care restores, food
+   * effects, or the offline cap. The whole of round 2A/2B balance rests on
+   * one arithmetic claim —
+   *
+   *   one care session out-restores one full capped absence, for every
+   *   need and every personality (`core/pips/balance.test.ts`)
+   *
+   * — and a retention reward that touches a restore value or a decay rate
+   * re-derives that claim silently. So retention pays in RESOURCES, ITEMS,
+   * DECORATIONS and FLAIR only. If a future reward needs to make care
+   * easier, it is the wrong reward.
+   */
+  retention: {
+    /**
+     * Day boundary for streaks and daily bounties: the local hour a new
+     * "visit day" starts. 04:00 rather than midnight because a 1 a.m.
+     * session belongs to the night owl's PREVIOUS day, and losing a
+     * streak to insomnia is exactly the punishment this round forbids.
+     *
+     * Applied as an offset, never by parsing a date in core: the day
+     * index is `floor((at - dayOffsetMs) / dayMs)` where `dayOffsetMs`
+     * combines the player's timezone offset with this hour and lives in
+     * GameState (set at boot by the app layer, the only place allowed to
+     * ask what timezone this is — spec §2 rule 2).
+     */
+    dayStartHour: 4,
+    dayMs: 24 * HOUR_MS,
+
+    /**
+     * DAILY STREAK. The ladder repeats every `ladderLength` days; what
+     * escalates with a long streak is the TIER (a loot bonus), not the
+     * ladder. That split is the anti-dark-pattern shape: the day-to-day
+     * rewards are always attainable, and the only thing a break can cost
+     * is the tier — a bonus, per the guardrail.
+     *
+     * `tierMinStreakDay[i]` is the streak day at which tier i begins;
+     * `tierLootBonus[i]` is that tier's additive bonus-roll chance (see
+     * `loot.bonusRollChanceMax` — every bonus source sums into ONE capped
+     * channel, so a 30-day streak cannot compound with mastery into
+     * absurdity).
+     *
+     * GRACE, and why a bank rather than a "streak freeze": `graceMax` 2
+     * missed days are absorbed silently (a "rain day"), refilling one per
+     * `graceRefreshDays`. A bank is forgiving in the shape real life
+     * actually breaks streaks (one bad Tuesday, twice a month) and — the
+     * reason it is not a purchasable freeze — it can never become a
+     * monetisation surface or an anxiety timer.
+     *
+     * WELCOME BACK: a returning player whose `longest` ever reached
+     * `welcomeBackLongestRequired` restarts at tier
+     * `welcomeBackTierFloor`, not tier 0. A fortnight away therefore
+     * leaves you strictly BETTER off than a brand-new player — the
+     * mechanical form of "a returning player should feel welcomed, not
+     * billed".
+     */
+    streak: {
+      ladderLength: 7,
+      graceMax: 2,
+      graceRefreshDays: 14,
+      tierMinStreakDay: [1, 3, 7, 14, 30],
+      tierLootBonus: [0, 0.05, 0.1, 0.15, 0.2],
+      welcomeBackLongestRequired: 7,
+      welcomeBackTierFloor: 1,
+    },
+
+    /**
+     * THE SANCTUARY (the Long Meadow) — the storage answer that makes a
+     * 14-form collection reachable without ever deleting a Pip (content
+     * bible §9 risk 7; spec §4.4 "no death, no running away, no lost
+     * Pips").
+     *
+     * `capacity: null` is UNLIMITED, deliberately and permanently. A
+     * capped sanctuary recreates the exact problem it exists to solve —
+     * at cap the completionist is back to choosing which Pip to destroy.
+     * The cost of "unlimited" is a few hundred bytes per resident.
+     *
+     * `arrivalNeeds`: a retired Pip's needs snap here ONCE on arrival and
+     * then never change (retired Pips are outside the decay loop
+     * entirely). 80 rather than 100 because Beaming is what the player's
+     * own care earns — the sanctuary is comfortable, not better than
+     * home; and 80 rather than "frozen as-was" because storing a Pip must
+     * never preserve misery (punishment by storage is still punishment).
+     * All four values clear `sulkExitThreshold` by a wide margin, so
+     * retiring a Sulking Pip clears the sulk through the ORDINARY §4.4
+     * exit rule with no special case.
+     *
+     * `minStayMs`: a resident settles in for one overnight before they
+     * can be asked home. This is the ONLY limit on the retire/retrieve
+     * loop and it exists for one reason: without it, "retire → ask home"
+     * is a free full heal, and the sanctuary becomes a spa that
+     * trivialises care (the one thing §4.4's floor and round 2A's restore
+     * arithmetic must not be routed around). 8h matches
+     * `pipling.durationMs` and sits inside `offlineRateCapMs`, so a stay
+     * always completes inside one rated absence. Waiting costs nothing
+     * and missing the moment costs nothing — it is a settling-in period,
+     * never a countdown.
+     *
+     * `minActivePips`: you cannot send your LAST Pip away. Structural
+     * (someone has to hold the fort), not a punishment.
+     */
+    sanctuary: {
+      capacity: null,
+      minStayMs: 8 * HOUR_MS,
+      arrivalNeeds: {
+        hunger: 80,
+        cleanliness: 80,
+        happiness: 80,
+        energy: 100,
+      } satisfies Record<NeedId, number>,
+      minActivePips: 1,
+    },
+
+    /**
+     * THE ALBUM (internal id `pipdex`). Two declared targets and one
+     * uncounted celebration — the split is load-bearing:
+     *
+     * - `albumTarget` 14: every form, base and evolved. THE headline
+     *   number. Long but bounded, and every form has a findable route
+     *   (content bible §3.6's time-to-find table: ~15 engaged hours for
+     *   the set, the Lanternpip trophy being ~10.5h of it).
+     * - `ledgerTarget` 21: the seven evolution lines × three gift
+     *   variants. Zero RNG — pure care and patience — which is why it is
+     *   the long-haul target rather than the headline one.
+     * - Shiny stamps are NOT a target and get no denominator. At
+     *   `genome.shinyChance` 0.025, "14/14 shiny" is tens of thousands of
+     *   hatches; presenting that as completion would be the definition of
+     *   a dark pattern. The Album shows "3 glimmers found", never "3/14".
+     */
+    pipdex: {
+      albumTarget: 14,
+      ledgerTarget: 21,
+    },
+
+    /**
+     * DAILY BOUNTIES — three a day, generated LEVEL-AWARE (a bounty for a
+     * locked biome is a bug, not a stretch goal). The generator filters
+     * templates through the player's actual capabilities and draws from
+     * what survives; `perDay` 3 because two reads as thin and four reads
+     * as a chore list on a game whose whole session is five minutes.
+     *
+     * `freeRerollsPerDay` 1, and free forever: a reroll exists so a
+     * bad draw is not an accusation sitting on the doorstep. Charging for
+     * it (resources, ads, anything) would turn a kindness into a
+     * conversion funnel.
+     *
+     * `dayBonusEggMaxPerDay` 1: completing all three grants ONE egg from
+     * any unlocked biome pool, player's choice. It is the low-time
+     * player's route into the collection chase — an engaged player already
+     * out-farms it in an hour of Meadow trips (0.96 eggs/h), so it
+     * accelerates the person who needs it and barely registers for the
+     * person who doesn't. Watch item: this plus the day-7 basket is
+     * ~1.1 extra eggs/day, and eggs never expire — see the retention
+     * bible's risk list for the egg-pile presentation rule.
+     */
+    bounties: {
+      perDay: 3,
+      freeRerollsPerDay: 1,
+      dayBonusEggMaxPerDay: 1,
+    },
+
+    /**
+     * EXPEDITION MASTERY — per Pip, per biome, five tiers. What is stored
+     * is TRIPS (a plain forward-only count); the tier is DERIVED, so
+     * retuning the thresholds below re-grades every existing Pip with no
+     * migration.
+     *
+     * Thresholds are TIME-NORMALISED so no biome is a silly grind and none
+     * is free:
+     *
+     *   trips(tier, biome) = max(ceil(tierHours[tier] × 60 / durationMin),
+     *                            tierMinTrips[tier])
+     *
+     * so tier 5 is ~18 engaged hours on the Meadow (216 trips) and ~30
+     * wall-clock hours of idling on the Lanterngrotto (20 trips) — the
+     * active player and the once-a-night player both have a real ladder in
+     * the rhythm they actually play. `tierMinTrips` is the floor that stops
+     * a 90-minute biome handing out tier 1 for a single trip.
+     *
+     * What mastery improves: ONLY the bonus-roll chance below (loot
+     * QUANTITY, delivered as occasional visible extra finds exactly like
+     * Curious's +10%), plus `topTierEggChanceBonusPoints` at tier 5.
+     * Explicitly NOT duration (that is Hardworking's identity, and the
+     * expedition-duration figures are what `core/economy/
+     * reachability.test.ts` measures progression against), NOT loot-table
+     * weights, NOT need decay, NOT refusal rules.
+     *
+     * Why the numbers are small: the real reward is the title on the Pip's
+     * card ("Old friend of the Meadow"). +15% at the top of an 18-hour
+     * ladder is a nod, not an economy. The reachability suite measures a
+     * FRESH save, which has zero mastery by construction — so those
+     * assertions keep measuring the tuned economy and cannot be
+     * accidentally satisfied by a buff.
+     */
+    mastery: {
+      tierHours: [0.5, 1.5, 4, 9, 18],
+      tierMinTrips: [2, 4, 7, 12, 20],
+      tierBonusRollChance: [0.02, 0.05, 0.08, 0.11, 0.15],
+      topTierEggChanceBonusPoints: 0.02,
+    },
+
+    /**
+     * LOOT MULTIPLIERS — one channel, summed once, clamped once.
+     *
+     * Every source of "more loot" in the game (Curious's
+     * `quirks.curiousLootBonus`, mastery, streak tier, an event) is an
+     * ADDITIVE bonus-roll chance, they are summed, and the sum is clamped
+     * to `bonusRollChanceMax`. Sum-then-clamp rather than
+     * multiply-then-clamp for two reasons: the player can read it
+     * ("+10% Curious, +15% Meadow → capped at +25%"), and nothing can
+     * compound. Worst case today sums to 0.55; the cap holds it at 0.25.
+     *
+     * 0.25 specifically: at the Meadow's 3 base rolls that is ~0.75 extra
+     * items per trip — visible, occasional, never a doubling — and it
+     * means a fully-buffed veteran earns at most 1.25× the yield the
+     * economy was tuned for, which cannot re-order the biomes or break
+     * reachability's "each Keep level costs more engaged play than the
+     * last".
+     *
+     * Egg chance is a SEPARATE channel (additive percentage POINTS, from
+     * mastery tier 5 and events), capped at `eggChanceBonusPointsMax`,
+     * with `eggChanceCeiling` as a hard ceiling on the resulting chance so
+     * the Lanterngrotto's 50% can never become a certainty.
+     *
+     * Job production (Gathering, Simmering) takes NO multipliers at all:
+     * it is the offline faucet, its ceiling is `offlineRateCapMs`, and
+     * buffing it re-derives the casual on-ramp arithmetic that
+     * `reachability.test.ts` pins (the station must stay cheaper, in
+     * minutes, than the Keep level it funds).
+     */
+    loot: {
+      bonusRollChanceMax: 0.25,
+      eggChanceBonusPointsMax: 0.05,
+      eggChanceCeiling: 0.6,
+    },
+
+    /**
+     * EGG PITY — visible, never hidden, and deterministic from the seeded
+     * RNG.
+     *
+     * A per-biome counter of hatches from that biome that did NOT produce
+     * the rarest tier present in its egg pool. At the threshold the next
+     * hatch from that biome is GUARANTEED to be that tier, and the counter
+     * resets. Keyed by the pool's rarest tier:
+     *
+     *   uncommon pools (Meadow → Cloudpip 23.1%, Forest → Emberpip 13.0%,
+     *     Snowdrift, Shore): 8. Expected wait without pity is ~4.3 hatches
+     *     on the Meadow; 8 turns a long tail into a promise.
+     *   rare pools (Lanterngrotto → Lanternpip 28.6%): 6. Grotto eggs cost
+     *     90 minutes each, so 6 caps the trophy chase at ~9 hours against
+     *     the ~10.5h expectation — the tail is what makes a chase feel
+     *     unfair, and this removes it without touching the base odds.
+     *   common-only pools (Bramblewick): no pity, because there is nothing
+     *     rarer in the pool to chase. The UI shows the base odds and no
+     *     counter, rather than a counter that never pays.
+     *
+     * Cursor parity is the hard constraint and it comes free: a pity hatch
+     * narrows the species registry handed to `rollGenome`, which consumes
+     * exactly 5 rolls regardless of registry size — the same mechanism
+     * round 2B's biome pools already rely on (spec §2 rule 3).
+     */
+    eggPity: {
+      thresholdByRarity: { uncommon: 8, rare: 6 } satisfies Partial<
+        Record<Rarity, number>
+      >,
+    },
+
+    /**
+     * EVENTS — limited-time FLAVOUR, never limited-time CONTENT.
+     *
+     * Two rules make "limited time" safe here, and they are absolute:
+     * every event RECURS ANNUALLY (declared as month-day, so "you missed
+     * it" is always "it comes back"), and nothing is ever obtainable only
+     * during one. An event may make something EASIER (a loot bonus inside
+     * the capped channel, a lower pity threshold) or louder (a featured
+     * decoration), and that is the whole permitted surface.
+     *
+     * `lootBonusRollChanceMax` is the per-event ceiling on what it may
+     * contribute to the ONE summed bonus channel above; `pityThresholdMin`
+     * is the floor an event may lower a pity threshold to (it may only
+     * ever LOWER one — an event that made a chase longer would be a
+     * punishment for playing at the wrong time of year).
+     */
+    events: {
+      lootBonusRollChanceMax: 0.1,
+      pityThresholdMin: 4,
+    },
+
+    /**
+     * GRANT CEILINGS — the guard that keeps round 2B's shipped feel claim
+     * honest ("Keep level 2 in 30–45 minutes of engaged play", measured
+     * over 300 seeds in `reachability.test.ts`).
+     *
+     * Streak, bounty and milestone rewards are the one way this round can
+     * inject resources OUTSIDE the expedition and job tables that
+     * reachability measures — so a generous early ladder could quietly
+     * make the shipped number a lie. Wood is the binding resource for Keep
+     * level 2 (`keepLevelCosts[2]` = 5 wood / 6 fiber) and the level-1
+     * wood ceiling (see `expeditions`) is the fragile invariant it
+     * protects, so the cap is stated on wood:
+     *
+     *   the TOTAL wood a player can bank from every retention grant
+     *   reachable before Keep level 2 is `preLevel2WoodCap`.
+     *
+     * Fiber grants are deliberately NOT capped this tightly: fiber is not
+     * the binding resource, so extra fiber shortens the unlucky tail (the
+     * p90 50-trip seed) without moving the median — the same job the
+     * Gathering Station on-ramp does.
+     *
+     * `grantedDecorationRefund` 0 closes a real exploit: `REMOVE_ITEM`
+     * refunds a placement's full cost, so a free decoration would be a
+     * resource printer. Granted keepsakes refund NOTHING and instead
+     * return to a keepsakes shelf, re-placeable free forever — warmer than
+     * a refund and closed as a loop.
+     */
+    grants: {
+      preLevel2WoodCap: 2,
+      grantedDecorationRefund: 0,
+    },
+  },
+
   /** New saves are seeded with 3 Berries so the guided first Feed works
    * (§6.3). Item counts, not a cost bundle — Berries are food (inventory),
    * not a resource, so ResourceBundle deliberately does not apply here. */

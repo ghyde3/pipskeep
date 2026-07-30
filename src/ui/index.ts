@@ -31,10 +31,27 @@ export interface UiDeps {
   /** Open the loot-reveal moment (the phase4 module — wired by main.ts).
    * The top bar's "!" chip and the return toast both route here. */
   openReveal(): void;
+  /**
+   * Open the Long Meadow's retire confirmation for a Pip (round 2C —
+   * `ui/sanctuary.ts` owns that dialog; main.ts wires it). Optional: when
+   * omitted the focus view simply doesn't draw the affordance, which keeps
+   * every pre-2C `initUi` caller and test valid.
+   */
+  openRetireConfirm?(pipId: string): void;
 }
 
 export interface Ui {
   sync(state: GameState): void;
+  /**
+   * Close every surface this module owns (items sheet + focus view).
+   *
+   * The integrate stage's mutual-exclusion seam: round 2C added three
+   * full-screen destinations that are reachable while a sheet is already
+   * up, and "two overlays open at once, resolved by z-index luck" is the
+   * bug class this round was told not to repeat. main.ts calls this before
+   * opening the Album / Long Meadow / Today.
+   */
+  closeSurfaces(): void;
   /** Per-frame: cooldown rings, bubble anchoring, focus countdowns. */
   update(): void;
   /** Bubble + structural-block toasts for a fresh CareOutcome. */
@@ -62,6 +79,7 @@ export function initUi(deps: UiDeps): Ui {
     dispatch: (a) => deps.store.dispatch(a),
     getState: () => deps.store.getState(),
     clock: deps.clock,
+    openRetireConfirm: deps.openRetireConfirm,
   });
   const topBar = createTopBar({
     dispatch: (a) => deps.store.dispatch(a),
@@ -90,6 +108,11 @@ export function initUi(deps: UiDeps): Ui {
       actionBar.sync(state);
       sheet.sync(state);
       focus.sync(state);
+    },
+
+    closeSurfaces(): void {
+      sheet.close();
+      focus.close();
     },
 
     update(): void {

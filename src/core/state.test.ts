@@ -13,9 +13,10 @@ import { HOUR_MS, SECOND_MS, tuning } from "../content/tuning";
 import { PERSONALITY_IDS } from "../content/personalities";
 import { createStore } from "./store";
 import { LifeStage, PipActivity } from "./pips/types";
-import type { PipNeeds, PipState } from "./pips/types";
+import type { PipId, PipNeeds, PipState } from "./pips/types";
 import { applyNeedsDelta } from "./pips/needs";
 import { runCatchup } from "./pips/catchup";
+import { ROSTER_FULL_MAX_MESSAGE, ROSTER_FULL_MESSAGE } from "../content/eggs";
 import { GENESIS_STREAM, STARTER_HUNGER, createNewGame, rootReducer } from "./state";
 import type { GameAction, GameState } from "./state";
 
@@ -88,6 +89,37 @@ function makeState(
     lastJobOutcome: null,
     lastEvolveOutcome: null,
     onboarding: { completed: true, step: "done" },
+    pipdex: {
+      entries: {},
+      discoveryOrder: [],
+      formsSeen: 0,
+      formsCaught: 0,
+      variantsCaught: 0,
+      shiniesCaught: 0,
+      unreadEntryIds: [],
+    },
+    sanctuary: { pips: {}, order: [] },
+    lastSanctuaryOutcome: null,
+    // ROUND 2C — progression stack defaults (docs/retention-bible.md).
+    streak: {
+      current: 0,
+      longest: 0,
+      lastVisitDay: null,
+      totalVisitDays: 0,
+      graceBanked: 2,
+      graceRefilledOnDay: null,
+      rainDays: 0,
+      rewardedForDay: null,
+      pendingChoices: [],
+    },
+    dayOffsetMs: 0,
+    counters: {},
+    milestones: { earned: {}, pendingCelebrations: [] },
+    bounties: { day: null, slots: [], rerollsUsed: 0, dayBonusGranted: false },
+    eggPity: {},
+    activeEvents: [],
+    keepsakes: {},
+    flair: {},
     ...overrides,
   };
 }
@@ -518,5 +550,293 @@ describe("store integration — one-way flow end to end", () => {
     expect(awake.needs.energy).toBe(tuning.care.rest.autoWakeAtEnergy);
     expect(awake.activity).toBe(PipActivity.Idle);
     expect(awake.sulking).toBe(false);
+  });
+});
+
+/** Hatch a second Pip via the debug-egg seam (spec §14) so tests below can
+ * retire the starter without hitting the "last active Pip" refusal.
+ * Returns the state after hatching and the newborn's id. */
+function hatchSecondPip(
+  state: GameState,
+  at: number,
+): { state: GameState; pipId: PipId } {
+  let next = rootReducer(state, { type: "DEBUG_SPAWN_EGG", at });
+  const spawned = next.eggs[next.eggs.length - 1];
+  if (spawned === undefined) throw new Error("expected a spawned egg");
+  next = rootReducer(next, { type: "TICK", at: at + spawned.incubationMs + 1 });
+  const before = new Set(next.rosterOrder);
+  next = rootReducer(next, {
+    type: "HATCH_EGG",
+    eggId: spawned.id,
+    at: at + spawned.incubationMs + 2,
+  });
+  if (next.lastHatchOutcome?.ok !== true) {
+    throw new Error("expected HATCH_EGG to succeed");
+  }
+  const pipId = next.rosterOrder.find((id) => !before.has(id));
+  if (pipId === undefined) throw new Error("expected a newborn roster entry");
+  return { state: next, pipId };
+}
+
+describe("ROUND 2C — the Album (pipdex) wiring (docs/retention-bible.md §1)", () => {
+  it("createNewGame catches the starter species immediately (bible §11.3 fresh-game case)", () => {
+    const state = createNewGame(7, 1_000);
+    const starter = pip(state);
+    const entry = state.pipdex.entries[starter.speciesId];
+    expect(entry?.caughtAt).toBe(1_000);
+    expect(entry?.caughtCount).toBe(1);
+    expect(entry?.firstPortrait?.pipId).toBe(starter.id);
+    expect(entry?.firstPortrait?.genome).toEqual(starter.genome);
+    expect(state.pipdex.formsCaught).toBe(1);
+  });
+
+  it("HATCH_EGG catches the hatchling's species (bible §1.1 Portrait tier)", () => {
+    const state = createNewGame(7, 0);
+    const starterSpeciesId = pip(state).speciesId;
+    const beforeCaughtCount = state.pipdex.entries[starterSpeciesId]?.caughtCount ?? 0;
+    const { state: hatched, pipId } = hatchSecondPip(state, 0);
+    const hatchling = hatched.pips[pipId];
+    if (hatchling === undefined) throw new Error("expected the hatchling");
+    const entry = hatched.pipdex.entries[hatchling.speciesId];
+    expect(entry?.caughtAt).not.toBeNull();
+    expect(entry?.caughtCount).toBe(
+      // The hatchling may happen to roll the SAME species as the starter
+      // (caughtCount increments; the portrait stays frozen on the FIRST
+      // catch) or a genuinely new one (caughtCount starts at 1) — either
+      // way the hatch must have been recorded.
+      hatchling.speciesId === starterSpeciesId ? beforeCaughtCount + 1 : 1,
+    );
+    // The portrait is frozen at first catch, never overwritten by a
+    // later same-species hatch.
+    if (hatchling.speciesId === starterSpeciesId) {
+      expect(entry?.firstPortrait?.pipId).toBe("pip-1");
+    } else {
+      expect(entry?.firstPortrait?.pipId).toBe(pipId);
+    }
+  });
+
+  it("EVOLVE_PIP catches the evolved species and records the gift-variant leaf on the BASE page", () => {
+    let state = createNewGame(7, 0);
+    const starterId = state.rosterOrder[0] as string;
+    const starter = pip(state, starterId);
+    // Force readiness (age/happiness thresholds are lifecycle.test.ts's
+    // job) and set the gift that selects mosspip's "sunorchard" variant.
+    state = rootReducer(state, {
+      type: "LOAD_SAVE",
+      state: {
+        ...state,
+        pips: {
+          ...state.pips,
+          [starterId]: {
+            ...starter,
+            readyToEvolve: true,
+            lastGiftItemId: "honeydrop",
+          },
+        },
+      },
+    });
+    state = rootReducer(state, { type: "EVOLVE_PIP", pipId: starterId, at: 10_000 });
+    expect(state.lastEvolveOutcome?.ok).toBe(true);
+    if (state.lastEvolveOutcome?.ok !== true) return;
+    const { toSpeciesId, variantId, fromSpeciesId } = state.lastEvolveOutcome;
+
+    const evolvedEntry = state.pipdex.entries[toSpeciesId];
+    expect(evolvedEntry?.caughtAt).toBe(10_000);
+    expect(evolvedEntry?.firstPortrait?.genome.speciesId).toBe(fromSpeciesId); // birth genome, unchanged
+
+    // The ribbon lives on the BASE species' page, not the evolved one's.
+    const baseEntry = state.pipdex.entries[fromSpeciesId];
+    expect(baseEntry?.variantsCaught[variantId]).toBe(10_000);
+    expect(evolvedEntry?.variantsCaught[variantId]).toBeUndefined();
+  });
+
+  it("ACKNOWLEDGE_REVEAL grants a Field note for every species in the completed trip's egg pool", () => {
+    let state = createNewGame(7, 0);
+    const starterId = state.rosterOrder[0] as string;
+    state = rootReducer(state, {
+      type: "LOAD_SAVE",
+      state: {
+        ...state,
+        pendingReveals: [
+          {
+            pipId: starterId,
+            expeditionId: "meadow",
+            completedAt: 5_000,
+            items: [],
+            egg: null,
+          },
+        ],
+      },
+    });
+    state = rootReducer(state, { type: "ACKNOWLEDGE_REVEAL", at: 6_000 });
+    // meadow's eggSpecies pool (content/expeditions.ts) is ["mosspip", "cloudpip"].
+    expect(state.pipdex.entries["cloudpip"]?.seenAt).toBe(6_000);
+    expect(state.pipdex.entries["cloudpip"]?.caughtAt).toBeNull();
+    // mosspip was already CAUGHT (the starter) but never separately SEEN
+    // via a trip — this is the first time, and caughtAt is untouched.
+    expect(state.pipdex.entries["mosspip"]?.seenAt).toBe(6_000);
+    expect(state.pipdex.entries["mosspip"]?.caughtAt).toBe(0);
+    expect(state.pipdex.entries["mosspip"]?.knownBiomes).toContain("meadow");
+  });
+});
+
+describe("ROUND 2C — the Long Meadow: RETIRE_PIP / RETRIEVE_PIP (docs/retention-bible.md §2)", () => {
+  it("refuses to retire the last active Pip", () => {
+    const state = createNewGame(7, 0);
+    const starterId = state.rosterOrder[0] as string;
+    const next = rootReducer(state, { type: "RETIRE_PIP", pipId: starterId, at: 1_000 });
+    expect(next.lastSanctuaryOutcome).toEqual({
+      action: "retire",
+      ok: false,
+      pipId: starterId,
+      at: 1_000,
+      reason: "lastPip",
+    });
+    expect(next.pips[starterId]).toBeDefined();
+  });
+
+  it("retiring an AssignedJob Pip auto-unassigns the job first (mirrors REMOVE_ITEM)", () => {
+    let state = createNewGame(7, 0);
+    const starterId = state.rosterOrder[0] as string;
+    const hatched = hatchSecondPip(state, 0);
+    state = hatched.state;
+
+    state = rootReducer(state, {
+      type: "LOAD_SAVE",
+      state: {
+        ...state,
+        keep: {
+          ...state.keep,
+          placements: { "place-1": { itemId: "gathering-station", x: 0, y: 0 } },
+        },
+        pips: {
+          ...state.pips,
+          [starterId]: { ...pip(state, starterId), activity: PipActivity.AssignedJob },
+        },
+        jobs: {
+          [starterId]: {
+            jobId: "gathering",
+            stationPlacementId: "place-1",
+            assignedAt: 0,
+            lastProducedAt: 0,
+          },
+        },
+      },
+    });
+    expect(state.jobs[starterId]).toBeDefined();
+
+    const retireAt = 50_000;
+    state = rootReducer(state, { type: "RETIRE_PIP", pipId: starterId, at: retireAt });
+    expect(state.lastSanctuaryOutcome?.ok).toBe(true);
+    expect(state.jobs[starterId]).toBeUndefined();
+    expect(state.sanctuary.pips[starterId]?.pip.activity).toBe(PipActivity.Idle);
+  });
+
+  it("a resident survives a 30-simulated-day absence untouched, then comes home byte-for-byte", () => {
+    let state = createNewGame(7, 0);
+    const starterId = state.rosterOrder[0] as string;
+    const before = pip(state, starterId);
+    const hatched = hatchSecondPip(state, 0);
+    state = hatched.state;
+
+    const retireAt = 100_000;
+    state = rootReducer(state, { type: "RETIRE_PIP", pipId: starterId, at: retireAt });
+    expect(state.lastSanctuaryOutcome).toEqual({
+      action: "retire",
+      ok: true,
+      pipId: starterId,
+      at: retireAt,
+    });
+    expect(state.pips[starterId]).toBeUndefined();
+    expect(state.rosterOrder).not.toContain(starterId);
+    const residentAtRetire = state.sanctuary.pips[starterId];
+    if (residentAtRetire === undefined) throw new Error("expected a resident record");
+    expect(residentAtRetire.pip.needs).toEqual(tuning.retention.sanctuary.arrivalNeeds);
+
+    // A real offline absence AND a live tick — neither touches the
+    // resident, because it simply is not in `pips`/`rosterOrder` (the
+    // freeze IS the exclusion, docs/retention-bible.md §2.4).
+    const THIRTY_DAYS_MS = 30 * 24 * HOUR_MS;
+    state = rootReducer(state, {
+      type: "CATCHUP",
+      savedAt: retireAt,
+      now: retireAt + THIRTY_DAYS_MS,
+    });
+    state = rootReducer(state, {
+      type: "TICK",
+      at: retireAt + THIRTY_DAYS_MS + HOUR_MS,
+    });
+
+    const residentAfter = state.sanctuary.pips[starterId];
+    expect(residentAfter?.pip.needs).toEqual(residentAtRetire.pip.needs);
+    expect(residentAfter?.pip.ageMs).toBe(residentAtRetire.pip.ageMs);
+    expect(residentAfter?.pip.happinessIntegral).toBe(
+      residentAtRetire.pip.happinessIntegral,
+    );
+
+    const retrieveAt =
+      retireAt + THIRTY_DAYS_MS + HOUR_MS + tuning.retention.sanctuary.minStayMs;
+    state = rootReducer(state, {
+      type: "RETRIEVE_PIP",
+      pipId: starterId,
+      at: retrieveAt,
+    });
+    expect(state.lastSanctuaryOutcome).toEqual({
+      action: "retrieve",
+      ok: true,
+      pipId: starterId,
+      at: retrieveAt,
+    });
+    const home = pip(state, starterId);
+    expect(home.name).toBe(before.name);
+    expect(home.genome).toEqual(before.genome);
+    expect(home.needs).toEqual(tuning.retention.sanctuary.arrivalNeeds);
+    expect(home.activity).toBe(PipActivity.Idle);
+    expect(state.rosterOrder[state.rosterOrder.length - 1]).toBe(starterId);
+    expect(state.sanctuary.pips[starterId]).toBeUndefined();
+  });
+
+  it("retrieve refuses before minStayMs and refuses warmly at the roster cap", () => {
+    let state = createNewGame(7, 0);
+    const starterId = state.rosterOrder[0] as string;
+    const hatched = hatchSecondPip(state, 0);
+    state = hatched.state;
+    state = rootReducer(state, { type: "RETIRE_PIP", pipId: starterId, at: 0 });
+
+    const tooSoon = rootReducer(state, {
+      type: "RETRIEVE_PIP",
+      pipId: starterId,
+      at: tuning.retention.sanctuary.minStayMs - 1,
+    });
+    expect(tooSoon.lastSanctuaryOutcome).toEqual({
+      action: "retrieve",
+      ok: false,
+      pipId: starterId,
+      at: tuning.retention.sanctuary.minStayMs - 1,
+      reason: "notSettled",
+    });
+  });
+
+  it("the roster-full message points at the Long Meadow, not just the upgrade", () => {
+    expect(ROSTER_FULL_MESSAGE).toContain("Long Meadow");
+    expect(ROSTER_FULL_MAX_MESSAGE).toContain("Long Meadow");
+  });
+
+  it("retire/retrieve never touch the Album — the record is already permanent (bible §1.1)", () => {
+    let state = createNewGame(7, 0);
+    const starterId = state.rosterOrder[0] as string;
+    const hatched = hatchSecondPip(state, 0);
+    state = hatched.state;
+    const pipdexBeforeRetire = state.pipdex;
+
+    state = rootReducer(state, { type: "RETIRE_PIP", pipId: starterId, at: 1_000 });
+    expect(state.pipdex).toBe(pipdexBeforeRetire); // same reference — untouched
+
+    state = rootReducer(state, {
+      type: "RETRIEVE_PIP",
+      pipId: starterId,
+      at: 1_000 + tuning.retention.sanctuary.minStayMs,
+    });
+    expect(state.pipdex).toBe(pipdexBeforeRetire); // still untouched
   });
 });

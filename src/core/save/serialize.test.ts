@@ -205,6 +205,58 @@ function richState(seed = SEED): GameState {
     lastJobOutcome: null,
     lastEvolveOutcome: null,
     onboarding: { completed: true, step: "done" },
+    pipdex: {
+      entries: {},
+      discoveryOrder: [],
+      formsSeen: 0,
+      formsCaught: 0,
+      variantsCaught: 0,
+      shiniesCaught: 0,
+      unreadEntryIds: [],
+    },
+    sanctuary: { pips: {}, order: [] },
+    lastSanctuaryOutcome: null,
+    // ROUND 2C — the progression stack (docs/retention-bible.md),
+    // exercised with real, non-trivial data so the round-trip test
+    // actually covers every new field's shape.
+    streak: {
+      current: 4,
+      longest: 9,
+      lastVisitDay: 12,
+      totalVisitDays: 15,
+      graceBanked: 1,
+      graceRefilledOnDay: 5,
+      rainDays: 2,
+      rewardedForDay: 4,
+      pendingChoices: [{ kind: "keepsake", offers: ["welcome-sign", "moss-tuft"], forDay: 5 }],
+    },
+    dayOffsetMs: 4 * 60 * 60 * 1000,
+    counters: { feeds: 12, careActions: 30, expeditionsTotal: 5 },
+    milestones: {
+      earned: { "first-feed": SAVED_AT - 1000 },
+      pendingCelebrations: ["first-trip-home"],
+    },
+    bounties: {
+      day: 3,
+      slots: [
+        {
+          templateId: "hand-out-snacks",
+          slot: 0,
+          target: 4,
+          progress: 2,
+          completedAt: null,
+          rerolled: false,
+          params: {},
+          stale: false,
+        },
+      ],
+      rerollsUsed: 1,
+      dayBonusGranted: false,
+    },
+    eggPity: { meadow: 3, lanterngrotto: 5 },
+    activeEvents: ["berry-glut"],
+    keepsakes: { "moss-tuft": 1 },
+    flair: {},
   };
 }
 
