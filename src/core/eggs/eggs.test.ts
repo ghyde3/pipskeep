@@ -139,6 +139,8 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
     activeEvents: [],
     keepsakes: {},
     flair: {},
+    keepXp: 0,
+    lastLevelUp: null,
     ...overrides,
   };
 }

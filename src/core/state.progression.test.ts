@@ -124,6 +124,8 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
     activeEvents: [],
     keepsakes: {},
     flair: {},
+    keepXp: 0,
+    lastLevelUp: null,
     ...overrides,
   };
 }
@@ -231,7 +233,12 @@ describe("the streak visit whitelist (bible §3.2), enumerated against GameActio
 
   it("a Build-mode-only session counts as a visit day — a day the player played is never recorded as an absence", () => {
     const DAY_MS = contentTuning.retention.dayMs;
-    let state = makeState({ resources: { fiber: 40, wood: 40, shell: 40, driftwood: 40 } });
+    let state = makeState({
+      resources: { fiber: 40, wood: 40, shell: 40, driftwood: 40 },
+      // ROUND 2F: PURCHASE_KEEP_LEVEL now also gates on Keep XP (bible
+      // §1.2) — clear it so the day-3 purchase below still goes through.
+      keepXp: contentTuning.progression.levelXp[1],
+    });
     // Day 1: a care action, the ordinary way in.
     state = rootReducer(state, { type: "FEED", pipId: "pip-1", foodId: "berry", at: T0 });
     expect(state.streak.current).toBe(1);

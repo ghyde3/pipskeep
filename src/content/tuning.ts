@@ -231,7 +231,7 @@ export const tuning = {
    * their biome's foods and species, not because they are faster.
    *
    * ⚠️ THE LEVEL-1 WOOD CEILING (the fragile invariant — see the note on
-   * `keepLevelCosts`). The Meadow is the ONLY wood source at Keep level 1,
+   * `progression.levelCosts`). The Meadow is the ONLY wood source at Keep level 1,
    * and BOTH level 2 and the Gathering Station are priced wood-first. So:
    *
    *   - no new Keep-level-1 expedition may push wood above ~0.183/min, or
@@ -311,17 +311,30 @@ export const tuning = {
      * player gets exactly one completed run. Thin pickings and fat egg
      * odds: above the treeline there is not much to carry home, but it is
      * the only place a Snowpip has ever been seen.
+     *
+     * ROUND 2F (progression bible §2.1) — unlock 2 → 3. Re-spreading the
+     * six biomes across the new 12-tier ladder so a two-hour-old save no
+     * longer sees every trail: removing this trip from level-2 income
+     * leaves Wood at 0.33/min there, and level 3 still lands at 66.7
+     * expected minutes (up from 61.1) — it STRENGTHENS the escalation
+     * chain rather than threatening it (guarded by
+     * `core/economy/reachability.test.ts`).
      */
     snowdrift: {
       durationMs: 60 * MINUTE_MS,
       eggChance: 0.35,
-      unlockKeepLevel: 2,
+      unlockKeepLevel: 3,
       lootRolls: 12,
     },
+    /**
+     * ROUND 2F — unlock 3 → 4. Shell/Driftwood now arrive at tier 4, which
+     * is why Cozy Bunks' `prerequisiteLevel` (content/keep.ts) moves 3 → 4
+     * to match: the tier that supplies its cost.
+     */
     shore: {
       durationMs: 30 * MINUTE_MS,
       eggChance: 0.18,
-      unlockKeepLevel: 3,
+      unlockKeepLevel: 4,
       lootRolls: 6,
     },
     /**
@@ -331,11 +344,16 @@ export const tuning = {
      * the only pool a Lanternpip appears in. Still not a throughput win:
      * 14 rolls over 90 minutes is 0.156 items/min against the Meadow's
      * 0.60. You go for what only it has.
+     *
+     * ROUND 2F — unlock 3 → 5 (+2 tiers). The trophy chase (Lanternpip)
+     * now starts on engaged day 2 / casual day 6 rather than hour 2 —
+     * later, but not so late the Album becomes unfinishable (progression
+     * bible §2.1).
      */
     lanterngrotto: {
       durationMs: 90 * MINUTE_MS,
       eggChance: 0.5,
-      unlockKeepLevel: 3,
+      unlockKeepLevel: 5,
       lootRolls: 14,
     },
   } satisfies Record<
@@ -386,6 +404,23 @@ export const tuning = {
     simmering: {
       intervalMs: 30 * MINUTE_MS,
       table: { berry: 40, toastnut: 60 },
+    },
+
+    /**
+     * ROUND 2F (progression bible §3.4) — the THIRD job, at the Workbench
+     * (tier 8). Slowest of the three (45 min vs Gathering's 10 and
+     * Simmering's 30) and materials-only, the late-game complement to
+     * Gathering's mixed faucet and Simmering's pantry: one capped 16h
+     * absence is 21 ticks ≈ 12.6 Wood + 8.4 Fiber. Wood/Fiber only, same
+     * as the other two stations, so it stays outside the level-1 wood
+     * ceiling regardless of which tier it unlocks at (`core/economy/
+     * reachability.test.ts`'s "a station's own cost is payable at level 1"
+     * checks the STATION's cost, not the job's OUTPUT, which this table
+     * is — the Workbench itself is priced in `placeableCosts.workbench`).
+     */
+    mending: {
+      intervalMs: 45 * MINUTE_MS,
+      table: { wood: 60, fiber: 40 },
     },
   },
 
@@ -488,48 +523,10 @@ export const tuning = {
   },
 
   /**
-   * Keep level costs (spec §6.3); referenced by content/keep.ts.
-   *
-   * ROUND 2A — PROGRESSION DEADLOCK REPAIR. Both of these were priced in
-   * resources that ONLY the level they unlock could supply:
-   *   - Level 2 cost Wood; Wood dropped only in the Forest; the Forest
-   *     unlocked AT level 2. (The reported deadlock.)
-   *   - Level 3 cost Shell + Driftwood; both dropped only at the Shore;
-   *     the Shore unlocks AT level 3. (The same bug, one tier up, not yet
-   *     reached by any playtester.)
-   *
-   * The invariant now enforced by `core/economy/reachability.test.ts`:
-   * every level is priced ONLY in resources the PREVIOUS level's
-   * expeditions already drop.
-   *
-   * - Level 2 `{ wood: 5, fiber: 6 }`, payable from the Meadow alone
-   *   (which now drops fallen twigs). BOTH resources have to land, and
-   *   the binding one is stochastic, so the honest figure measured over
-   *   300 fresh saves driven through the real reducer is a MEDIAN of 8
-   *   trips / 35 minutes (mean 7.8 / 37.9, p90 50, worst seed 75) — not
-   *   the 6.7 trips a wood-only division suggests. Median hits the
-   *   owner's 30–45 minute target; the tail runs past it, which is what
-   *   the Gathering Station on-ramp below exists to absorb. It came DOWN
-   *   from 15/10 because level 1 has exactly one expedition and one Pip
-   *   may be on it at a time, so early income is hard-capped no matter
-   *   how many Pips the player has.
-   * - Level 3 `{ wood: 22, fiber: 14 }`, payable from Meadow + Forest run
-   *   in parallel ≈ 1 hour with two adult Pips (and the Forest is now
-   *   genuinely the better Wood-per-minute source — see
-   *   `expeditions.forest.lootRolls`). Shell/Driftwood move OFF the level
-   *   ladder and onto the roster upgrade, which is purchasable at level 3
-   *   — the moment the Shore that supplies them opens.
-   */
-  keepLevelCosts: {
-    2: { wood: 5, fiber: 6 },
-    3: { wood: 22, fiber: 14 },
-  } satisfies Partial<Record<KeepLevel, ResourceBundle>>,
-
-  /**
    * Placeable station costs (spec §9); referenced by content/placeables.ts.
    *
    * ROUND 2B — THE CASUAL ON-RAMP, MADE REAL. These live here, next to
-   * `keepLevelCosts`, precisely because of the bug that put them here:
+   * `progression.levelCosts`, precisely because of the bug that put them here:
    * the Gathering Station cost `{ wood: 8, fiber: 4 }` while the Keep
    * level 2 it is supposed to FUND cost `{ wood: 5, fiber: 6 }`. The
    * station was more expensive in Wood than the thing it was the cheap
@@ -564,25 +561,47 @@ export const tuning = {
      * above) survives having a second station to buy.
      */
     stockpot: { wood: 5, fiber: 4 },
+
+    /**
+     * ROUND 2F (progression bible §3.4/§5.1) — nine new stations, one per
+     * tier the ladder hands out. Each carries `unlockKeepLevel` on its OWN
+     * `PlaceableDef` entry (content/placeables.ts), which is what lets
+     * `trail-post`/`beacon`/`weathervane` price in Shell/Driftwood at all:
+     * `core/economy/reachability.test.ts`'s `pricedPlaceables.payableAt`
+     * now reads `item.unlockKeepLevel` instead of a hard-coded `1` (bible
+     * §8.3 Update 1 — an authorised TIGHTENING, not a weakening: each
+     * station is checked against the income available when it actually
+     * appears). Every entry below clears its own tier's 3-hour/0.95-afford
+     * bar with margin (bible §5.1's own table).
+     */
+    "wash-basin": { wood: 3, fiber: 2 },
+    "play-post": { wood: 4, fiber: 4 },
+    larder: { wood: 8, fiber: 5 },
+    "nest-warmer": { wood: 5, fiber: 4 },
+    "trail-post": { wood: 6, shell: 2 },
+    workbench: { wood: 6, fiber: 5 },
+    "sun-bunks": { wood: 10, fiber: 8 },
+    beacon: { wood: 12, shell: 5, driftwood: 3 },
+    weathervane: { wood: 10, shell: 4, driftwood: 4 },
   } satisfies Readonly<Record<string, ResourceBundle>>,
 
   /**
-   * Keep grid (spec §9): 8×8 starting area; Level 2 adds a +4×8 plot,
-   * expressed as simple rows/cols growth per level (cumulative). Bounds
-   * math lives in core/keep `gridBounds`.
+   * Keep grid (spec §9): 8×8 starting area. Growth-per-level moved to
+   * `progression.gridGrowth` in round 2F (progression bible §2.2/§8.6
+   * risk 1 — the "two numbers, two files" trap round 2B documented; the
+   * tier-2 `+4 rows` entry there is byte-identical to what shipped here).
+   * Bounds math lives in core/keep `gridBounds`.
    */
   keepGrid: {
     cols: 8,
     rows: 8,
-    /** Extra cols/rows unlocked AT each Keep level (spec §9: L2 = +4×8,
-     * i.e. 4 more rows at the same 8-column width). */
-    growthPerLevel: {
-      2: { cols: 0, rows: 4 },
-    } satisfies Partial<Record<KeepLevel, { cols: number; rows: number }>>,
   },
 
   /** Roster upgrade cost (spec §7.4: Keep upgrade raises the cap 3 → 5;
-   * purchasable at Keep level 3). Referenced by content/keep.ts. */
+   * purchasable at Keep level 4 as of round 2F — see
+   * `content/keep.ts`'s `keepUpgrades.prerequisiteLevel`, moved 3 → 4
+   * to follow the Shore, which now supplies this cost's Shell/Driftwood,
+   * progression bible §2.1). Referenced by content/keep.ts. */
   rosterUpgradeCost: { wood: 10, shell: 8, driftwood: 4 } satisfies ResourceBundle,
 
   /**
@@ -970,7 +989,7 @@ export const tuning = {
      * inject resources OUTSIDE the expedition and job tables that
      * reachability measures — so a generous early ladder could quietly
      * make the shipped number a lie. Wood is the binding resource for Keep
-     * level 2 (`keepLevelCosts[2]` = 5 wood / 6 fiber) and the level-1
+     * level 2 (`progression.levelCosts[2]` = 5 wood / 6 fiber) and the level-1
      * wood ceiling (see `expeditions`) is the fragile invariant it
      * protects, so the cap is stated on wood:
      *
@@ -992,6 +1011,350 @@ export const tuning = {
       preLevel2WoodCap: 2,
       grantedDecorationRefund: 0,
     },
+  },
+
+  /**
+   * ROUND 2F — THE PROGRESSION SPINE (docs/progression-bible.md). Keep XP,
+   * the 12-tier Keep ladder, and building effects, in one block because
+   * they are three views of the same question:
+   *
+   *   "does the bar move, does it lead somewhere named, and does the thing
+   *    you built with it do anything?"
+   *
+   * ⚠️ THE ISOLATION RULE STILL BINDS (see `retention`'s own doc comment).
+   * Nothing here may read or modify `needDecayPerHour`,
+   * `personalityDecayMultipliers`, `care.*`, `foods.*`, `offlineRateCapMs`,
+   * `sulkExitThreshold`, or `playRefusal`. Building COMFORT is a fifth
+   * multiplicative FACTOR applied in `core/pips/needs.ts` `effectiveRates`
+   * (base × personality × life-stage × situational × keepComfort, bible
+   * §3.2) — it never edits a rate, so every arithmetic assertion in
+   * `core/pips/balance.test.ts` computes exactly the same numbers, and the
+   * factor is the identity on a Keep with no placements, so every
+   * reducer-driven test in the repo is byte-identical.
+   *
+   * ⚠️ THE FRAGILE INVARIANT OF THIS ROUND (the equivalent of round 2B's
+   * level-1 wood ceiling and round 2C's isolation rule):
+   * `effectCaps.comfortReductionMax`. At 0.25 a MAXIMALLY-built Keep still
+   * comes home Grumpy after a 24h absence for every personality; at 0.30 a
+   * Curious Pip comes home Content and the daily care loop stops mattering.
+   * The whole "buildings shorten the chore, never trivialise care" promise
+   * is that one number. Guarded by `core/keep/comfort.balance.test.ts`.
+   */
+  progression: {
+    /**
+     * CUMULATIVE Keep XP required to reach each tier, indexed by tier − 1
+     * (so `levelXp[0] === 0` is tier 1). The BAR the player watches is
+     * per-tier — `(keepXp − levelXp[L−1]) / (levelXp[L] − levelXp[L−1])` —
+     * because a cumulative bar is why every XP game eventually stops
+     * feeling like it moves (bible §0.2).
+     *
+     * The deltas are 100 · 180 · 300 · 400 · 550 · 700 · 900 · 1150 · 1450
+     * · 1800 · 2300. Measured against the bible §1.6 income model that is
+     * tier 2 at ~12 minutes, tier 4 by the end of day 1, tier 8 on engaged
+     * day 7, tier 12 on engaged day 17 (casual day 54). "Early levels in
+     * the first session, mid-game in days, late-game in weeks."
+     *
+     * THE ANTI-GRIND CONSTRAINT, which is what actually pins these
+     * numbers: at EVERY tier, one care action must be ≥ 0.15% of that
+     * tier's bar and one care round plus a Meadow round-trip ≥ 1.2%
+     * (`barVisibility` below). Tier 12 is the binding row: 4/2300 = 0.17%
+     * and 33/2300 = 1.43%. Steepening any late tier lands in
+     * `core/progression/levelCurve.test.ts` first.
+     */
+    levelXp: [
+      0, 100, 280, 580, 980, 1530, 2230, 3130, 4280, 5730, 7530, 9830,
+    ] as readonly number[],
+
+    /**
+     * XP per player action (bible §1.3's table covers every arm of
+     * `GameAction`; anything absent from that table grants ZERO — `TICK`,
+     * `SET_ACTIVE_PIP`, `MOVE_ITEM`, `REMOVE_ITEM`, `UNASSIGN_JOB`,
+     * `RETRIEVE_PIP`, the onboarding/debug/day-offset/event seams).
+     *
+     * Two structural rules these numbers encode:
+     *
+     * 1. Every repeatable source is already rate-capped by a shipped
+     *    mechanism — cooldowns and full bars for care, one-Pip-per-trip for
+     *    expeditions, `offlineRateCapMs` for job ticks, three-a-day for
+     *    bounties, one-day-a-day for the streak. The two that looked
+     *    unbounded are keyed to first-time-only counters instead:
+     *    `firstBuild` on `counters["built.<itemId>"]` (closing the
+     *    place → full-refund → place printer) and `firstJob` on
+     *    `counters["job.<jobId>"]`.
+     * 2. `revealBase + revealPer5Min × floor(durationMs / 5min)` is why a
+     *    90-minute Grotto trip pays 24 and a 5-minute Meadow trip pays 7:
+     *    per MINUTE the Meadow still wins (1.4 vs 0.27), so active play
+     *    beating idle play — round 2B's shape — survives in XP too.
+     */
+    xp: {
+      /** FEED/CLEAN/PLAY/PET/GIVE_ITEM, and REST_TOGGLE when a nap STARTS.
+       * The atom the whole table is sized against. Refusals pay nothing. */
+      care: 4,
+      expeditionSend: 2,
+      revealBase: 6,
+      revealPer5Min: 1,
+      hatch: 40,
+      evolve: 90,
+      /** First ever placement of each item TYPE — the "reason to build"
+       * lever, and the reason the catalog is worth 45 entries. */
+      firstBuild: 25,
+      firstJob: 20,
+      /** Per produced job tick. The idle earner, and the biggest single
+       * absence source: ≤ 96 ticks per capped absence per station. Rewarding
+       * absence is correct (spec §4.4) but this is the number to lower first
+       * if playtest says active play feels pointless (bible §8.6 risk 7). */
+      jobTick: 1,
+      bountyComplete: 15,
+      bountyDayClear: 25,
+      /** CLAIM_STREAK_REWARD: base + perTier × the streak's bonus tier. */
+      streakDayBase: 20,
+      streakDayPerTier: 5,
+      rosterUpgrade: 60,
+      /** Mastery tier gained: this × the new tier (25 → 125). Idempotent on
+       * `counters["masteryTier.<pipId>.<biomeId>"]`. */
+      masteryTierPerTier: 25,
+      albumSeen: 10,
+      albumCaught: 50,
+      albumVariant: 35,
+      /** Long Meadow FIRST arrival only (`visits === 0`), so a
+       * retrieve → retire loop pays nothing the second time. */
+      sanctuaryFirstArrival: 20,
+      /**
+       * Bands for `MilestoneDef.xp` (a new required content field). Sized
+       * so the ~2,200 XP earnable before tier 12 is ~22% of `levelXp[12]`:
+       * enough that milestones feel like progress, little enough that the
+       * ladder is not a milestone checklist. Pinned by
+       * `content/milestones.test.ts` at < 30%.
+       */
+      milestoneBands: {
+        firstHour: 15,
+        firstDay: 30,
+        firstWeek: 60,
+        longHaul: 120,
+        /** The 11 new one-per-Keep-tier milestones, by tier band. They cost
+         * nothing to build: `bumpCountersForAction` already writes a GENERIC
+         * `keepLevel<N>Reached` counter, and they give the tier-9 Chronicle
+         * its whole data source for free (`milestones.earned` is already
+         * `id → earnedAt`). */
+        keepTierEarly: 40,
+        keepTierMid: 80,
+        keepTierLate: 150,
+        keepTierTop: 220,
+      },
+    },
+
+    /**
+     * THE BAR-MOVEMENT GUARANTEE, as four asserted fractions of the CURRENT
+     * TIER's bar (bible §0.2). These are the anti-grind contract: they are
+     * checked for every tier, so a future steepening of `levelXp` fails
+     * here rather than in playtest.
+     *
+     * Rendering carries the last mile and is not optional: a `+N XP` chip
+     * flies into the bar on every grant, the fill animates with a 2px
+     * minimum advance (a "tick floor", so a sub-pixel grant still visibly
+     * nudges), and the numerals always change. A single Pet at tier 12 is
+     * 0.17% — half a pixel of fill, but a visible `+4`.
+     */
+    barVisibility: {
+      /** One care action (4 XP). */
+      minCareActionFraction: 0.0015,
+      /** A canonical 6-tap care round + one Meadow round-trip (33 XP). */
+      minCareRoundPlusTripFraction: 0.012,
+      /** One engaged session: roster care round + 4 quick trips + 1 deep
+       * trip + the day's three bounties and day-clear + the streak day. */
+      minSessionFraction: 0.08,
+      /** One full capped absence with a single Gathering Station staffed
+       * (96 ticks) — so an absence ALONE visibly moves the bar. */
+      minCappedAbsenceFraction: 0.04,
+    },
+
+    /**
+     * BUILDING EFFECT CAPS. Every channel is summed ONCE across every
+     * placed item and every active set bonus, then clamped ONCE here —
+     * sum-then-clamp, never multiply-then-clamp, for the same two reasons
+     * `retention.loot` gives: the player can read it, and nothing can
+     * compound.
+     *
+     * `comfortReductionMax` is the fragile one (see the block header). The
+     * worst-case arithmetic it protects, in full: the leave-safe window
+     * drop is `-needDecayPerHour[need] × personalityMultiplier × 16h`, whose
+     * maximum is Chaotic cleanliness at 74.0. At ×0.75 that is 55.5, so a
+     * 90 save returns at 34.5 — under the Grumpy line of 40, over the
+     * `sulkExitThreshold` of 25, and far over Miserable's 15. Every
+     * personality's LOWEST need lands in [34.5, 38.9]: a maximally-built
+     * Keep never Sulks and never comes home Content. The chore got
+     * shorter; the care did not become optional.
+     *
+     * LOOT AND EGG CHANCE DELIBERATELY HAVE NO ENTRY HERE. Building loot
+     * bonuses feed `retention.loot.bonusRollChanceMax` (0.25) and building
+     * egg points feed `retention.loot.eggChanceBonusPointsMax` (0.05) —
+     * round 2C's EXISTING single channels, not new ones. That is what keeps
+     * a fully-buffed veteran at ≤ 1.25× the yield the economy was tuned for
+     * and stops buildings re-ordering the biomes.
+     */
+    effectCaps: {
+      /** Per need, as a fraction of decay removed. THE fragile number. */
+      comfortReductionMax: 0.25,
+      /** Multiplier on `care.rest.energyPerHour`. At the cap a full
+       * 0 → 100 nap is 6m15s, still clearing balance.test.ts's "a nap must
+       * be at least 5 minutes — long enough to be a thing you WATCH". */
+      restSpeedMax: 1.6,
+      /** Floor on the expedition-duration multiplier from buildings alone.
+       * 0.85 is EXACTLY Hardworking's quirk, so a building can never
+       * out-do a personality's identity. */
+      expeditionSpeedMin: 0.85,
+      /** Floor once a building's multiplier composes with Hardworking's
+       * (0.85 × 0.85 = 0.7225 → clamped): the best possible trip is −25%.
+       * `reachability.test.ts` measures a building-free economy, so it
+       * measures a strictly SLOWER one — safe direction. */
+      expeditionSpeedFloorWithQuirk: 0.75,
+      /** Floor on the egg-incubation multiplier. A 2h egg becomes 1h36m,
+       * so `incubation + pipling.durationMs` stays well under the 12h
+       * balance.test.ts pins. */
+      incubationSpeedMin: 0.8,
+      /** Cap on the summed Keep XP bonus. The only compounding-adjacent
+       * loop in the round (more building → more XP → more tiers → more
+       * building); bounded here, and bible §1.6's day-11+ income row
+       * already assumes it, so the wall-clock table holds. */
+      xpBonusMax: 0.25,
+    },
+
+    /**
+     * THEMED SET BONUSES — the mechanic that makes building feel like
+     * collecting rather than tidying (bible §3.5). Six biome-themed sets in
+     * `content/decorSets.ts`; the bonus counts DISTINCT member itemIds
+     * currently placed, so five Moss Tufts is one member.
+     *
+     * The two `liveAtKeepLevel` values are what make tiers 3 and 6 land as
+     * headlines: before tier 3 a decoration is worth 1–2%; after it, a
+     * themed corner is a real Keep-wide perk. The tier-2 (5-member) bonus
+     * REPLACES the tier-1 (3-member) bonus rather than stacking with it —
+     * one clamp, one readable number.
+     */
+    setBonus: {
+      minMembersTier1: 3,
+      minMembersTier2: 5,
+      tier1LiveAtKeepLevel: 3,
+      tier2LiveAtKeepLevel: 6,
+    },
+
+    /**
+     * Extra roster slots granted by Keep TIER, on top of the shipped
+     * `rosterCap` / `rosterCapUpgraded` pair (spec §7.4's 3 → 5 Cozy Bunks
+     * upgrade is untouched — only its `prerequisiteLevel` moves 3 → 4, to
+     * the tier that opens the Shore its shell/driftwood cost is priced in).
+     *
+     * A sixth bed at tier 11 is the single most wanted thing for a
+     * collection player, and it costs NO schema change: the cap becomes
+     * `base + (bunks ? 2 : 0) + bonusByLevel[level]`, all derived.
+     */
+    rosterCapBonusByLevel: { 11: 1 } as Readonly<Record<number, number>>,
+
+    /**
+     * THE MANDATORY MITIGATION, DONE (round 2F implementation): tiers 2
+     * and 3 below were BYTE-IDENTICAL to the shipped `keepLevelCosts` the
+     * design pass could not touch. Now that `core/keep`'s `KeepLevel`
+     * union is widened, `keepLevelCosts` is DELETED (this is the single
+     * source of truth) and `content/keep.ts` reads ONLY
+     * `progression.levelCosts` — closing the two-numbers-in-two-files trap
+     * round 2B documented before it could open. `content/keep.test.ts`
+     * pins tiers 2/3 byte-identical to the values that shipped.
+     *
+     * ONLY FIVE OF THE ELEVEN TIERS ARE PRICED, and that is arithmetic, not
+     * taste. `core/economy/reachability.test.ts` requires every priced tier
+     * to be affordable from 3h of already-unlocked expeditions at ≥ 0.95
+     * over 200 seeds, which caps the top bundle near
+     * `wood 45 / fiber 45 / shell 12 / driftwood 8` — about 3.5× level 2's
+     * 33.3 expected minutes. A twelve-tier ladder priced ONLY in resources
+     * is therefore impossible with four resources and six expeditions. XP
+     * paces the ladder; resources keep the economy load-bearing. The six
+     * unpriced tiers carry `cost: {}` and drop out of that suite's
+     * `pricedKeepLevels` filter entirely.
+     *
+     * The escalation chain these five produce, in the units the suite
+     * measures (`expectedMinutesToAfford(tier − 1, cost)`):
+     *   tier 2  33.3  →  3  66.7  →  5  75.0  →  7  79.0  →  9  89.6
+     * Strictly increasing, every row at z ≥ 2.4 on every resource.
+     */
+    levelCosts: {
+      2: { wood: 5, fiber: 6 },
+      3: { wood: 22, fiber: 14 },
+      5: { wood: 27, fiber: 20 },
+      7: { wood: 30, fiber: 22, shell: 6 },
+      9: { wood: 34, fiber: 26, shell: 7, driftwood: 4 },
+    } as Readonly<Record<number, ResourceBundle>>,
+
+    /**
+     * Grid growth per tier (bible §2.2). The shipped `keepGrid.growthPerLevel`
+     * is DELETED (same mitigation as `levelCosts` above) — this is the
+     * single source of truth `core/keep`'s `gridBounds` reads. Tier 2's
+     * `+4 rows` entry is byte-identical to the shipped one and a test
+     * asserts it.
+     *
+     * 8×8 → 8×12 → 10×12 → 10×14 → 12×14. STOPS at 168 tiles on purpose:
+     * spec §1's perf budget is "60fps with 5 animated Pips + 30
+     * decorations", and 168 tiles already hosts 60–80 placeables. That is
+     * the round's largest technical risk (bible §8.6 risk 9) and the first
+     * lever if the measurement fails is to drop this table's tier-9 entry.
+     */
+    gridGrowth: {
+      2: { cols: 0, rows: 4 },
+      5: { cols: 2, rows: 0 },
+      7: { cols: 0, rows: 2 },
+      9: { cols: 2, rows: 0 },
+    } as Readonly<Record<number, { cols: number; rows: number }>>,
+
+    /**
+     * RENOWN — what the bar does after tier 12 (bible §1.7). Every
+     * `xpPerLevel` past `levelXp[11]` grants one Renown level, shown on the
+     * XP bar's chip ("Lv 12 · Renown 3") and on the Keep upgrade card's own
+     * Renown line. That is the whole of it, and it is deliberately the whole
+     * of it: never power, never resources, never a cap change. It exists for
+     * exactly one reason — the bar must never be full and dead — and it is
+     * honestly a reason not to MIND that you did not open the app rather
+     * than a reason to open it (bible §7.5 says so out loud, and recommends
+     * round 2D's Pip identity as the real day-30 answer). At an engaged
+     * 750/day a Renown level is four days; at a casual 190/day it is a
+     * fortnight.
+     *
+     * RENOWN NOW ACTUALLY PAYS. It shipped granting literally nothing: this
+     * block's `flairEveryLevels: 5` was deleted on the grounds that
+     * `content/flair.ts` had no Renown entries to mint, which left the reward
+     * for clearing a Renown level as the chip's own text changing. Since tier
+     * 12 lands around day 17 on the bible's income model, that made the
+     * entire named ladder exhausted from day 17 with nothing behind it — the
+     * exact opposite of §1.7's job. Both halves are now real:
+     *
+     *   - `content/flair.ts` ships TWELVE `renown-*` flourishes, one per
+     *     level, spread across all five flair kinds (Album cover stamps and
+     *     ribbons, two page frames, two Pip titles, three gate signs).
+     *   - `flairEveryLevels: 1` — EVERY level mints one, not every fifth.
+     *     At every fifth (the original figure) a flourish cost 15,000 XP ≈ 20
+     *     engaged days, which is not a reward, it is a rumour.
+     *   - `core/state.ts`'s `applyKeepXpForAction` grants them (multi-level
+     *     jumps included), `ui/xpBar.ts` names the next one on the bar, and
+     *     `ui/keepUpgrade.ts` names the last one earned.
+     *
+     * `xpPerLevel` 3,000 → 2,000 for two reasons. It paces a Renown level at
+     * ~2.7 engaged days / ~10.5 casual days, which is a real cadence rather
+     * than a fortnight of nothing; and 3,000 was the one span in the game
+     * that BROKE §0.2's own bar-movement floor (a 4-XP care action is 0.133 %
+     * of 3,000, under the asserted 0.15 % minimum — the endgame bar moved
+     * less than the contract allows, one row past where `levelCurve.test.ts`
+     * was looking). At 2,000 a care action is 0.20 % and the floor now covers
+     * the Renown span too, asserted.
+     */
+    renown: { xpPerLevel: 2000, flairEveryLevels: 1 },
+
+    /**
+     * The perf GATE for this round, recorded here so it is a number and not
+     * a hope (bible §8.6 risk 9): placed items that must hold 60fps with 6
+     * Pips at 4× CPU throttle before the round can be logged. 2× spec §1's
+     * shipped "30 decorations" budget, because the tier-9 grid can host
+     * 60–80. If it fails, static-batch non-animated placeables first, then
+     * drop `gridGrowth[9]`.
+     */
+    placementPerfBudget: 60,
   },
 
   /** New saves are seeded with 3 Berries so the guided first Feed works

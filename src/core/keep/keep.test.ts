@@ -49,7 +49,9 @@ describe("gridBounds — spec §9 plot growth", () => {
     expect(gridBounds(3)).toEqual({ cols: 8, rows: 12 });
     // The numbers above ARE the tuning values, not parallel constants.
     expect(tuning.keepGrid).toMatchObject({ cols: 8, rows: 8 });
-    expect(tuning.keepGrid.growthPerLevel[2]).toEqual({ cols: 0, rows: 4 });
+    // ROUND 2F: growth-per-level moved to `progression.gridGrowth`
+    // (superseding the shipped `keepGrid.growthPerLevel`) — same value.
+    expect(tuning.progression.gridGrowth[2]).toEqual({ cols: 0, rows: 4 });
   });
 });
 

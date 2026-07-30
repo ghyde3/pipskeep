@@ -16,7 +16,7 @@ import { LifeStage, PipActivity } from "./pips/types";
 import type { PipId, PipNeeds, PipState } from "./pips/types";
 import { applyNeedsDelta } from "./pips/needs";
 import { runCatchup } from "./pips/catchup";
-import { ROSTER_FULL_MAX_MESSAGE, ROSTER_FULL_MESSAGE } from "../content/eggs";
+import { ROSTER_FULL_MESSAGE, rosterFullMaxMessage } from "../content/eggs";
 import { GENESIS_STREAM, STARTER_HUNGER, createNewGame, rootReducer } from "./state";
 import type { GameAction, GameState } from "./state";
 
@@ -120,6 +120,8 @@ function makeState(
     activeEvents: [],
     keepsakes: {},
     flair: {},
+    keepXp: 0,
+    lastLevelUp: null,
     ...overrides,
   };
 }
@@ -819,7 +821,9 @@ describe("ROUND 2C — the Long Meadow: RETIRE_PIP / RETRIEVE_PIP (docs/retentio
 
   it("the roster-full message points at the Long Meadow, not just the upgrade", () => {
     expect(ROSTER_FULL_MESSAGE).toContain("Long Meadow");
-    expect(ROSTER_FULL_MAX_MESSAGE).toContain("Long Meadow");
+    expect(rosterFullMaxMessage(5)).toContain("Long Meadow");
+    // ROUND 2F: it NAMES the cap, so a tier-11 sixth bed cannot make it lie.
+    expect(rosterFullMaxMessage(6)).toContain("6 happy Pips");
   });
 
   it("retire/retrieve never touch the Album — the record is already permanent (bible §1.1)", () => {

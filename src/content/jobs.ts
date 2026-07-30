@@ -70,4 +70,22 @@ export const jobs: Readonly<Record<string, JobDef>> = {
     verbing: "simmering",
     restingNote: "Fast asleep. The pot will keep without them; the dream cannot.",
   },
+  /**
+   * ROUND 2F (docs/progression-bible.md §3.4): the THIRD job, at the
+   * Workbench (tier 8) — pure content again, same registry-scan mechanism
+   * as Simmering. Slowest cadence and materials-only, the late-game
+   * complement to Gathering's mixed faucet and Simmering's pantry.
+   */
+  mending: {
+    id: "mending",
+    name: "Mending",
+    stationItemId: "workbench",
+    intervalMs: tuning.jobs.mending.intervalMs,
+    table: Object.entries(tuning.jobs.mending.table).map(([itemId, weight]) => ({
+      itemId,
+      weight,
+    })),
+    verbing: "mending",
+    restingNote: "Fast asleep. The mending will keep.",
+  },
 };

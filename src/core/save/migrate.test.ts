@@ -10,6 +10,8 @@
 import { describe, expect, it } from "vitest";
 import { CURRENT_SCHEMA_VERSION, fromSaveBlob, toSaveBlob } from "./serialize";
 import { MIGRATIONS, migrate } from "./migrate";
+import { tuning as tuningModule } from "../../content/tuning";
+import { MILESTONES as contentMilestones } from "../../content/milestones";
 
 /** Raw fixture text per file, via Vite's glob import (no node types
  * needed; vitest runs through Vite). Keys look like "./fixtures/v1.json". */
@@ -236,11 +238,11 @@ describe("migrate fixtures", () => {
   });
 
   it("v6 → v7 changes NOTHING except adding flair", () => {
+    // Isolate THIS ONE step (`MIGRATIONS[6]`) rather than `migrate()`,
+    // which now runs all the way to CURRENT (v8, round 2F) — that later
+    // step has its own claim (below) about exactly what it changes.
     const v6 = loadFixture(6) as { readonly state: Record<string, unknown> };
-    const result = migrate(v6);
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    const after = result.save.state as unknown as Record<string, unknown>;
+    const after = MIGRATIONS[6]!(v6)["state"] as Record<string, unknown>;
     for (const [key, value] of Object.entries(v6.state)) {
       expect(JSON.stringify(after[key]), `state.${key} was altered`).toBe(
         JSON.stringify(value),
@@ -248,6 +250,109 @@ describe("migrate fixtures", () => {
     }
     const added = Object.keys(after).filter((k) => !(k in v6.state));
     expect(added).toEqual(["flair"]);
+  });
+
+  /**
+   * ROUND 2F — THE PROGRESSION SPINE (docs/progression-bible.md §8.4):
+   * v7 → v8 adds `keepXp` (backfilled) and `lastLevelUp` (null), and seeds
+   * three NEW counter key families inside the ALREADY-EXISTING `counters`
+   * bag (no new top-level field for them) — everything else is untouched.
+   */
+  it("v7 → v8 changes nothing except keepXp, lastLevelUp, and seeding the new counter key families", () => {
+    const v7 = loadFixture(7) as { readonly state: Record<string, unknown> };
+    const after = MIGRATIONS[7]!(v7)["state"] as Record<string, unknown>;
+    for (const [key, value] of Object.entries(v7.state)) {
+      if (key === "counters") continue; // asserted separately below
+      expect(JSON.stringify(after[key]), `state.${key} was altered`).toBe(
+        JSON.stringify(value),
+      );
+    }
+    const added = Object.keys(after).filter((k) => !(k in v7.state));
+    expect(added.sort()).toEqual(["keepXp", "lastLevelUp"]);
+
+    // `counters` gains keys; every key already present keeps its value.
+    const priorCounters = v7.state["counters"] as Record<string, number>;
+    const nextCounters = after["counters"] as Record<string, number>;
+    for (const [key, value] of Object.entries(priorCounters)) {
+      expect(nextCounters[key], `counters.${key} was altered`).toBe(value);
+    }
+  });
+
+  /**
+   * ROUND 2F — a v6 save run all the way to CURRENT (through v7's flair
+   * step and v8's Keep-XP step): the Keep LEVEL is preserved exactly (the
+   * migration must never auto-purchase a tier), and `keepXp` lands on the
+   * exact `deriveKeepXp` formula (progression bible §8.4) — computed here
+   * independently from the fixture's own known values so this test would
+   * catch a formula regression, not just "it didn't crash".
+   */
+  it("v6 → CURRENT preserves the Keep level exactly and derives a sane, provable keepXp", () => {
+    const v6 = loadFixture(6) as {
+      readonly state: {
+        readonly keep: { readonly level: number };
+        readonly counters: Readonly<Record<string, number>>;
+        readonly milestones: { readonly earned: Readonly<Record<string, number>> };
+      };
+    };
+    const result = migrate(v6);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    // The level itself never moves — only PURCHASE_KEEP_LEVEL (a player
+    // tap) may ever do that.
+    expect(result.save.state.keep.level).toBe(v6.state.keep.level);
+
+    // Independently recompute the expected floor/provable-sum from the
+    // fixture's own known shape (v6.json: level 2, careActions 30,
+    // expeditionsTotal 5, 2 distinct placements, milestone "first-feed").
+    const levelXp = tuningModule.progression.levelXp;
+    const xpCfg = tuningModule.progression.xp;
+    const floor = levelXp[v6.state.keep.level - 1] ?? 0;
+    const c = v6.state.counters;
+    const milestoneXp = Object.keys(v6.state.milestones.earned).reduce(
+      (sum, id) => sum + (contentMilestones.find((m) => m.id === id)?.xp ?? 0),
+      0,
+    );
+    const provable =
+      xpCfg.care * (c["careActions"] ?? 0) +
+      xpCfg.expeditionSend * (c["expeditionsTotal"] ?? 0) +
+      25 * 2 + // 25 × distinct placed itemIds — the v6 fixture places 2
+      milestoneXp;
+    expect(result.save.state.keepXp).toBe(Math.max(floor, provable));
+
+    // Never above the truth's OWN floor, and never a negative/undefined.
+    expect(result.save.state.keepXp).toBeGreaterThanOrEqual(floor);
+    // The migration must not have granted resources or auto-purchased —
+    // resources are exactly what the v6 fixture already had.
+    const rawV6 = loadFixture(6) as { readonly state: Record<string, unknown> };
+    expect(result.save.state.resources).toEqual(rawV6.state["resources"] ?? {});
+
+    // --- AND NOTHING WAS LOST (the integrate gate's third obligation) ---
+    // Two full schema steps ran over this blob. Walk EVERY key the v6 save
+    // carried and prove it survived byte-identical, rather than trusting
+    // "it didn't throw" — a migration that quietly drops an egg, a
+    // placement or an rng cursor while adding a shiny new XP counter is
+    // exactly the failure this round must not ship. `counters` is the one
+    // exemption (v8 SEEDS new key families into it) and is checked
+    // key-by-key instead, so even it cannot lose an entry.
+    const after = result.save.state as unknown as Record<string, unknown>;
+    for (const [key, value] of Object.entries(rawV6.state)) {
+      if (key === "counters") continue;
+      expect(JSON.stringify(after[key]), `state.${key} was lost or altered`).toBe(
+        JSON.stringify(value),
+      );
+    }
+    for (const [key, value] of Object.entries(
+      rawV6.state["counters"] as Record<string, number>,
+    )) {
+      expect(
+        (after["counters"] as Record<string, number>)[key],
+        `counters.${key} was lost or altered`,
+      ).toBe(value);
+    }
+    // The fields the two steps are ALLOWED to add, and no others.
+    const added = Object.keys(after).filter((k) => !(k in rawV6.state));
+    expect(added.sort()).toEqual(["flair", "keepXp", "lastLevelUp"]);
   });
 
   /**

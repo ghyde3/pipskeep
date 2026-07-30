@@ -260,6 +260,33 @@
   transform: translateY(0);
 }
 
+/* ROUND 2F — the reveal's `+N Keep XP` chip (progression bible §1.3 row 10).
+   The loot reveal is the richest active XP source in the game and the bible's
+   "dopamine core", and it displayed no XP at all. Lands WITH the summary line
+   so it reads as the trip's payoff rather than competing with the item flips,
+   and in the same warm amber every other XP readout uses. */
+.pk-reveal-xp {
+  align-self: center;
+  margin-top: 2px;
+  padding: 3px 12px;
+  border-radius: 999px;
+  background: rgba(244, 185, 66, 0.22);
+  color: #8a5a12;
+  font-size: 13px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  opacity: 0;
+  transform: translateY(6px) scale(0.92);
+  transition:
+    opacity 320ms ease,
+    transform 320ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.pk-reveal-xp--in {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
 .pk-reveal-collect {
   appearance: none;
   border: none;

@@ -63,8 +63,8 @@ import type {
   PipNeeds,
   PipState,
 } from "./types";
-import { accrueFrozenTime, applyNeedsDelta } from "./needs";
-import type { NeedsTuning } from "./needs";
+import { accrueFrozenTime, applyNeedsDelta, IDENTITY_KEEP_COMFORT } from "./needs";
+import type { KeepComfortEffect, NeedsTuning } from "./needs";
 import {
   arriveHome,
   beginReturn,
@@ -198,6 +198,24 @@ export interface CatchupSummary {
   readonly events: readonly CatchupFiredEvent[];
   /** One entry per pip present at the end of the pass, in state order. */
   readonly pips: readonly PipCatchupDelta[];
+  /**
+   * ROUND 2F (progression bible §6.3) — Keep XP earned during the absence,
+   * stamped on by `core/state.ts`'s `recordCatchupGains` AFTER the pass (this
+   * module cannot see it: XP is awarded by the reducer wrapper, not the
+   * engine). The Doorstep's "The Keep" section prints it as
+   * "+340 Keep XP while you were away."
+   *
+   * Optional so every pre-2F fixture and hand-built summary stays valid, and
+   * because a genuinely empty absence has nothing to report.
+   */
+  readonly keepXpGained?: number;
+  /**
+   * ROUND 2F — resources a staffed station produced during the absence
+   * (`resourceId → count`, positive gains only), same provenance as
+   * `keepXpGained`. Turns the return screen's silent bookkeeping into the
+   * "your Keep kept working" line the Doorstep was missing.
+   */
+  readonly produced?: Readonly<Record<string, number>>;
 }
 
 export interface CatchupResult<S extends CatchupState> {
@@ -240,11 +258,12 @@ function advanceThroughCap(
   to: number,
   capAt: number,
   tuning: CatchupTuning,
+  keepComfort: KeepComfortEffect,
 ): PipState {
   let next = pip;
   const ratedEnd = Math.min(to, capAt);
   if (ratedEnd > from) {
-    next = applyNeedsDelta(next, (ratedEnd - from) / HOUR_MS, tuning);
+    next = applyNeedsDelta(next, (ratedEnd - from) / HOUR_MS, tuning, keepComfort);
   }
   const frozenStart = Math.max(from, capAt);
   if (to > frozenStart) {
@@ -401,6 +420,14 @@ const zeroNeedsDelta = (): Record<NeedId, number> => {
  * `extraEvents` is the extension seam: either a ready event list or a
  * collector called with the (normalized) state and window bounds. Events
  * outside `(savedAt, now]` are ignored.
+ *
+ * `keepComfort` (round 2F, progression bible §3.2) is the Keep's
+ * already-resolved building comfort/rest-speed multiplier
+ * (`core/keep/effects.ts`'s `resolveKeepEffects` + `keepComfortMultipliers`
+ * — this engine stays agnostic of `KeepState`/content, same as every other
+ * `core/pips` module). Defaults to the identity, so every existing caller
+ * that doesn't pass it (this file's own tests, `core/pips/balance.test.ts`)
+ * is byte-identical.
  */
 export function runCatchup<S extends CatchupState>(
   state: S,
@@ -408,6 +435,7 @@ export function runCatchup<S extends CatchupState>(
   now: number,
   tuning: CatchupTuning = contentTuning,
   extraEvents?: readonly CatchupEvent<S>[] | CatchupEventCollector<S>,
+  keepComfort: KeepComfortEffect = IDENTITY_KEEP_COMFORT,
 ): CatchupResult<S> {
   const elapsedMs = Math.max(0, now - savedAt);
   const startPips = state.pips;
@@ -468,12 +496,17 @@ export function runCatchup<S extends CatchupState>(
     // pips that started Resting mid-window are covered). A wake landing
     // past the rate cap never fires: energy freezes below the threshold.
     const wakeCandidates: { pipId: PipId; at: number }[] = [];
-    if (t < capAt && energyPerHour > 0) {
+    // ROUND 2F: a placed Bed/Sun Bunks speeds this UP — the wake moment is
+    // predicted against the SAME effective rate `applyNeedsDelta` below
+    // actually applies, or a buffed Keep's naps would finish (needs-wise)
+    // before the engine's own segmentation noticed.
+    const effectiveEnergyPerHour = energyPerHour * keepComfort.restSpeedMultiplier;
+    if (t < capAt && effectiveEnergyPerHour > 0) {
       for (const pip of current.pips) {
         if (pip.activity !== PipActivity.Resting) continue;
         const deficit = autoWakeAtEnergy - pip.needs.energy;
         if (deficit <= 0) continue; // already due — healed at boundaries
-        const at = t + (deficit / energyPerHour) * HOUR_MS;
+        const at = t + (deficit / effectiveEnergyPerHour) * HOUR_MS;
         if (at <= capAt && at <= windowEnd) {
           wakeCandidates.push({ pipId: pip.id, at });
         }
@@ -496,7 +529,7 @@ export function runCatchup<S extends CatchupState>(
     current = replacePips(
       current,
       current.pips.map((pip) =>
-        advanceThroughCap(pip, t, nextAt, capAt, tuning),
+        advanceThroughCap(pip, t, nextAt, capAt, tuning, keepComfort),
       ),
     );
     t = nextAt;

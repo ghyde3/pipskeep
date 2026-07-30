@@ -22,7 +22,8 @@ import { describe, expect, it } from "vitest";
 import { FakeClock } from "./clock";
 import { HOUR_MS, MINUTE_MS, tuning } from "../content/tuning";
 import { keepLevels, keepUpgrades, ROSTER_UPGRADE_ID } from "../content/keep";
-import { ROSTER_FULL_MAX_MESSAGE, ROSTER_FULL_MESSAGE } from "../content/eggs";
+import { ROSTER_FULL_MESSAGE, rosterFullMaxMessage } from "../content/eggs";
+import { decorations as contentDecorations } from "../content/decorations";
 import { LifeStage, PipActivity } from "./pips/types";
 import type { PipNeeds, PipState } from "./pips/types";
 import { EggState } from "./eggs";
@@ -141,18 +142,24 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
     activeEvents: [],
     keepsakes: {},
     flair: {},
+    keepXp: 0,
+    lastLevelUp: null,
     ...overrides,
   };
 }
 
 describe("PURCHASE_KEEP_LEVEL (spec §6.3/§9)", () => {
   it("deducts the level-2 bundle EXACTLY, leaving the surplus alone", () => {
-    const cost = tuning.keepLevelCosts[2];
+    const cost = tuning.progression.levelCosts[2];
+    expect(cost).toBeDefined();
     const surplus = 5;
     const state = makeState({
+      // ROUND 2F: the tier is gated on BOTH keys — XP (cleared here) and
+      // resources (below). `levelXp[1]` is tier 2's requirement.
+      keepXp: tuning.progression.levelXp[1],
       resources: {
-        wood: (cost.wood ?? 0) + surplus,
-        fiber: (cost.fiber ?? 0) + surplus,
+        wood: (cost?.wood ?? 0) + surplus,
+        fiber: (cost?.fiber ?? 0) + surplus,
         berry: 2,
       },
     });
@@ -165,29 +172,48 @@ describe("PURCHASE_KEEP_LEVEL (spec §6.3/§9)", () => {
     });
     // The cost came from content/keep.ts, not a parallel constant.
     expect(keepLevels.find((l) => l.level === 2)?.cost).toEqual(cost);
+    // The player-witnessed tier-up moment (progression bible §1.2/§6.3).
+    expect(next.lastLevelUp).toEqual({ at: 0, fromLevel: 1, toLevel: 2 });
   });
 
-  it("refuses when short — state unchanged by reference, nothing deducted", () => {
-    const cost = tuning.keepLevelCosts[2];
+  it("refuses when short on RESOURCES (XP gate already cleared) — state unchanged by reference", () => {
+    const cost = tuning.progression.levelCosts[2];
     // One Wood short of the bundle: all-or-nothing, so nothing moves.
     const state = makeState({
-      resources: { wood: (cost.wood ?? 0) - 1, fiber: (cost.fiber ?? 0) + 5 },
+      keepXp: tuning.progression.levelXp[1],
+      resources: { wood: (cost?.wood ?? 0) - 1, fiber: (cost?.fiber ?? 0) + 5 },
     });
     expect(rootReducer(state, { type: "PURCHASE_KEEP_LEVEL", at: 0 })).toBe(state);
   });
 
-  it("refuses at max level (no level 4 in content)", () => {
+  it("refuses when short on XP (round 2F needsXp gate) — even with every resource in hand", () => {
+    // Full resources, but zero Keep XP: the tier hasn't been EARNED yet
+    // (progression bible §1.2 — two keys, not one). Never a countdown —
+    // just a threshold — so this is a plain refuse-as-unchanged, exactly
+    // like every other PURCHASE_KEEP_LEVEL refusal.
     const state = makeState({
-      keep: { level: 3, placements: {} },
+      keepXp: 0,
+      resources: { wood: 999, fiber: 999 },
+    });
+    expect(rootReducer(state, { type: "PURCHASE_KEEP_LEVEL", at: 0 })).toBe(state);
+    expect(tuning.progression.levelXp[1]).toBeGreaterThan(0);
+  });
+
+  it("refuses at the top of the ladder (level 12, no level 13 in content)", () => {
+    const state = makeState({
+      keep: { level: 12, placements: {} },
+      keepXp: tuning.progression.levelXp[tuning.progression.levelXp.length - 1],
       resources: { wood: 999, fiber: 999, shell: 999, driftwood: 999 },
     });
     expect(rootReducer(state, { type: "PURCHASE_KEEP_LEVEL", at: 0 })).toBe(state);
   });
 
   it("level 2 → 3 costs the level-3 bundle, to the last unit", () => {
-    const cost = tuning.keepLevelCosts[3];
+    const cost = tuning.progression.levelCosts[3];
+    expect(cost).toBeDefined();
     const state = makeState({
       keep: { level: 2, placements: {} },
+      keepXp: tuning.progression.levelXp[2],
       resources: { ...cost } as Record<string, number>,
     });
     const next = rootReducer(state, { type: "PURCHASE_KEEP_LEVEL", at: 0 });
@@ -195,10 +221,14 @@ describe("PURCHASE_KEEP_LEVEL (spec §6.3/§9)", () => {
     for (const amount of Object.values(next.resources)) {
       expect(amount).toBe(0);
     }
+    expect(next.lastLevelUp).toEqual({ at: 0, fromLevel: 2, toLevel: 3 });
   });
 
   it("buying level 2 flips Forest assignment from locked to legal (spec §6.1/§9)", () => {
-    const state = makeState({ resources: { wood: 15, fiber: 10 } });
+    const state = makeState({
+      keepXp: tuning.progression.levelXp[1],
+      resources: { wood: 15, fiber: 10 },
+    });
     const send: GameAction = {
       type: "ASSIGN_EXPEDITION",
       pipId: "pip-1",
@@ -218,7 +248,8 @@ describe("PURCHASE_KEEP_LEVEL (spec §6.3/§9)", () => {
 });
 
 describe("PURCHASE_ROSTER_UPGRADE + the HATCH_EGG cap (spec §7.4)", () => {
-  /** Three pips (the base cap) at Keep level 3 with pipping eggs waiting. */
+  /** Three pips (the base cap) at Keep level 4 with pipping eggs waiting.
+   * ROUND 2F: prerequisiteLevel moved 3 → 4 (progression bible §2.1). */
   const atCap = (overrides: Partial<GameState> = {}): GameState =>
     makeState({
       pips: {
@@ -226,15 +257,15 @@ describe("PURCHASE_ROSTER_UPGRADE + the HATCH_EGG cap (spec §7.4)", () => {
         "pip-2": makePip("pip-2"),
         "pip-3": makePip("pip-3"),
       },
-      keep: { level: 3, placements: {} },
+      keep: { level: 4, placements: {} },
       eggs: [pippingEgg("egg-1"), pippingEgg("egg-2"), pippingEgg("egg-3")],
       resources: { wood: 10, shell: 9, driftwood: 4 },
       ...overrides,
     });
 
-  it("requires Keep level 3 (content prerequisite) and refuses below it", () => {
-    expect(keepUpgrades[ROSTER_UPGRADE_ID]?.prerequisiteLevel).toBe(3);
-    const early = atCap({ keep: { level: 2, placements: {} } });
+  it("requires Keep level 4 (content prerequisite) and refuses below it", () => {
+    expect(keepUpgrades[ROSTER_UPGRADE_ID]?.prerequisiteLevel).toBe(4);
+    const early = atCap({ keep: { level: 3, placements: {} } });
     expect(rootReducer(early, { type: "PURCHASE_ROSTER_UPGRADE", at: 0 })).toBe(early);
   });
 
@@ -264,7 +295,7 @@ describe("PURCHASE_ROSTER_UPGRADE + the HATCH_EGG cap (spec §7.4)", () => {
       reason: "rosterFull",
       message: ROSTER_FULL_MESSAGE,
     });
-    expect(ROSTER_FULL_MESSAGE).toContain("Keep level 3"); // the upgrade nudge
+    expect(ROSTER_FULL_MESSAGE).toContain("Keep level 4"); // the upgrade nudge
     expect(blocked.rosterOrder).toHaveLength(3);
     expect(blocked.eggs.find((e) => e.id === "egg-1")?.state).toBe(EggState.Pipping);
 
@@ -282,10 +313,52 @@ describe("PURCHASE_ROSTER_UPGRADE + the HATCH_EGG cap (spec §7.4)", () => {
     expect(full.lastHatchOutcome).toMatchObject({
       ok: false,
       reason: "rosterFull",
-      message: ROSTER_FULL_MAX_MESSAGE,
+      message: rosterFullMaxMessage(tuning.rosterCapUpgraded),
     });
     expect(full.rosterOrder).toHaveLength(5);
     expect(full.eggs.find((e) => e.id === "egg-3")?.state).toBe(EggState.Pipping);
+  });
+
+  /**
+   * ROUND 2F — THE TIER-11 SIXTH BED IS REAL (progression bible §2).
+   *
+   * `tuning.progression.rosterCapBonusByLevel` shipped with `{ 11: 1 }` in
+   * it and NOTHING read it: both cap call sites computed straight from
+   * `rosterUpgradePurchased`, so tier 11's own headline — "a sixth bed, the
+   * roster cap rises to 6" — was a tier the player paid for and received
+   * nothing from. This test is what makes the headline true, and it asserts
+   * the cap through the REAL reducer (a hatch that refuses at 10 and lands
+   * at 11), never by reading the tuning table back at itself.
+   */
+  it("Keep tier 11 grants a SIXTH bed on top of Cozy Bunks — the headline is real", () => {
+    const fiveUp = (level: 10 | 11): GameState =>
+      makeState({
+        pips: {
+          "pip-1": makePip("pip-1"),
+          "pip-2": makePip("pip-2"),
+          "pip-3": makePip("pip-3"),
+          "pip-4": makePip("pip-4"),
+          "pip-5": makePip("pip-5"),
+        },
+        rosterUpgradePurchased: true,
+        keep: { level, placements: {} },
+        eggs: [pippingEgg("egg-1")],
+      });
+
+    // Tier 10: the Cozy Bunks five is the whole cap — the 6th refuses.
+    const atTen = rootReducer(fiveUp(10), { type: "HATCH_EGG", eggId: "egg-1", at: T0 });
+    expect(atTen.lastHatchOutcome).toMatchObject({ ok: false, reason: "rosterFull" });
+    expect(atTen.rosterOrder).toHaveLength(5);
+    // …and the refusal NAMES the cap it just enforced.
+    expect(atTen.lastHatchOutcome).toMatchObject({
+      message: rosterFullMaxMessage(tuning.rosterCapUpgraded),
+    });
+
+    // Tier 11: the same egg, the same roster — now there is a bed.
+    const atEleven = rootReducer(fiveUp(11), { type: "HATCH_EGG", eggId: "egg-1", at: T0 });
+    expect(atEleven.lastHatchOutcome).toMatchObject({ ok: true, eggId: "egg-1" });
+    expect(atEleven.rosterOrder).toHaveLength(6);
+    expect(atEleven.rosterOrder).toHaveLength(tuning.rosterCapUpgraded + 1);
   });
 });
 
@@ -450,5 +523,100 @@ describe("ACKNOWLEDGE_REVEAL double-dispatch idempotency (Phase 4 audit gap)", (
     expect(twice).toBe(once);
     expect(twice.inventory).toEqual({ berry: 1 });
     expect(twice.resources).toEqual({ fiber: 1 });
+  });
+});
+
+/**
+ * ROUND 2F INTEGRATE — THE KEEPSAKE SHELF (retention bible §11.2,
+ * progression bible §5.4, and Keep tier 1's own advertised unlock).
+ *
+ * `state.keepsakes` shipped in round 2C: WRITTEN by `CLAIM_MILESTONE`'s
+ * keepsake reward and by `RESOLVE_STREAK_CHOICE`'s day-5 pick, and READ BY
+ * NOTHING. No surface listed it, `PLACE_ITEM` charged full resources for a
+ * decoration the player had already been given, and `Placement.granted` —
+ * the flag `state.keepsakes`'s own doc comment says closes the
+ * free-decoration resource printer — existed in the type and in the save
+ * format and was never set. A day-5 streak player chose from three offers
+ * and received, observably, nothing.
+ *
+ * These tests are what makes the gift real, and what keeps it from becoming
+ * an exploit.
+ */
+describe("the Keepsake Shelf (PLACE_ITEM / REMOVE_ITEM read state.keepsakes)", () => {
+  const DECO = "cozy-lantern";
+
+  const withShelf = (count: number, resources: Record<string, number> = {}): GameState =>
+    makeState({
+      keep: { level: 1, placements: {} },
+      resources,
+      keepsakes: count > 0 ? { [DECO]: count } : {},
+    });
+
+  it("places a granted decoration for FREE — no resources spent, shelf decremented", () => {
+    const state = withShelf(1, { wood: 0, fiber: 0 });
+    const placed = rootReducer(state, { type: "PLACE_ITEM", itemId: DECO, x: 0, y: 0, at: T0 });
+
+    // It actually landed, on an empty satchel that could never have paid.
+    expect(Object.keys(placed.keep.placements)).toHaveLength(1);
+    expect(placed.resources).toEqual({ wood: 0, fiber: 0 });
+    // The shelf is emptied, not left holding a phantom copy.
+    expect(placed.keepsakes[DECO]).toBeUndefined();
+    // …and the placement is STAMPED, which is what stops the refund exploit.
+    expect(Object.values(placed.keep.placements)[0]?.granted).toBe(true);
+  });
+
+  it("spends the keepsake BEFORE resources — a gift is a gift, not a rebate", () => {
+    const rich = withShelf(1, { wood: 99, fiber: 99 });
+    const placed = rootReducer(rich, { type: "PLACE_ITEM", itemId: DECO, x: 0, y: 0, at: T0 });
+    expect(placed.resources).toEqual({ wood: 99, fiber: 99 });
+    expect(placed.keepsakes[DECO]).toBeUndefined();
+  });
+
+  it("keeps the remaining count when the shelf held more than one", () => {
+    const state = withShelf(3);
+    const placed = rootReducer(state, { type: "PLACE_ITEM", itemId: DECO, x: 0, y: 0, at: T0 });
+    expect(placed.keepsakes[DECO]).toBe(2);
+  });
+
+  it("tucking a keepsake away returns it TO THE SHELF, never as resources (the printer exploit)", () => {
+    const state = withShelf(1, { wood: 0, fiber: 0 });
+    const placed = rootReducer(state, { type: "PLACE_ITEM", itemId: DECO, x: 0, y: 0, at: T0 });
+    const placementId = Object.keys(placed.keep.placements)[0]!;
+    const removed = rootReducer(placed, { type: "REMOVE_ITEM", placementId, at: T0 + 1 });
+
+    // The whole point: zero resources printed by a place → remove cycle.
+    expect(removed.resources).toEqual({ wood: 0, fiber: 0 });
+    expect(removed.keepsakes[DECO]).toBe(1);
+    expect(removed.keep.placements).toEqual({});
+  });
+
+  it("a place → tuck-away loop can never print resources, however many times it runs", () => {
+    let state: GameState = withShelf(1, { wood: 0, fiber: 0 });
+    for (let i = 0; i < 8; i++) {
+      state = rootReducer(state, { type: "PLACE_ITEM", itemId: DECO, x: 0, y: 0, at: T0 + i * 2 });
+      const id = Object.keys(state.keep.placements)[0];
+      if (id === undefined) throw new Error("placement missing");
+      state = rootReducer(state, { type: "REMOVE_ITEM", placementId: id, at: T0 + i * 2 + 1 });
+    }
+    expect(state.resources).toEqual({ wood: 0, fiber: 0 });
+    expect(state.keepsakes[DECO]).toBe(1);
+  });
+
+  it("a NON-granted placement still refunds resources exactly as before", () => {
+    const cost = [...contentDecorations].find((d) => d.id === DECO)!.cost;
+    const state = makeState({
+      keep: { level: 1, placements: {} },
+      resources: { wood: 50, fiber: 50 },
+      keepsakes: {},
+    });
+    const placed = rootReducer(state, { type: "PLACE_ITEM", itemId: DECO, x: 0, y: 0, at: T0 });
+    expect(Object.values(placed.keep.placements)[0]?.granted).toBeUndefined();
+    const placementId = Object.keys(placed.keep.placements)[0]!;
+    const removed = rootReducer(placed, { type: "REMOVE_ITEM", placementId, at: T0 + 1 });
+    expect(removed.resources).toEqual({ wood: 50, fiber: 50 });
+    expect(removed.keepsakes).toEqual({});
+    // Sanity: the decoration really does cost something, so the round-trip
+    // above was not vacuous.
+    expect(Object.keys(cost).length).toBeGreaterThan(0);
   });
 });

@@ -15,7 +15,7 @@ import type { PipNeeds, PipState } from "../core/pips/types";
 import type { CatchupSummary } from "../core/pips/catchup";
 import type { GameState } from "../core/state";
 import type { BountyInstance } from "../core/progression/bounties";
-import { deriveDoorstepModel, pickNudge } from "./welcome";
+import { deriveDoorstepModel, isTrivialAbsence, pickNudge } from "./welcome";
 import { MILESTONES } from "../content/milestones";
 
 /** `dayOffsetMs` is 0 in every fixture here, so a timestamp inside day N is
@@ -400,5 +400,283 @@ describe("pickNudge — exactly one, by priority (bible §10.2 row 6)", () => {
     }
     const state = baseState({ milestones: { earned, pendingCelebrations: [] } });
     expect(pickNudge(state)).toBeNull();
+  });
+});
+
+
+/**
+ * ROUND 2F (progression bible §6.3) — THE DOORSTEP HAS TO CARRY GOOD NEWS.
+ *
+ * As shipped, the return screen reported ONLY decay. Measured on a 20h return
+ * with a staffed Gathering Station, the absence had actually paid +140 Keep XP
+ * and 22 Wood / 31 Fiber / 2 Shell and left tier 4 XP-ready; the Doorstep
+ * showed three lines of `Hunger ↓49 Cleanliness ↓59 Happiness ↓57 Energy ↓68`,
+ * a homecoming tease, an 0/1 bounty checklist and one milestone nudge. At a
+ * roster cap of 6 that is twelve lines of downward arrows before anything
+ * positive. The bible asked for one new LINE (not a section) inside "The Keep"
+ * and one new entry at the END of the nudge chain; both are below.
+ */
+describe("deriveDoorstepModel — what the absence PAID (bible §6.3)", () => {
+  const paid = (
+    elapsedMs: number,
+    keepXpGained?: number,
+    produced?: Record<string, number>,
+  ): CatchupSummary => ({
+    ...summary(elapsedMs),
+    ...(keepXpGained === undefined ? {} : { keepXpGained }),
+    ...(produced === undefined ? {} : { produced }),
+  });
+
+  it("reports the Keep XP the absence earned, formatted with thousands", () => {
+    const model = deriveDoorstepModel(
+      paid(20 * 60 * MINUTE_MS, 1340),
+      baseState(),
+      SAME_DAY,
+    );
+    expect(model?.keepGainLines).toContain("+1,340 Keep XP while you were away.");
+  });
+
+  it("reports what a staffed station brought in, as a readable list", () => {
+    const model = deriveDoorstepModel(
+      paid(20 * 60 * MINUTE_MS, 140, { wood: 22, fiber: 31, shell: 2 }),
+      baseState(),
+      SAME_DAY,
+    );
+    // Listed in `RESOURCE_IDS` order — the canonical registry order every
+    // other resource readout uses — so the line never reorders itself between
+    // two absences that happened to produce in a different sequence.
+    const production = model?.keepGainLines.find((l) => l.includes("kept working"));
+    expect(production).toBe("The Keep kept working: 31 Fiber, 22 Wood and 2 Shell came in.");
+  });
+
+  it("uses no comma-and for a single resource", () => {
+    const model = deriveDoorstepModel(
+      paid(20 * 60 * MINUTE_MS, 10, { wood: 4 }),
+      baseState(),
+      SAME_DAY,
+    );
+    expect(model?.keepGainLines.find((l) => l.includes("kept working"))).toBe(
+      "The Keep kept working: 4 Wood came in.",
+    );
+  });
+
+  it("says NOTHING when the absence earned nothing — a '+0' line is worse than no line", () => {
+    const model = deriveDoorstepModel(paid(10 * MINUTE_MS), baseState(), SAME_DAY);
+    expect(model?.keepGainLines).toEqual([]);
+  });
+
+  it("drops a zero-count resource rather than printing '0 Wood'", () => {
+    const model = deriveDoorstepModel(
+      paid(20 * 60 * MINUTE_MS, 5, { wood: 0, fiber: 3 }),
+      baseState(),
+      SAME_DAY,
+    );
+    expect(model?.keepGainLines.find((l) => l.includes("kept working"))).toBe(
+      "The Keep kept working: 3 Fiber came in.",
+    );
+  });
+
+  it("the earnings come FIRST — they must not sit under twelve lines of decay arrows", () => {
+    const model = deriveDoorstepModel(
+      paid(20 * 60 * MINUTE_MS, 340, { wood: 9 }),
+      baseState(),
+      SAME_DAY,
+    );
+    // The model exposes them as their own ordered list, which the DOM shell
+    // prepends to the per-pip decay lines (see `show`'s "The Keep" section).
+    expect(model?.keepGainLines[0]).toContain("Keep XP");
+    expect(model?.keepGainLines[1]).toContain("kept working");
+  });
+
+  it("survives a pre-2F summary with neither field set (both are optional)", () => {
+    const model = deriveDoorstepModel(summary(20 * 60 * MINUTE_MS), baseState(), SAME_DAY);
+    expect(model).not.toBeNull();
+    expect(model?.keepGainLines).toEqual([]);
+  });
+});
+
+describe("pickNudge — 'a Keep tier ready to grow' (bible §6.3's new entry)", () => {
+  /** Every non-hidden milestone banked, so the lower-priority milestone nudge
+   * cannot mask the tier nudge in these fixtures. */
+  function noOtherNudges(overrides: Partial<GameState> = {}): GameState {
+    const earned: Record<string, number> = {};
+    for (const def of MILESTONES) {
+      if (!def.hidden) earned[def.id] = 0;
+    }
+    return baseState({
+      milestones: { earned, pendingCelebrations: [] },
+      ...overrides,
+    });
+  }
+
+  it("nudges when the XP gate for the next tier is already cleared", () => {
+    const gate = tuning.progression.levelXp[1] as number;
+    const nudge = pickNudge(noOtherNudges({ keepXp: gate }));
+    expect(nudge?.icon).toBe("✦");
+    expect(nudge?.text).toContain("level 2");
+  });
+
+  it("names the tier's HEADLINE, so the nudge says what you get", () => {
+    const gate = tuning.progression.levelXp[1] as number;
+    const nudge = pickNudge(noOtherNudges({ keepXp: gate }));
+    expect(nudge?.text).toContain("The Forest trail");
+  });
+
+  it("stays silent one XP short of the gate", () => {
+    const gate = tuning.progression.levelXp[1] as number;
+    expect(pickNudge(noOtherNudges({ keepXp: gate - 1 }))).toBeNull();
+  });
+
+  it("is LAST in the chain — a perishable moment always outranks a tier that waits forever", () => {
+    const gate = tuning.progression.levelXp[1] as number;
+    const withEgg = noOtherNudges({
+      keepXp: gate,
+      eggs: [
+        {
+          id: "egg-1",
+          state: EggState.Pipping,
+          foundAt: 0,
+          rarity: "common",
+          incubationMs: 1000,
+          incubationStartedAt: 0,
+          sourceExpeditionId: "meadow",
+        },
+      ],
+    });
+    expect(pickNudge(withEgg)?.icon).toBe("🥚");
+  });
+
+  it("stays silent at the top tier, where there is no next tier to be ready for", () => {
+    const top = tuning.progression.levelXp.length;
+    const state = noOtherNudges({
+      keep: { level: top, placements: {} },
+      keepXp: 999_999,
+    });
+    expect(pickNudge(state)).toBeNull();
+  });
+});
+
+
+/**
+ * ROUND 2F — A MODAL WALL OF ±1s IS NOT A REPORT.
+ *
+ * `ticker.ts` dispatches CATCHUP on every `visibilitychange`, and the Doorstep
+ * fires for any absence over `AWAY_SHEET_MIN_ELAPSED_MS` (3 minutes) — exactly
+ * the boundary bible §10.3 draws, so a 3-minute absence landed on the noisy
+ * side. Observed: "You were gone 3 minutes. The Keep kept busy." over three
+ * lines of `Hunger ↓1 Cleanliness ↓1 Happiness ↓1 Energy ↓1`. In practice any
+ * notification or phone call mid-session ended with the player tapping "Come
+ * in" past a report of ±1 and losing whatever sheet they had open.
+ */
+describe("deriveDoorstepModel — a trivial absence gets NO Doorstep at all", () => {
+  const trivialPip = {
+    pipId: "pip-1",
+    activityBefore: PipActivity.Idle,
+    activityAfter: PipActivity.Idle,
+    needsBefore: needs(),
+    needsAfter: needs({ hunger: 79, cleanliness: 79, happiness: 79, energy: 79 }),
+    needsDelta: { hunger: -1, cleanliness: -1, happiness: -1, energy: -1 },
+  };
+
+  const withPip = (elapsedMs: number, delta: Record<string, number>): CatchupSummary => ({
+    ...summary(elapsedMs),
+    pips: [{ ...trivialPip, needsDelta: delta as typeof trivialPip.needsDelta }],
+  });
+
+  it("suppresses a 3-minute absence whose every need moved by 1", () => {
+    const model = deriveDoorstepModel(
+      withPip(3 * MINUTE_MS, { hunger: -1, cleanliness: -1, happiness: -1, energy: -1 }),
+      baseState(),
+      SAME_DAY,
+    );
+    expect(model).toBeNull();
+  });
+
+  it("still shows once a need has moved by MORE than 1 — real decay is worth saying", () => {
+    const model = deriveDoorstepModel(
+      withPip(20 * MINUTE_MS, { hunger: -4, cleanliness: -1, happiness: -1, energy: -1 }),
+      baseState(),
+      SAME_DAY,
+    );
+    expect(model).not.toBeNull();
+  });
+
+  it("ALWAYS shows past the quiet window, even with no deltas to report", () => {
+    // The case that makes the time guard load-bearing: a Pip already at 0 has
+    // nowhere left to fall, so a long absence produces no deltas — and that is
+    // exactly when the player most needs telling.
+    const model = deriveDoorstepModel(
+      withPip(20 * 60 * MINUTE_MS, { hunger: 0, cleanliness: 0, happiness: 0, energy: 0 }),
+      baseState(),
+      SAME_DAY,
+    );
+    expect(model).not.toBeNull();
+  });
+
+  it("never suppresses an absence something came home from", () => {
+    const model = deriveDoorstepModel(
+      {
+        ...withPip(3 * MINUTE_MS, {
+          hunger: -1,
+          cleanliness: -1,
+          happiness: -1,
+          energy: -1,
+        }),
+        events: [
+          {
+            kind: "expeditionReturn",
+            at: 1,
+            pipId: "pip-1",
+            expedition: { expeditionId: "meadow", departedAt: 0, durationMs: 1 },
+          },
+        ],
+      } as CatchupSummary,
+      baseState({
+        pendingReveals: [
+          {
+            pipId: "pip-1",
+            expeditionId: "meadow",
+            completedAt: 1,
+            items: ["berry"],
+            egg: null,
+          },
+        ],
+      }),
+      SAME_DAY,
+    );
+    expect(model).not.toBeNull();
+  });
+
+  it("an EMPTY pip list is never 'trivial' — no evidence is not evidence of nothing", () => {
+    expect(deriveDoorstepModel(summary(10 * MINUTE_MS), baseState(), SAME_DAY)).not.toBeNull();
+  });
+
+  it("isTrivialAbsence is exposed and honest about each of its clauses", () => {
+    const away = {
+      title: "t",
+      elapsedLine: "e",
+      pips: [{ name: "P", needLines: [{ label: "Food", direction: "down", amount: 1 }], note: null }],
+      expeditionLines: [],
+      eggLine: null,
+      lootLine: null,
+      cappedLine: null,
+    } as unknown as Parameters<typeof isTrivialAbsence>[1];
+
+    expect(isTrivialAbsence(summary(3 * MINUTE_MS), away)).toBe(true);
+    // Any one of the four "something happened" signals flips it.
+    expect(
+      isTrivialAbsence(summary(3 * MINUTE_MS), { ...away, eggLine: "an egg!" }),
+    ).toBe(false);
+    expect(
+      isTrivialAbsence(summary(3 * MINUTE_MS), { ...away, lootLine: "loot" }),
+    ).toBe(false);
+    expect(
+      isTrivialAbsence(summary(3 * MINUTE_MS), { ...away, cappedLine: "capped" }),
+    ).toBe(false);
+    expect(
+      isTrivialAbsence(summary(3 * MINUTE_MS), { ...away, expeditionLines: ["home"] }),
+    ).toBe(false);
+    // And so does crossing the quiet window.
+    expect(isTrivialAbsence(summary(2 * 60 * MINUTE_MS), away)).toBe(false);
   });
 });

@@ -26,8 +26,20 @@ import { tuning as contentTuning } from "../../content/tuning";
 import { placeables as contentPlaceables } from "../../content/placeables";
 import { decorations as contentDecorations } from "../../content/decorations";
 
-/** Keep levels gate content (spec §9): 1 = start, 2 = Forest, 3 = Shore. */
-export type KeepLevel = 1 | 2 | 3;
+/**
+ * Keep levels gate content (spec §9, widened round 2F — docs/
+ * progression-bible.md §2): a 12-tier ladder, each tier named for what it
+ * hands over (1 = the Meadow/Bramblewick start, 2 = the Forest, 3 = the
+ * Snowdrift, 4 = the Shore, 5 = the Lanterngrotto, 6–12 = stations,
+ * ground, jobs, the sixth bed and Renown). `content/keep.ts`'s comment
+ * that a 6th level "was considered and declined" is now stale — this
+ * round is the widening it deferred, authorized by the orchestrator
+ * (progression-bible.md §8.1: the union is referenced only as a TYPE at
+ * five content sites; everything that computes with a level already
+ * types it as `number`, so widening cannot break anything except the
+ * sites that want it).
+ */
+export type KeepLevel = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12;
 
 export interface GridPosition {
   x: number;
@@ -49,6 +61,21 @@ export interface Placement {
   readonly itemId: string;
   readonly x: number;
   readonly y: number;
+  /** ROUND 2F (save schema v8, docs/progression-bible.md §5.4/§8.4):
+   * true when this placement came from the Keepsake Shelf (a shelved,
+   * granted decoration) rather than a resource spend. Optional —
+   * `undefined ≡ false`, the same defensive-default pattern
+   * `PipState.sulking`/`mastery` already use, so no existing fixture
+   * needs an edit.
+   *
+   * This module (`placeItem`/`removeItem`) never SETS it, deliberately: the
+   * grid geometry has no opinion about how an item was paid for. `core/state.ts`
+   * owns that — `PLACE_ITEM` stamps `granted: true` when it spends a copy from
+   * `state.keepsakes`, and `REMOVE_ITEM` branches on it to return the item to
+   * the shelf while refunding NO resources (refunding resources for a
+   * decoration the player never bought would turn every gift into a resource
+   * printer). Both halves are live and tested in `state.phase5.test.ts`. */
+  readonly granted?: boolean;
 }
 
 /**
@@ -66,13 +93,21 @@ export function createKeep(): KeepState {
   return { level: 1, placements: {} };
 }
 
-/** The slice of tuning the grid math reads (injectable for tests). */
+/** The slice of tuning the grid math reads (injectable for tests).
+ *
+ * ROUND 2F (progression bible §2.2/§8.6 risk 1): growth-per-level now
+ * lives at `progression.gridGrowth`, which SUPERSEDES the shipped
+ * `keepGrid.growthPerLevel` (deleted from content/tuning.ts in the same
+ * commit — the "two numbers in two files" trap round 2B documented).
+ * `content/keep.test.ts` pins the tier-2 entry byte-identical. */
 export interface KeepTuning {
   readonly keepGrid: {
     readonly cols: number;
     readonly rows: number;
+  };
+  readonly progression: {
     /** Extra cols/rows unlocked AT each level, cumulative (spec §9). */
-    readonly growthPerLevel: Readonly<
+    readonly gridGrowth: Readonly<
       Partial<Record<number, { readonly cols: number; readonly rows: number }>>
     >;
   };
@@ -81,14 +116,15 @@ export interface KeepTuning {
 /**
  * Grid bounds at a Keep level (spec §9): the starting area plus every
  * growth entry for levels ≤ `level`, accumulated. Level 1 = 8×8; level 2+
- * adds the +4×8 plot (4 rows) by default tuning.
+ * adds the +4×8 plot (4 rows); levels 5/7/9 add more (round 2F, progression
+ * bible §2.2) — stops at 12×14 (168 tiles) on purpose (perf budget).
  */
 export function gridBounds(
   level: number,
   tuning: KeepTuning = contentTuning,
 ): { cols: number; rows: number } {
   let { cols, rows } = tuning.keepGrid;
-  for (const [lvl, growth] of Object.entries(tuning.keepGrid.growthPerLevel)) {
+  for (const [lvl, growth] of Object.entries(tuning.progression.gridGrowth)) {
     if (growth !== undefined && Number(lvl) <= level) {
       cols += growth.cols;
       rows += growth.rows;

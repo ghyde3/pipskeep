@@ -74,6 +74,7 @@ import { resolveActiveEvents } from "../core/progression/events";
 import { tuning as contentTuning } from "../content/tuning";
 import type { Tuning } from "../content/tuning";
 import { MILESTONES as contentMilestones } from "../content/milestones";
+import { buildChronicleModel, renderChronicle } from "./chronicle";
 import type { MilestoneDef, MilestoneReward } from "../content/milestones";
 import { BOUNTY_TEMPLATES as contentBountyTemplates } from "../content/bountyTemplates";
 import type { BountyRewardBundle } from "../content/bountyTemplates";
@@ -536,7 +537,7 @@ export function unbankedMilestoneIds(
 // DOM — the browsable sheet + its floating entry button
 // ---------------------------------------------------------------------------
 
-export type DailiesTab = "streak" | "bounties" | "milestones";
+export type DailiesTab = "streak" | "bounties" | "milestones" | "chronicle";
 
 export interface DailiesSheetDeps {
   dispatch(action: GameAction): void;
@@ -593,6 +594,10 @@ export function createDailiesSheet(deps: DailiesSheetDeps): DailiesSheet {
   makeTab("streak", "Streak");
   makeTab("bounties", "Today");
   makeTab("milestones", "Milestones");
+  // ROUND 2F — Keep tier 9's headline unlock (progression bible §2). Shown
+  // at every tier, locked below 9 with a "something to grow toward" note,
+  // matching how ui/buildSheet.ts treats a station the tier hasn't opened.
+  makeTab("chronicle", "Chronicle");
 
   const body = document.createElement("div");
   body.className = "pk-daily-body";
@@ -838,6 +843,7 @@ export function createDailiesSheet(deps: DailiesSheetDeps): DailiesSheet {
     body.replaceChildren();
     if (activeTab === "streak") renderStreak(state);
     else if (activeTab === "bounties") renderBounties(state);
+    else if (activeTab === "chronicle") body.appendChild(renderChronicle(buildChronicleModel(state)));
     else renderMilestones(state);
   }
 
@@ -1043,29 +1049,22 @@ export function initDailiesUi(deps: DailiesUiDeps): DailiesUi {
       notify({ kind: "info", message: `Bounty done: ${card.title}! +${card.rewardLabel}` });
     }
 
-    // Milestones: CELEBRATE, then bank. Nothing is ever waiting on a tap
-    // (bible §0.2/§10.2 — "milestone celebrations as TOASTS, one at a time,
-    // tap-to-open for detail… never a modal chain"), so the toast reports
-    // what was banked rather than asking for a chore.
+    // Milestones: BANK them. Nothing is ever waiting on a tap (bible
+    // §0.2 — milestone rewards are all non-choices), so this module's job
+    // on a new milestone is simply to dispatch the CLAIM.
+    //
+    // ROUND 2F: the CELEBRATION half of this branch moved out. The owner's
+    // diagnosis was "need better notification when milestones are
+    // completed", and the answer is `ui/milestoneCelebration.ts`'s ribbon —
+    // which batches several milestones landing together into one surface,
+    // prints the `+N XP` and flies it into the Keep XP bar, queues behind
+    // the Doorstep/loot reveal, and fires its own confetti + sound. A toast
+    // here as well would announce the same milestone twice, with two
+    // confetti bursts. `detectMilestoneCelebrations` stays — it is still
+    // what tells this module WHEN to bank (and it is still what the sheet's
+    // own rows are built from).
     const newMilestones = detectMilestoneCelebrations(before, state);
     if (newMilestones.length > 0) {
-      sound("ui.confirm");
-      burstConfetti();
-      const first = newMilestones[0];
-      const message =
-        newMilestones.length === 1 && first !== undefined
-          ? `${first.name} — ${first.rewardLabel}. Have a look.`
-          : `${newMilestones.length} new milestones — have a look.`;
-      // Tap-to-open: click the entry button when this module drew one,
-      // otherwise open the sheet directly (the Nook menu owns the button).
-      notify({
-        kind: "info",
-        message,
-        onTap: () => {
-          if (entry !== null) entry.el.click();
-          else sheet.open("milestones");
-        },
-      });
       bankEarnedMilestones();
     }
   });

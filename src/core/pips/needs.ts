@@ -49,9 +49,36 @@ export type NeedRates = Record<NeedId, number>;
 const CLINGY_PERSONALITY_ID = "clingy";
 
 /**
+ * ROUND 2F (docs/progression-bible.md §3.2) — the Keep's aggregated
+ * building comfort, as the FIFTH multiplicative factor `effectiveRates`
+ * needs: `base × personality × life-stage × situational × keepComfort`.
+ * Defaults to `IDENTITY_KEEP_COMFORT` (every multiplier exactly 1), which
+ * is what an unbuilt Keep resolves to — so every one of the ~900 existing
+ * lines of `core/pips` fixtures that call `effectiveRates`/
+ * `applyNeedsDelta` without this new parameter stay byte-identical (bible
+ * §8.2's explicit design constraint: the smallest possible injectable
+ * parameter, never an edit to `needDecayPerHour`/`care.rest.energyPerHour`
+ * themselves). Computed by `core/keep/effects.ts`'s `resolveKeepEffects` +
+ * `keepComfortMultipliers` — this file stays agnostic of `KeepState`/
+ * content, exactly as it already is of species/personality content.
+ */
+export interface KeepComfortEffect {
+  /** Per-need decay multiplier (1 = no effect, < 1 = slower decay). */
+  readonly multiplier: Readonly<Record<NeedId, number>>;
+  /** Multiplies `care.rest.energyPerHour` while Resting (≥ 1). */
+  readonly restSpeedMultiplier: number;
+}
+
+export const IDENTITY_KEEP_COMFORT: KeepComfortEffect = {
+  multiplier: { hunger: 1, cleanliness: 1, happiness: 1, energy: 1 },
+  restSpeedMultiplier: 1,
+};
+
+/**
  * Effective per-need rates for the Pip's CURRENT activity/life stage:
- * base × personality × life-stage × situational, all multiplicative
- * (spec §4.1). Multiplication is applied in exactly that order so tests
+ * base × personality × life-stage × situational × keep comfort, all
+ * multiplicative (spec §4.1, amended round 2F — progression bible §3.2,
+ * spec §16 v1.4). Multiplication is applied in exactly that order so tests
  * can assert exact float equality against the same product expression.
  *
  * Situational modifiers implemented here:
@@ -60,7 +87,9 @@ const CLINGY_PERSONALITY_ID = "clingy";
  * - Resting: the energy rate is REPLACED by the flat
  *   `care.rest.energyPerHour` regen (spec §4.1's "+15 while Resting",
  *   amended in round 2A — the rate is whatever tuning says, today 600/h
- *   so a nap is measured in minutes).
+ *   so a nap is measured in minutes), further scaled by
+ *   `keepComfort.restSpeedMultiplier` (round 2F: a placed Bed/Sun Bunks
+ *   makes naps finish sooner).
  *   Decision: personality/life-stage multipliers do NOT apply to regen —
  *   spec §4.2 says modifiers are "multipliers on base decay", and §4.5
  *   needs Rest auto-wake to be a simply computable moment. Other needs
@@ -69,6 +98,7 @@ const CLINGY_PERSONALITY_ID = "clingy";
 export function effectiveRates(
   pip: PipState,
   tuning: NeedsTuning = contentTuning,
+  keepComfort: KeepComfortEffect = IDENTITY_KEEP_COMFORT,
 ): NeedRates {
   const personality = tuning.personalityDecayMultipliers[pip.personalityId];
   if (personality === undefined) {
@@ -98,11 +128,12 @@ export function effectiveRates(
       tuning.needDecayPerHour[need] *
       personality[need] *
       lifeStageMultiplier *
-      situational;
+      situational *
+      keepComfort.multiplier[need];
   }
 
   if (pip.activity === PipActivity.Resting) {
-    rates.energy = tuning.care.rest.energyPerHour;
+    rates.energy = tuning.care.rest.energyPerHour * keepComfort.restSpeedMultiplier;
   }
 
   return rates;
@@ -154,10 +185,11 @@ export function applyNeedsDelta(
   pip: PipState,
   hours: number,
   tuning: NeedsTuning = contentTuning,
+  keepComfort: KeepComfortEffect = IDENTITY_KEEP_COMFORT,
 ): PipState {
   const h = Math.max(0, hours);
   const elapsedMs = h * HOUR_MS;
-  const rates = effectiveRates(pip, tuning);
+  const rates = effectiveRates(pip, tuning, keepComfort);
 
   const needs = {} as PipNeeds;
   for (const need of NEED_IDS) {

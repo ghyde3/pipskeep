@@ -399,16 +399,27 @@ export function evaluateRestAutoWake(
  * `needsUpdatedAt + (autoWakeAtEnergy − energy) / energyPerHour` hours.
  * `null` when the Pip is not Resting; already-due wakes (Energy at or past
  * the threshold) return `needsUpdatedAt`.
+ *
+ * `restSpeedMultiplier` (round 2F, progression bible §3.2): the Keep's
+ * resolved building rest-speed multiplier (`core/keep/effects.ts`'s
+ * `resolveKeepEffects().restSpeedMultiplier`) — defaults to 1 (no effect),
+ * so every existing caller/fixture is unaffected. `core/pips/catchup.ts`'s
+ * own wake-candidate loop re-derives this same arithmetic inline rather
+ * than calling this function (a perf/clarity choice predating this round);
+ * this export stays consistent with it for any other caller (a future
+ * "ready in Xm" UI countdown) that predicts the same moment.
  */
 export function restAutoWakeAt(
   pip: PipState,
   tuning: MachineTuning = contentTuning,
+  restSpeedMultiplier = 1,
 ): number | null {
   if (pip.activity !== PipActivity.Resting) return null;
   const { energyPerHour, autoWakeAtEnergy } = tuning.care.rest;
+  const effectiveEnergyPerHour = energyPerHour * restSpeedMultiplier;
   const deficit = autoWakeAtEnergy - pip.needs.energy;
   if (deficit <= 0) return pip.needsUpdatedAt;
-  return pip.needsUpdatedAt + (deficit / energyPerHour) * HOUR_MS;
+  return pip.needsUpdatedAt + (deficit / effectiveEnergyPerHour) * HOUR_MS;
 }
 
 /**

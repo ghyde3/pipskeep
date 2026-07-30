@@ -22,6 +22,8 @@ import {
   itemLabel,
 } from "./lootReveal";
 import type { RevealQueueStateView } from "./lootReveal";
+import { tuning } from "../content/tuning";
+import { EXPEDITION_IDS } from "../content/expeditions";
 
 const PIPS = { "pip-1": { name: "Moss" } };
 
@@ -220,5 +222,73 @@ describe("reveal queue controller — sequential playback", () => {
     expect(controller.openScript()).toBeNull();
     expect(controller.collectAndNext()).toBeNull();
     expect(dispatched).toHaveLength(0);
+  });
+});
+
+
+/**
+ * ROUND 2F — THE REVEAL'S `+N Keep XP` CHIP (progression bible §1.3 row 10).
+ *
+ * XP was granted at roughly fifteen kinds of moment and displayed at five, and
+ * the richest ACTIVE source — the one the bible calls "the dopamine core" —
+ * showed none of it: a returning Meadow trip rendered its haul and its warm
+ * summary line and granted +27 XP with no XP text anywhere on the card.
+ */
+describe("buildRevealScript — the trip's Keep XP (bible §1.3 row 10)", () => {
+  const durations = {
+    meadow: { durationMs: 5 * 60_000 },
+    grotto: { durationMs: 90 * 60_000 },
+  };
+
+  it("pays the bible's own per-biome figure: a 5-minute Meadow trip is 7", () => {
+    const script = buildRevealScript(reveal(), PIPS, { expeditionDurations: durations });
+    expect(script.xpAward).toBe(
+      tuning.progression.xp.revealBase + tuning.progression.xp.revealPer5Min * 1,
+    );
+    expect(script.xpAward).toBe(7);
+  });
+
+  it("scales with trip length — a 90-minute trip pays far more than a 5-minute one", () => {
+    const short = buildRevealScript(reveal(), PIPS, { expeditionDurations: durations });
+    const long = buildRevealScript(reveal({ expeditionId: "grotto" }), PIPS, {
+      expeditionDurations: durations,
+    });
+    expect(long.xpAward).toBeGreaterThan(short.xpAward);
+    expect(long.xpAward).toBe(
+      tuning.progression.xp.revealBase + tuning.progression.xp.revealPer5Min * 18,
+    );
+  });
+
+  it("applies the Keep's xpBonus, rounded UP so a bonus is never invisible", () => {
+    // Mirrors `core/state.ts`'s own `Math.ceil(gained * (1 + fraction))`: at
+    // +5% a 7-XP trip pays 8, never a silent 7.
+    const boosted = buildRevealScript(reveal(), PIPS, {
+      expeditionDurations: durations,
+      xpBonusFraction: 0.05,
+    });
+    expect(boosted.xpAward).toBe(8);
+  });
+
+  it("an unbuilt Keep shows the base rate exactly — the bonus is opt-in, never a hidden tax", () => {
+    const plain = buildRevealScript(reveal(), PIPS, {
+      expeditionDurations: durations,
+      xpBonusFraction: 0,
+    });
+    expect(plain.xpAward).toBe(7);
+  });
+
+  it("is positive for every real biome — no trip is ever worth showing a +0 chip for", () => {
+    for (const id of EXPEDITION_IDS) {
+      const script = buildRevealScript(reveal({ expeditionId: id }), PIPS);
+      expect(script.xpAward, id).toBeGreaterThan(0);
+    }
+  });
+
+  it("an unknown biome degrades to 0 rather than NaN (defensive: content removed mid-flight)", () => {
+    const script = buildRevealScript(reveal({ expeditionId: "no-such-biome" }), PIPS, {
+      expeditionDurations: durations,
+    });
+    expect(script.xpAward).toBe(tuning.progression.xp.revealBase);
+    expect(Number.isFinite(script.xpAward)).toBe(true);
   });
 });

@@ -95,6 +95,24 @@ export type ExpeditionTuning = EggTuning &
       readonly hardworkingExpeditionDurationMultiplier: number;
       readonly curiousLootBonus: number;
     };
+    /**
+     * ROUND 2F (progression bible §3.3) — the floor `effectiveExpeditionDurationMs`
+     * composes a building's own speed multiplier with Hardworking's quirk
+     * at: 0.85 × 0.85 = 0.7225, floored to 0.75 so "the best possible trip
+     * is −25%" (a building can never out-do a personality's identity, and
+     * the composed pair never beats either one alone by more than this).
+     * Optional/structural (rather than required) so the ~dozen existing
+     * fixtures across `core/expeditions`/`core/economy` tests that build a
+     * bare `{ quirks: {...} }` tuning object keep compiling unchanged —
+     * absent, the floor simply does not apply (no building speed effect
+     * exists in a fixture that omits it either, so this is never observed
+     * as a behaviour change).
+     */
+    readonly progression?: {
+      readonly effectCaps?: {
+        readonly expeditionSpeedFloorWithQuirk?: number;
+      };
+    };
   };
 
 /** Injectable content, defaulting to the real registries. */
@@ -135,6 +153,24 @@ export interface ExpeditionContent {
    * `resolveLootBonusChance` — it may settle several pips' trips in one
    * call, each with its own mastery. */
   readonly resolveEggChance?: (pip: PipState, expeditionId: string) => number;
+  /**
+   * ROUND 2F (progression bible §3.2) — the Keep's already-resolved
+   * building expedition-speed multiplier for THIS send-off
+   * (`core/keep/effects.ts`'s `resolveKeepEffects().expeditionSpeedMultiplier`),
+   * passed straight through to `effectiveExpeditionDurationMs`. Omitted
+   * (`undefined`) preserves the pre-2F formula exactly (defaults to 1
+   * there). Used by `assignExpedition`'s single call site.
+   */
+  readonly keepSpeedMultiplier?: number;
+  /**
+   * ROUND 2F — the Keep's already-resolved building incubation-speed
+   * multiplier (`resolveKeepEffects().incubationSpeedMultiplier`), passed
+   * straight through to `createEgg` when a returning trip finds an egg.
+   * Omitted (`undefined`) preserves the pre-2F incubation length exactly
+   * (defaults to 1 there). Used by `settleExpeditionReturn`'s single call
+   * site.
+   */
+  readonly keepIncubationSpeedMultiplier?: number;
 }
 
 /**
@@ -173,17 +209,32 @@ export interface ExpeditionStateSlice extends DialogueStateSlice {
  * Effective trip duration (spec §4.2): content duration × Hardworking's
  * tuning-defined multiplier (×0.85 — "−15% expedition duration"); ×1 for
  * everyone else.
+ *
+ * `keepSpeedMultiplier` (round 2F, progression bible §3.2/§3.3): the
+ * Keep's resolved building expedition-speed multiplier
+ * (`core/keep/effects.ts`'s `resolveKeepEffects().expeditionSpeedMultiplier`,
+ * already capped at `effectCaps.expeditionSpeedMin` there) — defaults to 1,
+ * so every existing caller/fixture that doesn't pass it is byte-identical.
+ * Composed with the personality multiplier and THEN floored at
+ * `effectCaps.expeditionSpeedFloorWithQuirk` (0.75) — never floored twice,
+ * and the floor is a no-op whenever `tuning.progression` is absent (test
+ * fixtures) or `keepSpeedMultiplier` is 1 (an unbuilt Keep), so this is
+ * additive over the pre-2F formula in both dimensions.
  */
 export function effectiveExpeditionDurationMs(
   expedition: ExpeditionView,
   personalityId: string,
   tuning: ExpeditionTuning = contentTuning,
+  keepSpeedMultiplier = 1,
 ): number {
-  const multiplier =
+  const personalityMultiplier =
     personalityId === HARDWORKING_PERSONALITY_ID
       ? tuning.quirks.hardworkingExpeditionDurationMultiplier
       : 1;
-  return expedition.durationMs * multiplier;
+  const combined = personalityMultiplier * keepSpeedMultiplier;
+  const floor = tuning.progression?.effectCaps?.expeditionSpeedFloorWithQuirk;
+  const flooredCombined = floor !== undefined ? Math.max(combined, floor) : combined;
+  return expedition.durationMs * flooredCombined;
 }
 
 /**
@@ -344,6 +395,7 @@ export function assignExpedition<S extends ExpeditionStateSlice>(
     expedition,
     pip.personalityId,
     tuning,
+    content.keepSpeedMultiplier ?? 1,
   );
   const result = departExpedition(
     pip,
@@ -524,6 +576,7 @@ export function settleExpeditionReturn<S extends ExpeditionStateSlice>(
           sourceExpeditionId: expedition.expeditionId,
         },
         tuning,
+        content.keepIncubationSpeedMultiplier ?? 1,
       )
     : null;
 

@@ -86,3 +86,59 @@ describe("egg chance bonus — separate channel, separately capped", () => {
     expect(applyEggChanceBonus(0.08, 0, contentTuning)).toBe(0.08);
   });
 });
+
+describe("round 2F — building/set contributions enter the SAME channels, never a second one (bible §3.1 rule 4)", () => {
+  it("omitting buildingBonusChance is identical to passing 0 (pre-2F callers unaffected)", () => {
+    const sources = { curious: true, masteryBonusChance: 0.05, streakBonusChance: 0, eventBonusChance: 0 };
+    expect(effectiveLootBonusChance(sources, contentTuning)).toBe(
+      effectiveLootBonusChance({ ...sources, buildingBonusChance: 0 }, contentTuning),
+    );
+  });
+
+  it("a Trail Post's contribution sums with Curious's own +10%", () => {
+    const withoutBuilding = effectiveLootBonusChance(
+      { curious: true, masteryBonusChance: 0, streakBonusChance: 0, eventBonusChance: 0 },
+      contentTuning,
+    );
+    const withBuilding = effectiveLootBonusChance(
+      {
+        curious: true,
+        masteryBonusChance: 0,
+        streakBonusChance: 0,
+        eventBonusChance: 0,
+        buildingBonusChance: 0.03,
+      },
+      contentTuning,
+    );
+    expect(withBuilding).toBeCloseTo(withoutBuilding + 0.03);
+  });
+
+  it("building loot bonus is still clamped by the SAME shared cap under max stacking", () => {
+    const maxed = {
+      curious: true,
+      masteryBonusChance: 0.15,
+      streakBonusChance: 0.2,
+      eventBonusChance: 0.1,
+      buildingBonusChance: 0.07, // Trail Post + Deep Wood set
+    };
+    expect(effectiveLootBonusChance(maxed, contentTuning)).toBe(
+      contentTuning.retention.loot.bonusRollChanceMax,
+    );
+  });
+
+  it("omitting buildingPoints is identical to passing 0", () => {
+    const sources = { masteryPoints: 0.02, eventPoints: 0 };
+    expect(effectiveEggChanceBonusPoints(sources, contentTuning)).toBe(
+      effectiveEggChanceBonusPoints({ ...sources, buildingPoints: 0 }, contentTuning),
+    );
+  });
+
+  it("a Weathervane's egg-chance points sum into the same clamped channel", () => {
+    const withBuilding = effectiveEggChanceBonusPoints(
+      { masteryPoints: 0, eventPoints: 0, buildingPoints: 0.01 },
+      contentTuning,
+    );
+    expect(withBuilding).toBeCloseTo(0.01);
+    expect(withBuilding).toBeLessThanOrEqual(contentTuning.retention.loot.eggChanceBonusPointsMax);
+  });
+});

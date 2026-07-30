@@ -66,6 +66,9 @@ import { buildBountyCards, buildProgressMetricContext, buildStreakModel } from "
 import { eventAdjustedPityThreshold } from "../core/progression/events";
 import { pityThresholdFor } from "../core/progression/pity";
 import { touchVisit } from "../core/progression/streak";
+import { isNextTierXpReady } from "../core/progression/xp";
+import { keepLevels } from "../content/keep";
+import { RESOURCE_IDS } from "../core/economy";
 import { metricValue } from "../core/progression/milestones";
 import { tuning as contentTuning } from "../content/tuning";
 import type { Tuning } from "../content/tuning";
@@ -163,6 +166,26 @@ function milestoneNudge(state: GameState, tuning: Tuning): Nudge | null {
   return null;
 }
 
+/**
+ * ROUND 2F (progression bible §6.3) — "a Keep tier ready to grow", the one
+ * new entry at the END of the chain.
+ *
+ * Last on purpose: a pipping egg or a glowing Pip is a moment that will not
+ * wait, whereas a Ready tier waits forever (bible §0.3), so it should never
+ * push a perishable moment off the screen. But it belongs on the Doorstep at
+ * all because it is the single most valuable thing a returning player can be
+ * told — the whole ladder is invisible until someone mentions it.
+ */
+function keepTierReadyNudge(state: GameState, tuning: Tuning): Nudge | null {
+  if (!isNextTierXpReady(state.keepXp, state.keep.level, tuning)) return null;
+  const nextDef = keepLevels.find((d) => d.level === state.keep.level + 1);
+  if (nextDef === undefined) return null;
+  return {
+    icon: "✦",
+    text: `The Keep has grown enough for level ${state.keep.level + 1} — ${nextDef.headline}.`,
+  };
+}
+
 /** Exactly one nudge, by priority — never more (bible §10.2/§10.5's "the
  * difference between a warm welcome and a to-do list"). */
 export function pickNudge(state: GameState, tuning: Tuning = contentTuning): Nudge | null {
@@ -172,8 +195,44 @@ export function pickNudge(state: GameState, tuning: Tuning = contentTuning): Nud
     pityNudge(state, tuning) ??
     albumNudge(state, tuning) ??
     milestoneNudge(state, tuning) ??
+    keepTierReadyNudge(state, tuning) ??
     null
   );
+}
+
+// ---------------------------------------------------------------------------
+// What the absence PAID (bible §6.3) — the Doorstep's missing good news
+// ---------------------------------------------------------------------------
+
+/** "+340 Keep XP while you were away." — null when the absence earned none
+ * (a short gap with nobody working), because a "+0" line is worse than no
+ * line. Reads `summary.keepXpGained`, stamped on by the reducer. */
+export function awayXpLine(summary: CatchupSummary): string | null {
+  const gained = summary.keepXpGained ?? 0;
+  if (gained <= 0) return null;
+  return `+${gained.toLocaleString("en-US")} Keep XP while you were away.`;
+}
+
+/** "Your Gathering Station brought in 22 Wood, 31 Fiber and 2 Shell." — the
+ * other half of what an absence actually paid, and the reason staffing a
+ * station before you close the app feels worth doing. Null with nothing
+ * produced. */
+export function awayProductionLine(summary: CatchupSummary): string | null {
+  const produced = summary.produced ?? {};
+  const parts = RESOURCE_IDS.flatMap((id) => {
+    const count = produced[id] ?? 0;
+    return count > 0 ? [`${count} ${resourceLabel(id)}`] : [];
+  });
+  if (parts.length === 0) return null;
+  const list =
+    parts.length === 1
+      ? (parts[0] as string)
+      : `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1] as string}`;
+  return `The Keep kept working: ${list} came in.`;
+}
+
+function resourceLabel(id: string): string {
+  return id.charAt(0).toUpperCase() + id.slice(1);
 }
 
 // ---------------------------------------------------------------------------
@@ -199,6 +258,13 @@ export interface DoorstepModel {
   readonly bannerRewardLine: string | null;
   /** Today's three bounties as a compact, clockless checklist. */
   readonly bountyLines: readonly string[];
+  /**
+   * ROUND 2F (bible §6.3) — the good news, inside "The Keep" section rather
+   * than as a sixth section (§10.1's section budget is fixed): what the
+   * absence EARNED, above the decay it cost. Empty when an absence genuinely
+   * earned nothing, so a quiet return still reads quietly.
+   */
+  readonly keepGainLines: readonly string[];
   readonly nudge: Nudge | null;
 }
 
@@ -214,6 +280,45 @@ function projectStreak(state: GameState, now: number, tuning: Tuning): GameState
   return streak === state.streak ? state : { ...state, streak };
 }
 
+/**
+ * ROUND 2F — "A REPORT OF ±1s IS NOT A REPORT."
+ *
+ * Absences over `AWAY_SHEET_MIN_ELAPSED_MS` (3 minutes) get the full Doorstep,
+ * and three minutes is exactly at the boundary bible §10.3 draws — so a
+ * notification, a phone call or an app switch came back to a MODAL WALL reading
+ * "You were gone 3 minutes. The Keep kept busy." over three lines of
+ * `Hunger ↓1 Cleanliness ↓1 Happiness ↓1 Energy ↓1`, and the player tapped
+ * "Come in" past it while losing whatever sheet they had open.
+ *
+ * Rather than retuning the threshold (which only moves the boundary somewhere
+ * else), this asks the honest question: did anything worth a modal actually
+ * happen? Trivial means EVERY reported need moved by 1 or less AND nothing came
+ * home — no trip, no egg, no loot, no rate-cap note.
+ *
+ * `QUIET_ABSENCE_MS` is the belt and braces: past an hour the player is
+ * greeted regardless, because "no deltas" can also mean a Pip whose needs were
+ * ALREADY at 0 and had nowhere left to fall — which is precisely when they most
+ * need telling. And `pips.length === 0` never counts as trivial: no evidence is
+ * not evidence of nothing.
+ */
+export const QUIET_ABSENCE_MS = 60 * 60 * 1000;
+
+export function isTrivialAbsence(
+  summary: CatchupSummary,
+  away: AwaySheetModel,
+  quietMs: number = QUIET_ABSENCE_MS,
+): boolean {
+  if (summary.elapsedMs >= quietMs) return false;
+  if (away.pips.length === 0) return false;
+  if (away.expeditionLines.length > 0) return false;
+  if (away.eggLine !== null || away.lootLine !== null || away.cappedLine !== null) {
+    return false;
+  }
+  return away.pips.every(
+    (pip) => pip.note === null && pip.needLines.every((need) => need.amount <= 1),
+  );
+}
+
 export function deriveDoorstepModel(
   summary: CatchupSummary,
   state: GameState,
@@ -225,6 +330,8 @@ export function deriveDoorstepModel(
   // — a tab flick gets nothing, exactly as it always has.
   const away = deriveAwaySheet(summary, state, content);
   if (away === null) return null;
+  // …and nothing worth a modal is the same as nothing (see above).
+  if (isTrivialAbsence(summary, away)) return null;
 
   const projected = projectStreak(state, now, tuning);
   const streakModel = buildStreakModel(projected, tuning);
@@ -247,12 +354,19 @@ export function deriveDoorstepModel(
     (card) => `${card.complete ? "✓" : `${card.progress}/${card.target}`} ${card.title}`,
   );
 
+  // The absence's EARNINGS, listed before its costs in the same section
+  // (bible §6.3: "+1 line, not a section").
+  const keepGainLines = [awayXpLine(summary), awayProductionLine(summary)].filter(
+    (line): line is string => line !== null,
+  );
+
   return {
     away,
     streakLine,
     welcomeBackLine,
     bannerRewardLine,
     bountyLines,
+    keepGainLines,
     nudge: pickNudge(state, tuning),
   };
 }
@@ -349,9 +463,14 @@ export function createDoorstep(deps: DoorstepDeps): Doorstep {
         bodyEl.appendChild(section("Streak", lines));
       }
 
-      // §3 The Keep — per-pip need arrows + capped-time note, verbatim
-      // from the away model (unchanged tone/copy, now a section).
-      const keepLines: string[] = [];
+      // §3 The Keep — what the absence EARNED first, then the per-pip need
+      // arrows + capped-time note, verbatim from the away model.
+      //
+      // ORDER MATTERS AND IS THE FIX. This section used to open with three-to-
+      // twelve lines of pure decay (`Pip1 — Hunger ↓49 Cleanliness ↓59 …`), so
+      // at a roster cap of 6 the return screen was twelve lines of downward
+      // arrows before anything positive appeared. The earnings go FIRST.
+      const keepLines: string[] = [...model.keepGainLines];
       for (const pip of model.away.pips) {
         const chips = pip.needLines
           .map((n) => `${n.label} ${n.direction === "down" ? "↓" : "↑"}${n.amount}`)

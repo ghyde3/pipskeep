@@ -257,6 +257,8 @@ function richState(seed = SEED): GameState {
     activeEvents: ["berry-glut"],
     keepsakes: { "moss-tuft": 1 },
     flair: {},
+    keepXp: 0,
+    lastLevelUp: null,
   };
 }
 

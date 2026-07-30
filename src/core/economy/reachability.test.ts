@@ -214,12 +214,21 @@ const pricedKeepUpgrades: readonly PricedThing[] = Object.values(
   payableAt: upgrade.prerequisiteLevel,
 }));
 
-/** Placeables are offered in build mode from the very start (spec §9) —
- * they carry no level gate, so level 1 must be able to pay for them. */
+/**
+ * ROUND 2F (docs/progression-bible.md §2.3/§8.3, "Update 1" — an
+ * AUTHORISED TIGHTENING, not a weakening): placeables now gain their own
+ * `unlockKeepLevel` on `content/placeables.ts`'s `PlaceableDef`, so each
+ * station is checked against the income available when it actually
+ * appears, rather than a blanket "must be payable at level 1". The four
+ * shipped placeables are unaffected (`unlockKeepLevel: 1`, except the
+ * Stockpot at 3 — its Wood/Fiber cost is payable at every tier anyway).
+ * This is what makes a Shell/Driftwood-priced late station (Trail Post,
+ * Beacon, Weathervane) possible at all without breaking this suite.
+ */
 const pricedPlaceables: readonly PricedThing[] = placeables.map((item) => ({
   label: `Placeable "${item.id}"`,
   cost: item.cost,
-  payableAt: 1,
+  payableAt: item.unlockKeepLevel,
 }));
 
 const allPricedThings: readonly PricedThing[] = [

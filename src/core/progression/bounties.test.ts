@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { tuning as contentTuning } from "../../content/tuning";
 import { BOUNTY_TEMPLATES } from "../../content/bountyTemplates";
+import { expeditions as contentExpeditions } from "../../content/expeditions";
+import { placeables as contentPlaceables } from "../../content/placeables";
 import {
   applyBountyEvent,
   createEmptyBounties,
@@ -34,18 +36,24 @@ function contextAt(
     hasAdultPip?: boolean;
   } = {},
 ): BountyContext {
-  const unlockedByLevel: Record<number, readonly string[]> = {
-    1: ["meadow", "bramblewick"],
-    2: ["meadow", "bramblewick", "forest", "snowdrift"],
-    3: ["meadow", "bramblewick", "forest", "snowdrift", "shore", "lanterngrotto"],
-  };
+  // ROUND 2F: DERIVED from the real expedition registry, never a hand-
+  // rolled table. The previous literal map said level 2 opened the
+  // Snowdrift and level 3 opened the Shore and the Grotto — true under the
+  // 2B spread, false the moment this round re-spread the six biomes across
+  // twelve tiers. A fixture that hard-codes a tier goes stale silently and
+  // takes the suite's honesty with it (the bible's §8.5 warning, made
+  // structural).
+  const unlockedAt = (level: number): readonly string[] =>
+    Object.values(contentExpeditions)
+      .filter((e) => e.unlockKeepLevel <= level)
+      .map((e) => e.id);
   return {
     keepLevel,
     rosterSize,
     hasAdultPip: opts.hasAdultPip ?? true,
     placedItemIds: new Set(opts.placedItemIds ?? []),
     unlockedExpeditionIds: new Set(
-      opts.unlockedExpeditionIds ?? unlockedByLevel[keepLevel] ?? ["meadow"],
+      opts.unlockedExpeditionIds ?? unlockedAt(keepLevel),
     ),
     obtainableItemIds: new Set(opts.obtainableItemIds ?? ["berry", "fiber", "wood"]),
     hasAffordableDecoration: opts.hasAffordableDecoration ?? true,
@@ -139,16 +147,25 @@ describe("isBountyEligible", () => {
     expect(isBountyEligible(t, contextAt(2, 1))).toBe(true);
   });
 
-  it("a level-3-only template is ineligible at level 1", () => {
+  it("an expedition-gated template is ineligible below its biome's real unlock tier", () => {
     const t = BOUNTY_TEMPLATES.find((tpl) => tpl.id === "evening-at-the-grotto")!;
-    expect(isBountyEligible(t, contextAt(1, 1))).toBe(false);
-    expect(isBountyEligible(t, contextAt(3, 1))).toBe(true);
+    // Read the tier from content, not from a literal — this test used to say
+    // "level 3", which stopped being the Grotto's tier when round 2F
+    // re-spread the biomes across twelve levels.
+    const unlockAt = contentExpeditions["lanterngrotto"]!.unlockKeepLevel;
+    expect(t.requires.minKeepLevel, "template must agree with content").toBe(unlockAt);
+    expect(isBountyEligible(t, contextAt(unlockAt - 1, 1))).toBe(false);
+    expect(isBountyEligible(t, contextAt(unlockAt, 1))).toBe(true);
   });
 
-  it("agrees with the AUTHORED requirements for every template × every level (an independent re-derivation, not a tautology)", () => {
+  it("agrees with the AUTHORED requirements for every template × EVERY Keep tier 1–12 (an independent re-derivation, not a tautology)", () => {
+    // ROUND 2F: the ladder is twelve tiers now, so the matrix runs across
+    // all twelve. The progression bible called this the round's most likely
+    // shipped bug — a template gated against the OLD expedition spread,
+    // generatable at a tier where its biome is still locked.
     for (const template of BOUNTY_TEMPLATES) {
-      for (const level of [1, 2, 3]) {
-        for (const placements of [[], ["gathering-station", "stockpot"]]) {
+      for (let level = 1; level <= 12; level++) {
+        for (const placements of [[], ["gathering-station", "stockpot", "workbench"]]) {
           const context = contextAt(level, 3, { placedItemIds: placements });
           expect(
             isBountyEligible(template, context),
@@ -159,10 +176,49 @@ describe("isBountyEligible", () => {
     }
   });
 
+  /**
+   * ROUND 2F — THE DRIFT GUARD, at the level that actually matters: a
+   * template must never be generatable at a tier where the thing it asks
+   * for does not exist yet. `content/validate.ts` enforces the same rule on
+   * the authored numbers; this one enforces the OUTCOME, so the two cannot
+   * both be satisfied by a wrong-but-consistent pair.
+   */
+  it("no template is eligible at a tier where its own expedition or station is still locked", () => {
+    for (const template of BOUNTY_TEMPLATES) {
+      const expeditionId = template.requires.expeditionId;
+      const stationId = template.requires.placedItemId;
+      if (expeditionId === undefined && stationId === undefined) continue;
+      const expeditionTier = expeditionId
+        ? (Object.values(contentExpeditions).find((e) => e.id === expeditionId)
+            ?.unlockKeepLevel ?? 1)
+        : 1;
+      const stationTier = stationId
+        ? (contentPlaceables.find((p) => p.id === stationId)?.unlockKeepLevel ?? 1)
+        : 1;
+      const realTier = Math.max(expeditionTier, stationTier);
+      for (let level = 1; level < realTier; level++) {
+        // Hand it EVERYTHING (every station placed, every biome open) so the
+        // only thing that can refuse is the level gate itself.
+        const context = contextAt(level, 3, {
+          placedItemIds: contentPlaceables.map((p) => p.id),
+          unlockedExpeditionIds: Object.keys(contentExpeditions),
+        });
+        expect(
+          isBountyEligible(template, context),
+          `${template.id} must not be generatable at level ${level} — it needs tier ${realTier}`,
+        ).toBe(false);
+      }
+    }
+  });
+
   it("a station-gated template requires the station PLACED, not just the keep level", () => {
     const t = BOUNTY_TEMPLATES.find((tpl) => tpl.id === "something-simmering")!;
-    expect(isBountyEligible(t, contextAt(2, 1, { placedItemIds: [] }))).toBe(false);
-    expect(isBountyEligible(t, contextAt(2, 1, { placedItemIds: ["stockpot"] }))).toBe(true);
+    const tier = contentPlaceables.find((p) => p.id === "stockpot")!.unlockKeepLevel;
+    expect(t.requires.minKeepLevel, "template must agree with content").toBe(tier);
+    expect(isBountyEligible(t, contextAt(tier, 1, { placedItemIds: [] }))).toBe(false);
+    expect(isBountyEligible(t, contextAt(tier, 1, { placedItemIds: ["stockpot"] }))).toBe(
+      true,
+    );
   });
 });
 

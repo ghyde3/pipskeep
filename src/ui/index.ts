@@ -61,6 +61,20 @@ export interface Ui {
   /** Speak an arbitrary line above the active Pip (the onboarding
    * landing moment, spec §10.1.2 — same bubble, same anchoring). */
   say(line: string): void;
+  /**
+   * ROUND 2F — append an element as the last row of the persistent top bar
+   * (`.pk-topbar` is a column flex, so this is a plain append, no layout
+   * assumptions).
+   *
+   * This exists for the Keep XP bar (`ui/xpBar.ts`), which must be visible
+   * during ordinary play — the owner's "one of the major driving levers
+   * that we're missing from the UI". The bar module deliberately mounts
+   * nothing itself, so SOMEONE has to choose a home; the top bar is it,
+   * because that is the one surface that is on screen in every state the
+   * player can act from. Round 2G owns the final placement and may take
+   * this seam back out.
+   */
+  mountInTopBar(el: HTMLElement): void;
 }
 
 /** Warm copy for structural blocks (spec §5: the world said no, not the
@@ -138,6 +152,10 @@ export function initUi(deps: UiDeps): Ui {
     say(line: string): void {
       bubble.place(deps.getBubbleAnchor());
       bubble.show(line, "normal");
+    },
+
+    mountInTopBar(el: HTMLElement): void {
+      topBar.el.appendChild(el);
     },
   };
 }

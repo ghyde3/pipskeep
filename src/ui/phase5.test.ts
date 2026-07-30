@@ -117,6 +117,8 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
     activeEvents: [],
     keepsakes: {},
     flair: {},
+    keepXp: 0,
+    lastLevelUp: null,
     ...overrides,
   };
 }
@@ -129,13 +131,18 @@ const noSummary: CatchupSummary = {
 } as unknown as CatchupSummary;
 
 describe("diffPhase5 — celebrations", () => {
-  it("a Keep level-up toasts, bursts confetti, and rings the sound seam", () => {
+  // ROUND 2F: the tier-up celebration moved to `ui/levelUp.ts`'s banner
+  // (which names the tier, lists its unlocks from content, and fires its
+  // own confetti + sound). This module must now stay SILENT on a level-up,
+  // or every purchase announces itself twice — that regression is exactly
+  // what this test guards.
+  it("a Keep level-up is silent here — ui/levelUp.ts owns that celebration", () => {
     const prev = makeState();
     const next = makeState({ keep: { level: 2, placements: {} } });
     const effects = diffPhase5(prev, next);
-    expect(effects.toasts.some((t) => t.message.includes("Forest"))).toBe(true);
-    expect(effects.confettiBursts).toBe(1);
-    expect(effects.sounds).toContain("keep.levelup");
+    expect(effects.toasts).toHaveLength(0);
+    expect(effects.confettiBursts).toBe(0);
+    expect(effects.sounds).not.toContain("keep.levelup");
   });
 
   it("Cozy Bunks landing celebrates once", () => {

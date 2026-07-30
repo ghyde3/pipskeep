@@ -130,6 +130,8 @@ function makeState(
     activeEvents: [],
     keepsakes: {},
     flair: {},
+    keepXp: 0,
+    lastLevelUp: null,
     ...overrides,
   };
 }
@@ -183,11 +185,13 @@ describe("buildExpeditionRow — unlock gating (spec §6.1/§9)", () => {
     expect(forest.sendable).toBe(false);
     expect(forest.note).toContain("Keep level 2");
 
-    expect(row(state, "shore").note).toContain("Keep level 3");
+    // ROUND 2F (progression bible §2.1): the Shore's unlock moved 3 → 4,
+    // following the Shell/Driftwood that supplies Cozy Bunks' cost.
+    expect(row(state, "shore").note).toContain("Keep level 4");
   });
 
-  it("Keep level 3 unlocks everything", () => {
-    const state = makeState({ keep: { level: 3, placements: {} } });
+  it("Keep level 4 unlocks meadow/forest/shore", () => {
+    const state = makeState({ keep: { level: 4, placements: {} } });
     for (const id of ["meadow", "forest", "shore"]) {
       expect(row(state, id).status, id).toBe("available");
     }
@@ -303,8 +307,10 @@ describe("buildExpeditionRow — Piplings explain themselves (finding #3)", () =
   const piplingState = (overrides: Partial<PipState> = {}) =>
     makeState({
       pip: makePip({ lifeStage: LifeStage.Pipling, hatchedAt: 0, ...overrides }),
-      keep: { level: 3, placements: {} }, // unlock forest/shore so the
-      // Pipling reason is what's actually being asserted, not the level
+      // ROUND 2F: the Shore's unlock moved 3 → 4 (progression bible
+      // §2.1) — level 4 unlocks forest/shore so the Pipling reason is
+      // what's actually being asserted, not the level.
+      keep: { level: 4, placements: {} },
     });
 
   it("labels an allowed trail as a little supervised trip, still sendable", () => {
@@ -348,7 +354,8 @@ describe("buildExpeditionRow — Piplings explain themselves (finding #3)", () =
   });
 
   it("Adults never get a pipling row", () => {
-    const state = makeState({ keep: { level: 3, placements: {} } });
+    // ROUND 2F: level 4 unlocks meadow/forest/shore (Shore moved 3 → 4).
+    const state = makeState({ keep: { level: 4, placements: {} } });
     for (const id of ["meadow", "forest", "shore"]) {
       expect(row(state, id).status, id).not.toBe("pipling");
       expect(row(state, id).badge, id).toBeNull();

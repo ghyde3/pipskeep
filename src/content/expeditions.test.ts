@@ -144,11 +144,22 @@ describe("the shape of the curve: quick trip vs deep trip, per tier (content bib
     it(`${quick} > ${deep}: the quick trip still wins on raw items per minute (the active-play reward)`, () => {
       expect(itemsPerMinute(quick)).toBeGreaterThan(itemsPerMinute(deep));
     });
-
-    it(`${quick} and ${deep} share the same Keep-level unlock (one tier, two rhythms)`, () => {
-      expect(expeditions[deep].unlockKeepLevel).toBe(expeditions[quick].unlockKeepLevel);
-    });
   }
+
+  // ROUND 2F (progression bible §2.1) — the six biomes RE-SPREAD across
+  // the widened 12-tier ladder so a two-hour-old save no longer sees
+  // every trail. Meadow/Bramblewick stay at tier 1 (untouched — load-
+  // bearing for the level-1 wood ceiling and the 30–45 minute level-2
+  // target); Forest/Snowdrift and Shore/Lanterngrotto no longer share a
+  // tier with their quick-trip partner.
+  it("the six biomes unlock across the new spread: 1, 1, 2, 3, 4, 5", () => {
+    expect(expeditions.meadow.unlockKeepLevel).toBe(1);
+    expect(expeditions.bramblewick.unlockKeepLevel).toBe(1);
+    expect(expeditions.forest.unlockKeepLevel).toBe(2);
+    expect(expeditions.snowdrift.unlockKeepLevel).toBe(3);
+    expect(expeditions.shore.unlockKeepLevel).toBe(4);
+    expect(expeditions.lanterngrotto.unlockKeepLevel).toBe(5);
+  });
 
   it("the level-1 wood ceiling: Bramblewick drops NO wood at all (bible §3.3)", () => {
     // The Meadow is the ONLY wood source at Keep level 1 by design — a new

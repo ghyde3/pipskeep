@@ -29,6 +29,9 @@
 
 import type { PendingReveal } from "../core/expeditions";
 import type { GameAction } from "../core/state";
+import type { KeepState } from "../core/keep";
+import { resolveKeepEffects } from "../core/keep/effects";
+import { revealXp } from "../core/progression/xp";
 import { expeditions as contentExpeditions } from "../content/expeditions";
 import { foods as contentFoods } from "../content/foods";
 import { itemColors, itemFallbackColor } from "../content/palette";
@@ -106,6 +109,22 @@ export interface RevealScript {
   readonly hasEgg: boolean;
   /** The single warm summary line (spec §15.5 tone). */
   readonly summaryLine: string;
+  /**
+   * ROUND 2F (progression bible §1.3 row 10): the Keep XP this trip pays,
+   * shown as a `+N XP` chip beside the haul.
+   *
+   * The reveal is the richest ACTIVE source in the award table and the bible
+   * calls it "the dopamine core", and it displayed NO XP at all — a returning
+   * Meadow trip granted +27 and the card said nothing, so the one moment most
+   * worth linking to the bar was the one moment that did not.
+   *
+   * This is the TRIP's own value (`revealXp(duration)`, scaled by the Keep's
+   * xpBonus), not the dispatch's total: a mastery tier-up or a new Album page
+   * riding along on the same Collect has its own moment (rows 32-35). So the
+   * chip can under-state the total but never over-state it, which is the right
+   * direction for a promise.
+   */
+  readonly xpAward: number;
   /** When the summary + Collect button appear, ms after open. */
   readonly readyAtMs: number;
 }
@@ -118,6 +137,13 @@ export type RevealPipsView = Readonly<Record<string, { readonly name: string }>>
 export interface RevealContent {
   readonly expeditionNames?: Readonly<Record<string, { readonly name: string }>>;
   readonly tiers?: Readonly<Record<string, RevealTier>>;
+  /** Trip durations, for the `+N XP` chip's arithmetic. Defaults to the real
+   * expedition registry — injectable so a test can pin a duration. */
+  readonly expeditionDurations?: Readonly<Record<string, { readonly durationMs: number }>>;
+  /** The Keep's resolved `xpBonusFraction` (the Weathervane / Lantern & Ember
+   * set), so the chip shows what will ACTUALLY land rather than the base rate.
+   * Defaults to 0 — an unbuilt Keep. */
+  readonly xpBonusFraction?: number;
 }
 
 function capitalize(id: string): string {
@@ -171,6 +197,9 @@ export function buildRevealScript(
     content.expeditionNames ??
     (contentExpeditions as Readonly<Record<string, { name: string }>>);
   const tiers = content.tiers ?? resolveItemRevealTiers(contentFoods);
+  const durations =
+    content.expeditionDurations ??
+    (contentExpeditions as Readonly<Record<string, { durationMs: number }>>);
 
   const pipName = pips[reveal.pipId]?.name ?? "Your Pip";
   const expeditionName =
@@ -200,6 +229,14 @@ export function buildRevealScript(
     steps,
     hasEgg,
     summaryLine: summaryLine(pipName, expeditionName, reveal.items.length, hasEgg),
+    // Mirrors `core/state.ts`'s own arithmetic exactly: the base award from
+    // `revealXp`, then `ceil` against the xpBonus so a bonus can never be
+    // invisible (at +5% a 7-XP trip pays 8, never a silent 7).
+    xpAward: (() => {
+      const base = revealXp(durations[reveal.expeditionId]?.durationMs ?? 0);
+      const fraction = content.xpBonusFraction ?? 0;
+      return fraction > 0 ? Math.ceil(base * (1 + fraction)) : base;
+    })(),
     readyAtMs: t + REVEAL_SUMMARY_LAG_MS,
   };
 }
@@ -212,6 +249,10 @@ export function buildRevealScript(
 export interface RevealQueueStateView {
   readonly pendingReveals: readonly PendingReveal[];
   readonly pips: RevealPipsView;
+  /** ROUND 2F: read only to resolve the Keep's `xpBonusFraction` for the
+   * reveal's `+N XP` chip. Optional so every pre-2F fixture still satisfies
+   * this view; GameState satisfies it in full. */
+  readonly keep?: KeepState;
 }
 
 export interface RevealQueueControllerDeps {
@@ -242,7 +283,14 @@ export function createRevealQueueController(
     const state = deps.getState();
     const head = state.pendingReveals[0];
     if (head === undefined) return null;
-    return buildRevealScript(head, state.pips, deps.content);
+    // The Keep's XP bonus is resolved per reveal (placements can change
+    // between two queued reveals), so the chip always tells the truth about
+    // the Keep as it stands right now.
+    const keep = state.keep;
+    const xpBonusFraction =
+      deps.content?.xpBonusFraction ??
+      (keep === undefined ? 0 : resolveKeepEffects(keep, keep.level).xpBonusFraction);
+    return buildRevealScript(head, state.pips, { ...deps.content, xpBonusFraction });
   };
 
   return {
@@ -380,12 +428,18 @@ export function createLootRevealModal(deps: LootRevealModalDeps): LootRevealModa
   const summary = document.createElement("div");
   summary.className = "pk-reveal-summary";
 
+  // ROUND 2F — the `+N XP` chip (bible §1.3 row 10). Appears WITH the summary
+  // line, i.e. at the end of the beat sequence, so it reads as the trip's
+  // payoff rather than competing with the item flips.
+  const xpChip = document.createElement("div");
+  xpChip.className = "pk-reveal-xp";
+
   const collect = document.createElement("button");
   collect.type = "button";
   collect.className = "pk-reveal-collect";
   collect.textContent = "Collect";
 
-  card.append(title, sub, itemsRow, eggStage, summary, collect, fxLayer);
+  card.append(title, sub, itemsRow, eggStage, summary, xpChip, collect, fxLayer);
   el.append(backdrop, card);
   deps.mount.appendChild(el);
 
@@ -433,6 +487,7 @@ export function createLootRevealModal(deps: LootRevealModalDeps): LootRevealModa
     if (done) return;
     done = true;
     summary.classList.add("pk-reveal-summary--in");
+    xpChip.classList.add("pk-reveal-xp--in");
     collect.classList.add("pk-reveal-collect--in");
   };
 
@@ -464,6 +519,7 @@ export function createLootRevealModal(deps: LootRevealModalDeps): LootRevealModa
     el.classList.remove("pk-reveal--eggmoment");
     eggStage.classList.remove("pk-reveal-eggstage--in");
     summary.classList.remove("pk-reveal-summary--in");
+    xpChip.classList.remove("pk-reveal-xp--in");
     collect.classList.remove("pk-reveal-collect--in");
     itemsRow.replaceChildren();
     fxLayer.replaceChildren();
@@ -471,6 +527,8 @@ export function createLootRevealModal(deps: LootRevealModalDeps): LootRevealModa
     title.textContent = `${script.pipName} is back!`;
     sub.textContent = `Treasures from the ${script.expeditionName}`;
     summary.textContent = script.summaryLine;
+    xpChip.textContent = `+${script.xpAward} Keep XP`;
+    xpChip.hidden = script.xpAward <= 0;
     eggStage.style.display = script.hasEgg ? "" : "none";
     eggCaption.textContent = "An egg?!";
 

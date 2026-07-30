@@ -10,9 +10,19 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { FLAIR, activePageFrame, earnedFlairOfKind, flairById } from "./flair";
+import {
+  FLAIR,
+  RENOWN_FLAIR,
+  RENOWN_TOP_FLAIR_LEVEL,
+  activePageFrame,
+  earnedFlairOfKind,
+  flairById,
+  renownFlairEarnedBetween,
+  renownFlairForLevel,
+} from "./flair";
 import type { FlairKind } from "./flair";
 import { MILESTONES } from "./milestones";
+import { tuning } from "./tuning";
 
 const ALL_KINDS: readonly FlairKind[] = [
   "coverStamp",
@@ -54,21 +64,47 @@ describe("the flair registry", () => {
   });
 
   it("EVERY registered flourish is reachable — nothing in here is decoration for its own sake", () => {
+    // TWO grant paths since round 2F: a milestone reward, or a Renown level
+    // (bible §1.7). Everything in the registry must be on one of them —
+    // an unreachable flourish is the dead reward this file exists to prevent.
     const promisedIds = new Set(
       MILESTONES.flatMap((m) => (m.reward.kind === "flair" ? [m.reward.flairId] : [])),
     );
     for (const def of FLAIR) {
+      const reachable = promisedIds.has(def.id) || def.renownLevel !== undefined;
+      expect(
+        reachable,
+        `flair "${def.id}" is in the registry but nothing grants it — no milestone promises it and it carries no renownLevel`,
+      ).toBe(true);
+    }
+  });
+
+  it("a Renown flourish is granted by Renown ONLY — never double-sourced from a milestone too", () => {
+    const promisedIds = new Set(
+      MILESTONES.flatMap((m) => (m.reward.kind === "flair" ? [m.reward.flairId] : [])),
+    );
+    for (const def of RENOWN_FLAIR) {
       expect(
         promisedIds.has(def.id),
-        `flair "${def.id}" is in the registry but no milestone grants it`,
-      ).toBe(true);
+        `renown flair "${def.id}" is ALSO promised by a milestone — pick one source`,
+      ).toBe(false);
     }
   });
 
   it("flair grants nothing but decoration — no resource, item or tuning field anywhere on a def", () => {
     // Bible §0.4/§4.3: flair pays in nothing. Structural guard, so a future
-    // "and also 3 wood" can't be smuggled into the registry.
-    const allowed = new Set(["id", "kind", "name", "note", "glyph", "rank"]);
+    // "and also 3 wood" can't be smuggled into the registry. `renownLevel` is
+    // allowed and is itself decoration-only: it names WHICH level mints the
+    // flourish, it grants nothing.
+    const allowed = new Set([
+      "id",
+      "kind",
+      "name",
+      "note",
+      "glyph",
+      "rank",
+      "renownLevel",
+    ]);
     for (const def of FLAIR) {
       for (const key of Object.keys(def)) {
         expect(allowed.has(key), `flair "${def.id}" has an unexpected field "${key}"`).toBe(true);
@@ -81,6 +117,96 @@ describe("the flair registry", () => {
       if (def.kind !== "pageFrame") continue;
       expect(typeof def.rank, def.id).toBe("number");
     }
+  });
+});
+
+/**
+ * RENOWN (docs/progression-bible.md §1.7) — the endgame, and the round's
+ * fourth dead feature until now: `tuning.progression.renown` shipped with its
+ * `flairEveryLevels` DELETED because this registry had no `renown-*` entries
+ * to mint, so clearing a Renown level paid literally nothing. Tier 12 lands
+ * around day 17 on the bible's own income model, which meant the entire named
+ * ladder was exhausted from day 17 with nothing behind it.
+ */
+describe("Renown flair (bible §1.7)", () => {
+  it("ships a flourish for EVERY Renown level from 1 up, with no gaps", () => {
+    expect(RENOWN_FLAIR.length).toBeGreaterThan(0);
+    const levels = RENOWN_FLAIR.map((f) => f.renownLevel);
+    expect(levels).toEqual(RENOWN_FLAIR.map((_, i) => i + 1));
+    expect(RENOWN_TOP_FLAIR_LEVEL).toBe(RENOWN_FLAIR.length);
+  });
+
+  it("every level mints one — `flairEveryLevels` is 1, not the 5 that made a flourish a rumour", () => {
+    // At every FIFTH level (the figure the bible first floated) a flourish
+    // costs 5 × xpPerLevel ≈ 20 engaged days. That is not a reward.
+    expect(tuning.progression.renown.flairEveryLevels).toBe(1);
+  });
+
+  it("spreads across ALL FIVE kinds, so the endgame keeps changing a different surface", () => {
+    const kinds = new Set(RENOWN_FLAIR.map((f) => f.kind));
+    for (const kind of ALL_KINDS) {
+      expect(kinds.has(kind), `no Renown flourish of kind "${kind}"`).toBe(true);
+    }
+  });
+
+  it("renown page frames outrank every milestone frame, so reaching Renown visibly changes the Album", () => {
+    const milestoneFrames = FLAIR.filter(
+      (f) => f.kind === "pageFrame" && f.renownLevel === undefined,
+    );
+    const renownFrames = RENOWN_FLAIR.filter((f) => f.kind === "pageFrame");
+    expect(renownFrames.length).toBeGreaterThan(0);
+    const topMilestone = Math.max(...milestoneFrames.map((f) => f.rank ?? 0));
+    for (const f of renownFrames) {
+      expect(f.rank ?? 0, f.id).toBeGreaterThan(topMilestone);
+    }
+  });
+
+  it("renownFlairForLevel picks exactly the level's flourish, and nothing off the ends", () => {
+    expect(renownFlairForLevel(1)?.renownLevel).toBe(1);
+    expect(renownFlairForLevel(RENOWN_TOP_FLAIR_LEVEL)?.renownLevel).toBe(
+      RENOWN_TOP_FLAIR_LEVEL,
+    );
+    expect(renownFlairForLevel(0)).toBeNull();
+    expect(renownFlairForLevel(-3)).toBeNull();
+    expect(renownFlairForLevel(RENOWN_TOP_FLAIR_LEVEL + 1)).toBeNull();
+  });
+
+  it("renownFlairEarnedBetween pays every level a multi-level jump crossed — a long absence skips nothing", () => {
+    expect(renownFlairEarnedBetween(0, 3).map((f) => f.renownLevel)).toEqual([1, 2, 3]);
+    expect(renownFlairEarnedBetween(2, 3).map((f) => f.renownLevel)).toEqual([3]);
+  });
+
+  it("pays nothing when the level did not move, and never for a decrease", () => {
+    expect(renownFlairEarnedBetween(4, 4)).toEqual([]);
+    expect(renownFlairEarnedBetween(7, 2)).toEqual([]);
+    expect(renownFlairEarnedBetween(0, 0)).toEqual([]);
+  });
+
+  it("stops paying past the last flourish instead of throwing or repeating one", () => {
+    const past = renownFlairEarnedBetween(
+      RENOWN_TOP_FLAIR_LEVEL,
+      RENOWN_TOP_FLAIR_LEVEL + 5,
+    );
+    expect(past).toEqual([]);
+  });
+
+  it("a jump that spans the end of the ladder pays the remaining flourishes and no more", () => {
+    const spanning = renownFlairEarnedBetween(
+      RENOWN_TOP_FLAIR_LEVEL - 2,
+      RENOWN_TOP_FLAIR_LEVEL + 4,
+    );
+    expect(spanning.map((f) => f.renownLevel)).toEqual([
+      RENOWN_TOP_FLAIR_LEVEL - 1,
+      RENOWN_TOP_FLAIR_LEVEL,
+    ]);
+  });
+
+  it("the whole Renown ladder is a real long haul, not a fortnight of nothing", () => {
+    // 12 flourishes × 2,000 XP = 24,000 XP past tier 12 — ~32 engaged days at
+    // the bible §1.6 engaged rate of 750/day. That is the "what is there at
+    // day 30/60" answer the bible called the LAST thing to cut.
+    const totalXp = RENOWN_TOP_FLAIR_LEVEL * tuning.progression.renown.xpPerLevel;
+    expect(totalXp).toBeGreaterThanOrEqual(20_000);
   });
 });
 

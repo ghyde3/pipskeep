@@ -16,6 +16,26 @@ Phase-gate log and decision journal, per spec §13–§15. Append entries; never
 
 ## Gate log
 
+### Round 2F — The progression spine — 2026-07-30
+`docs/progression-bible.md` (1,316 lines) designed it before any code. **2189 tests** (was 1580). Save schema v7→v8.
+
+- **Shipped:** Keep XP as one spine (35 sources across every player action, awarded at a single call site so no reducer arm can forget it), a **12-tier ladder** with a named headline unlock per tier and the six expeditions re-spread across it, a typed content-defined **building-effect system** (comfort/rest-speed/expedition-speed/loot/egg-chance/incubation/job/xp) with six themed decoration sets, **45 build items** (up from 24), procedural inline-SVG icons, a milestone ribbon and a tier-up banner.
+- **Design finding that shaped the round:** a 12-tier *resource-priced* ladder is arithmetically impossible against the reachability guard with only four resources — the affordable top bundle is ~3.5× level 2's cost. Hence tiers are XP-gated with only five also priced. **A fifth resource is now the highest-value economy change** and has been asked for by three consecutive rounds.
+- **A FOURTH dead feature found: `state.keepsakes`.** Written by `CLAIM_MILESTONE` and by `RESOLVE_STREAK_CHOICE`'s day-5 pick, and read by *nothing* — a player chose from three offers and received observably zero. `Placement.granted` was likewise never implemented despite a comment claiming it closed the refund exploit. Both fixed (Keepsake Shelf).
+- **A FIFTH dead feature, caught by the game-design audit: Renown** — the designated endgame and the entire answer to "what is there on day 30" — **granted literally nothing**, because its flair half was deleted and never replaced. Now pays.
+- **21 of the 45 build items — including EVERY new station, i.e. the headline unlock of tiers 2, 3, 6, 7, 8, 10 and 12 — rendered as the identical placeholder brown crate.** The ladder's carrots were invisible. Fixed; the crate is now reserved for genuinely unknown ids.
+- **Balance held on a knife edge:** `comfortReductionMax = 0.25` is the round's fragile invariant. At 0.25 a maximally-built Keep still comes home Grumpy for all five personalities; at 0.30 a Curious Pip comes home *Content* and the daily loop stops mattering. Worked in the bible; guarded by a new `effects.balance.test.ts`.
+- **The verdict I am carrying forward, verbatim from the game-design audit: "the spine exists and is real; the surfaces that would let a player FEEL it are half-built."** Outstanding and now owned by round 2G:
+  - The Doorstep still reports only decay/streak/bounties — it never mentions XP earned while away, what a staffed station produced, or that a Keep tier is ready. The return moment does not sell the progression. **(Unfixed blocker.)**
+  - XP is granted at ~15 kinds of moment and displayed at 5; the loot reveal — the richest source — shows no XP at all.
+  - The XP bar's fill track is **56 px wide on a 375 px screen**, making the round's headline feature its least visible element.
+  - Set bonuses are never stated anywhere: the sheet says "0 of 7 placed" and later "· bonus active", but never what the bonus *is*.
+  - The tier-up banner and milestone ribbon anchor at `top: 0` over a ~200 px top bar and collide with the need bars.
+  - The gold "Lv N ▸ Ready" chip is inert; the real tap target is a different chip.
+- Mutation: 18 applied, 12 killed. Surviving majors (fixed in-round): the expeditionSpeed/incubationSpeed channels could be dropped at the reducer seam with all tests green, a mid-ladder tier could be made to deliver nothing, and both celebration controllers could be disconnected from their stores — all the dead-feature class this round explicitly forbade.
+- Guards green: `balance.test.ts` (55), `effects.balance.test.ts` (21), `reachability.test.ts` (77), `layers.test.ts` (8).
+
+
 ### Round 2E — Portrait render regressions — 2026-07-30
 Two owner-reported visual bugs, both traced to the same structural cause: **a pip's pattern is implemented three independent times** — the Pixi scene (`render/spriteResolver.ts`), the focus-view DOM portrait (`ui.css`), and the Album's DOM portrait (`pipdex.css`). Nothing kept them in step.
 

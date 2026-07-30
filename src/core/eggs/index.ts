@@ -99,10 +99,21 @@ export interface CreateEggOptions {
   readonly sourceExpeditionId: string | null;
 }
 
-/** A freshly found egg (state Found, not yet incubating). */
+/**
+ * A freshly found egg (state Found, not yet incubating).
+ *
+ * `incubationSpeedMultiplier` (round 2F, progression bible §3.2): the
+ * Keep's resolved building incubation-speed multiplier
+ * (`core/keep/effects.ts`'s `resolveKeepEffects().incubationSpeedMultiplier`,
+ * e.g. a placed Nest Warmer) — defaults to 1 (no effect), snapshotted onto
+ * `incubationMs` exactly like the rarity-based base duration is (module
+ * doc: "survives content re-tuning"), so every existing caller/fixture
+ * that doesn't pass it is byte-identical.
+ */
 export function createEgg(
   options: CreateEggOptions,
   tuning: EggTuning = contentTuning,
+  incubationSpeedMultiplier = 1,
 ): Egg {
   const rarity = options.rarity ?? tuning.eggs.expeditionEggRarity;
   return {
@@ -110,7 +121,7 @@ export function createEgg(
     state: EggState.Found,
     foundAt: options.foundAt,
     rarity,
-    incubationMs: resolveIncubationMs(rarity, tuning),
+    incubationMs: resolveIncubationMs(rarity, tuning) * incubationSpeedMultiplier,
     incubationStartedAt: null,
     sourceExpeditionId: options.sourceExpeditionId,
   };

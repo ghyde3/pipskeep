@@ -91,3 +91,52 @@ describe("MILESTONES registry", () => {
     expect(founder!.hidden).toBe(true);
   });
 });
+
+/**
+ * ROUND 2F — the Keep-tier milestone band (progression bible §1.5): one
+ * milestone per tier 2–12, sized so the ladder is not just a milestone
+ * checklist ("enough that milestones feel like progress, little enough
+ * that the ladder is not a milestone checklist").
+ */
+describe("Keep-tier milestones (progression bible §1.5)", () => {
+  it("every Keep tier from 2 to 12 has exactly one milestone, keyed to the generic keepLevel<N>Reached counter", () => {
+    for (let level = 2; level <= 12; level++) {
+      const id = `keep-level-${level}`;
+      const m = MILESTONES.find((entry) => entry.id === id);
+      expect(m, id).toBeDefined();
+      expect(m!.metric).toEqual({
+        kind: "counter",
+        counterId: `keepLevel${level}Reached`,
+      });
+      expect(m!.xp ?? 0, id).toBeGreaterThan(0);
+    }
+  });
+
+  it("pre-tier-12 milestone XP stays under 30% of levelXp[12] — progress, not a checklist (bible §1.5)", () => {
+    // "Pre-tier-12 milestone XP" is the one cleanly-structural subset the
+    // registry can answer without simulating a play timeline: every
+    // Keep-tier milestone EXCEPT the final one (keep-level-12 itself).
+    // The other bands (500 care actions, a 30-day streak, …) are earnable
+    // on an arbitrary schedule unrelated to the ladder and are correctly
+    // excluded from this specific claim.
+    const tierMilestoneXp = (level: number): number =>
+      MILESTONES.find((m) => m.id === `keep-level-${level}`)?.xp ?? 0;
+    let preTier12TierXp = 0;
+    for (let level = 2; level <= 11; level++) preTier12TierXp += tierMilestoneXp(level);
+
+    const levelXp12 = tuning.progression.levelXp[11] ?? 0; // index 11 === tier 12, cumulative
+    expect(levelXp12).toBeGreaterThan(0);
+    expect(preTier12TierXp).toBeLessThan(0.3 * levelXp12);
+    // Sanity: the tier band itself is a real, non-trivial share — not
+    // vacuously true because nobody authored any tier milestones at all.
+    expect(preTier12TierXp).toBeGreaterThan(500);
+  });
+
+  it("tier XP is non-decreasing across bands (2-4 <= 5-6 <= 7-9 <= 10-12)", () => {
+    const xpOf = (level: number) =>
+      MILESTONES.find((m) => m.id === `keep-level-${level}`)?.xp ?? 0;
+    expect(xpOf(4)).toBeLessThanOrEqual(xpOf(5));
+    expect(xpOf(6)).toBeLessThanOrEqual(xpOf(7));
+    expect(xpOf(9)).toBeLessThanOrEqual(xpOf(10));
+  });
+});

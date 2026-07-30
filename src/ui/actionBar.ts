@@ -11,6 +11,7 @@
 import type { Clock } from "../core/clock";
 import type { GameAction, GameState } from "../core/state";
 import { PipActivity } from "../core/pips/types";
+import type { PipState } from "../core/pips/types";
 import { canReceiveCare } from "../core/pips/machine";
 import { tuning } from "../content/tuning";
 import { FOOD_IDS } from "../content/foods";
@@ -28,6 +29,51 @@ export interface ActionBar {
   sync(state: GameState): void;
   /** Per-frame: cooldown rings + countdown numbers. */
   tick(now: number): void;
+}
+
+// ---------------------------------------------------------------------------
+// ROUND 2F — WHY THE CARE BAR IS GREY, AND THE ONE-TAP WAY OUT
+//
+// Measured on a 14h and a 20h return with a Pip clocked in at the Gathering
+// Station: Feed / Clean / Play / Pet / Rest all disabled at opacity 0.45, with
+// NO explanation on the bar and no affordance. Tap count from cold open to a
+// care action was THREE — "Come in", then another Pip's portrait in the roster
+// strip (discoverable only by first tapping a dead button and getting nothing),
+// then Feed. And staffing a station before closing the app is exactly the
+// behaviour the game teaches, so this is the DEFAULT day-2 state, not an edge
+// case.
+//
+// Two pure helpers below, so both the reason and the escape hatch are testable
+// without a DOM.
+// ---------------------------------------------------------------------------
+
+/** Warm, specific reason the active Pip cannot take care right now, or null
+ * when it can. Never scolds the player — the Pip is busy, not the player wrong
+ * (spec §15.5 / §4.4's tone rule). */
+export function careUnavailableReason(pip: PipState): string | null {
+  if (canReceiveCare(pip)) return null;
+  switch (pip.activity) {
+    case PipActivity.OnExpedition:
+      return `${pip.name} is out on the trail.`;
+    case PipActivity.Returning:
+      return `${pip.name} is on the way home.`;
+    case PipActivity.AssignedJob:
+      return `${pip.name} is busy working.`;
+    default:
+      return `${pip.name} can't be fussed over just now.`;
+  }
+}
+
+/** The first OTHER roster Pip who can take care right now, in roster order —
+ * the target of the bar's one-tap switch. Null when nobody is free (in which
+ * case the bar states the reason and offers nothing, which is honest). */
+export function firstCareablePipId(state: GameState): string | null {
+  for (const pipId of state.rosterOrder) {
+    if (pipId === state.activePipId) continue;
+    const pip = state.pips[pipId];
+    if (pip !== undefined && canReceiveCare(pip)) return pipId;
+  }
+  return null;
 }
 
 type ButtonId = "feed" | "clean" | "play" | "pet" | "rest" | "items";
@@ -65,6 +111,22 @@ export function firstStockedFoodId(state: GameState): string | null {
 export function createActionBar(deps: ActionBarDeps): ActionBar {
   const el = document.createElement("div");
   el.className = "pk-actionbar";
+
+  // The reason pill: shown ONLY while the whole care bar is disabled. When
+  // another Pip is free it is a BUTTON that switches to them, which turns the
+  // 3-tap day-2 path into 2 and makes the roster strip discoverable without
+  // having to tap a dead button first.
+  const reason = document.createElement("button");
+  reason.type = "button";
+  reason.className = "pk-actionbar-reason";
+  reason.hidden = true;
+  let reasonTarget: string | null = null;
+  reason.addEventListener("click", () => {
+    if (reasonTarget === null) return;
+    sound("ui.tap");
+    deps.dispatch({ type: "SET_ACTIVE_PIP", pipId: reasonTarget });
+  });
+  el.appendChild(reason);
 
   const buttons = {} as Record<ButtonId, ButtonEls>;
 
@@ -167,6 +229,30 @@ export function createActionBar(deps: ActionBarDeps): ActionBar {
     const pip = state.pips[state.activePipId];
     if (pip === undefined) return;
     const careOk = canReceiveCare(pip);
+
+    // Say WHY, and offer the way out.
+    const why = careUnavailableReason(pip);
+    if (why === null) {
+      reason.hidden = true;
+      reasonTarget = null;
+    } else {
+      reasonTarget = firstCareablePipId(state);
+      const freeName =
+        reasonTarget === null ? null : (state.pips[reasonTarget]?.name ?? null);
+      reason.hidden = false;
+      reason.textContent =
+        freeName === null ? why : `${why} Fuss over ${freeName} instead?`;
+      reason.disabled = reasonTarget === null;
+      reason.setAttribute(
+        "aria-label",
+        freeName === null ? why : `${why} Switch to ${freeName}.`,
+      );
+    }
+    // The greyed buttons themselves carry the reason too, so assistive tech and
+    // a long-press tooltip both explain the dead bar rather than leaving it mute.
+    for (const id of ["feed", "clean", "play", "pet", "rest"] as const) {
+      buttons[id].button.title = why ?? "";
+    }
 
     buttons.feed.button.disabled = !careOk || firstStockedFoodId(state) === null;
     buttons.play.button.disabled = !careOk;

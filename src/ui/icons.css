@@ -1,0 +1,31 @@
+/* Procedural glyph renderer (docs/progression-bible.md §4.2) — sizing
+   only. Colour comes entirely from the per-instance `--pk-icon-tint`
+   custom property `ui/icons.ts` sets inline, so this file never
+   hard-codes a hue and needs no light/dark split. */
+
+.pk-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  line-height: 0;
+}
+
+.pk-icon svg {
+  display: block;
+}
+
+.pk-icon--sm {
+  width: 20px;
+  height: 20px;
+}
+
+.pk-icon--md {
+  width: 28px;
+  height: 28px;
+}
+
+.pk-icon--lg {
+  width: 38px;
+  height: 38px;
+}

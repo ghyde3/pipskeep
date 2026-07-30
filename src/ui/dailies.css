@@ -83,6 +83,14 @@
   inset: 0;
   pointer-events: none;
   visibility: hidden;
+  /* The closed sheet parks at translateY(105%), so without this clip its
+     transformed box hangs ~214px below the viewport and grows the DOCUMENT's
+     scrollable area — which a focus() or wheel then scrolls, sliding the
+     whole game off the top of the screen (round 2F integrate; index.html's
+     root `overflow: clip` is the belt to this braces, and `#ui` /
+     `.pk-phase5` already clip for exactly the same reason). Adding this
+     round's fourth tab is what made the sheet tall enough to notice. */
+  overflow: clip;
   font-family:
     -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
     Arial, sans-serif;
@@ -465,4 +473,82 @@
 
 .pk-doorstep-dismiss:active {
   transform: scale(0.97);
+}
+
+/* ---------------------------------------------------------------------- */
+/* THE CHRONICLE (ui/chronicle.ts) — Keep tier 9's headline unlock,        */
+/* hosted as the Nook's fourth tab (progression bible §2).                 */
+/* ---------------------------------------------------------------------- */
+
+.pk-chronicle-header {
+  font-size: 12px;
+  font-weight: 700;
+  color: #5f7a5f;
+  margin-bottom: 8px;
+}
+
+.pk-chronicle-locked {
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.45;
+  color: #7a8a7a;
+  padding: 14px 12px;
+  border: 1.5px dashed rgba(95, 138, 94, 0.3);
+  border-radius: 12px;
+  text-align: center;
+}
+
+.pk-chronicle-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: #ffffff;
+  border: 1.5px solid rgba(95, 138, 94, 0.18);
+  margin-bottom: 6px;
+}
+
+.pk-chronicle-date {
+  flex: 0 0 auto;
+  min-width: 68px;
+  font-size: 11px;
+  font-weight: 800;
+  color: #5f8a5e;
+  padding-top: 2px;
+}
+
+.pk-chronicle-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.pk-chronicle-name {
+  font-size: 13px;
+  font-weight: 800;
+  color: #3d4a3d;
+}
+
+.pk-chronicle-blurb {
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1.35;
+  color: #6a7a6a;
+}
+
+.pk-chronicle-xp {
+  flex: 0 0 auto;
+  align-self: center;
+  font-size: 11px;
+  font-weight: 800;
+  color: #4a3300;
+  background: rgba(244, 185, 66, 0.35);
+  border-radius: 999px;
+  padding: 2px 7px;
+  white-space: nowrap;
+}
+
+/* Four tabs at 375px: let the labels shrink rather than overflow. */
+.pk-daily-tab {
+  min-width: 0;
 }

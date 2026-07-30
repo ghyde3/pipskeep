@@ -72,6 +72,13 @@ import { createPipdexView } from "../ui/pipdex";
 import { createSanctuaryView } from "../ui/sanctuary";
 import { createNavMenu } from "../ui/navMenu";
 import { showRecoveryModal } from "../ui/recovery";
+// Round 2F — THE PROGRESSION SPINE's three surfaces (docs/progression-
+// bible.md §0.2/§1.2/§6). Same parallel-module, static-import pattern as
+// phase4/phase5/onboarding/dailies: each owns all of its own DOM + CSS and
+// mounts nothing until main.ts says where.
+import { createXpBar } from "../ui/xpBar";
+import { initLevelUpUi } from "../ui/levelUp";
+import { initMilestoneCelebrationUi } from "../ui/milestoneCelebration";
 // Round 2A sound (amends spec §12): the `sound(slotId)` seam is no longer
 // a no-op — app/audio/ synthesizes every cue procedurally. initSound is
 // the only wiring the app needs; every call site was already in place.
@@ -326,7 +333,7 @@ async function startGame(
   // --- Phase 5 UI (Build/placement, Keep upgrades, jobs, evolution) ---
   // Drives the scene's placement mode (enterPlacementMode/
   // exitPlacementMode) and registers the render/pipTap.ts seam handler.
-  initPhase5Ui({
+  const phase5 = initPhase5Ui({
     mount: document.body,
     store,
     clock,
@@ -357,6 +364,36 @@ async function startGame(
     mountEntry: false,
   });
 
+  // --- Round 2F: the Keep XP bar (docs/progression-bible.md §0.2) ---
+  //
+  // WHERE IT LIVES, and why: the last row of the persistent top bar, under
+  // the active Pip's need bars. `ui/xpBar.ts` deliberately picks no home of
+  // its own, so the choice is made here — and the top bar is the only
+  // surface that is on screen in every state the player can act from, which
+  // is the whole point of a spine ("no session feels wasted, the bar always
+  // moves"). ROUND 2G OWNS THE FINAL PLACEMENT and may move it; the seam it
+  // moves is `ui.mountInTopBar` plus the `xpBar.sync` line in the store
+  // subscription below — nothing else knows where the bar is.
+  //
+  // Synced from main.ts's own subscription (below) rather than `initXpBar`'s
+  // convenience wrapper, so it uses the SAME single store subscription every
+  // other view here does and cannot fall out of order with them.
+  // ROUND 2F: the bar's own level chip opens the Keep upgrade card (bible §1.2:
+  // "the level chip… Tapping it opens the upgrade card"). Before this the gold
+  // pulsing `Lv 5 ▸ Ready` chip was inert while the actual tap target was a
+  // SECOND Keep-level chip in the opposite corner — two competing readouts, and
+  // the loud one did nothing.
+  const xpBar = createXpBar({ onOpenUpgrades: () => phase5.openUpgrades() });
+  ui.mountInTopBar(xpBar.el);
+
+  // The tier-up banner. Trigger is `state.lastLevelUp`, set once per
+  // successful PURCHASE_KEEP_LEVEL tap; the module queues behind the
+  // Doorstep and the loot reveal on its own (it watches for their open
+  // classes) and plays multiple queued tier-ups one at a time — which is
+  // what a migrated veteran gets on their first session back, since the v8
+  // backfill can leave several tiers affordable at once.
+  initLevelUpUi({ mount: document.body, store });
+
   // --- The Nook menu: the one way in to all three 2C destinations ---
   // ONE SURFACE AT A TIME is enforced here, in the only module that can see
   // all of them: every pick closes the others first. Without this, the
@@ -377,10 +414,38 @@ async function startGame(
     },
   });
 
+  // --- Round 2F: the milestone ribbon (progression bible §6.1) ---
+  //
+  // The owner's "need better notification when milestones are completed".
+  // Non-blocking, batches several milestones that land on the same action
+  // into ONE ribbon, and flies its `+N XP` chip into the bar created above —
+  // which is why `xpBar` is passed in, and why it had to exist first.
+  //
+  // Tapping the ribbon opens the Nook's Milestones tab, and goes through
+  // the same close-everything-else routine `navMenu`'s own `onPick` does:
+  // ONE SURFACE AT A TIME is enforced in main.ts because main.ts is the only
+  // module that can see all of them.
+  //
+  // `ui/dailies.ts` still BANKS each earned milestone (CLAIM_MILESTONE) —
+  // this module only celebrates. That split is deliberate: the reward must
+  // land whether or not anyone is watching a ribbon.
+  initMilestoneCelebrationUi({
+    mount: document.body,
+    store,
+    xpBar,
+    onOpenMilestones: () => {
+      ui.closeSurfaces();
+      pipdexView.close();
+      sanctuaryView.close();
+      dailies.open("milestones");
+    },
+  });
+
   // --- Store → scene/UI reactions ---
   let prevState = store.getState();
   scene.sync(prevState);
   ui.sync(prevState);
+  xpBar.sync(prevState);
   pipdexView.sync(prevState);
   sanctuaryView.sync(prevState);
   navMenu.sync(prevState);
@@ -390,6 +455,7 @@ async function startGame(
     prevState = state;
     scene.sync(state);
     ui.sync(state);
+    xpBar.sync(state);
     pipdexView.sync(state);
     sanctuaryView.sync(state);
     navMenu.sync(state);

@@ -128,6 +128,17 @@ const LADDER: readonly Rung[] = [
     peer: true,
   },
   {
+    layer: "float",
+    file: "progression.css",
+    selector: ".pk-xpbar",
+    z: 5,
+    why:
+      "ROUND 2F: the always-visible Keep XP bar — mountable anywhere " +
+      "(round 2G decides where), so like every other float it sits UNDER " +
+      "any real overlay rather than floating on top of one",
+    peer: true,
+  },
+  {
     layer: "phase5-chrome",
     file: "ui.css",
     selector: ".pk-phase5",
@@ -212,6 +223,28 @@ const LADDER: readonly Rung[] = [
     selector: ".pk-toasts",
     z: 45,
     why: "toasts must float above every blocking surface, including the reveal",
+  },
+  {
+    layer: "levelup",
+    file: "progression.css",
+    selector: ".pk-levelup",
+    z: 46,
+    why:
+      "ROUND 2F: the Keep tier-up banner — a bigger deal than an ordinary " +
+      "toast, so it floats above the toast stack (45); never a modal (no " +
+      "backdrop) and structurally never open at the same time as the " +
+      "Doorstep/reveal (levelUp.ts's own queue defers it defensively too)",
+  },
+  {
+    layer: "milestone-ribbon",
+    file: "progression.css",
+    selector: ".pk-ribbon",
+    z: 47,
+    why:
+      "ROUND 2F: the milestone ribbon — replaces the old text toast for " +
+      "milestone completions (bible §6.2); floats above ordinary toasts " +
+      "for the same reason the tier banner does, and queues behind the " +
+      "Doorstep/reveal queue itself (milestoneCelebration.ts)",
   },
   {
     layer: "recovery",

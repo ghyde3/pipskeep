@@ -68,7 +68,7 @@ import { HOUR_MS, tuning as contentTuning } from "../content/tuning";
 import { PERSONALITY_IDS } from "../content/personalities";
 import { species as contentSpecies } from "../content/species";
 import { foods as contentFoods } from "../content/foods";
-import { ROSTER_FULL_MAX_MESSAGE, ROSTER_FULL_MESSAGE } from "../content/eggs";
+import { ROSTER_FULL_MESSAGE, rosterFullMaxMessage } from "../content/eggs";
 import { keepLevels as contentKeepLevels, keepUpgrades, ROSTER_UPGRADE_ID } from "../content/keep";
 import { placeables as contentPlaceables } from "../content/placeables";
 import { decorations as contentDecorations } from "../content/decorations";
@@ -123,6 +123,18 @@ import {
 import type { AssignExpeditionOutcome, PendingReveal } from "./expeditions";
 import { createKeep, moveItem, placeItem, removeItem } from "./keep";
 import type { KeepState, PlacementId } from "./keep";
+// ROUND 2F — BUILDING EFFECTS (docs/progression-bible.md §3): placements →
+// ONE aggregated, already-capped value; the wiring below is what makes
+// that value actually apply (needs decay, rest speed, expedition duration/
+// loot/egg-chance, incubation speed) rather than becoming another dead
+// feature (ruling #5). Aggregation itself lives entirely in
+// `core/keep/effects.ts` — this file only computes it once per dispatch
+// (placements don't change mid-dispatch) and threads the result to the
+// pure modules that consult it.
+import { keepComfortMultipliers, resolveKeepEffects } from "./keep/effects";
+import type { ResolvedKeepEffects } from "./keep/effects";
+import { IDENTITY_KEEP_COMFORT } from "./pips/needs";
+import type { KeepComfortEffect } from "./pips/needs";
 import {
   assignPipToJob,
   collectJobCatchupEvents,
@@ -159,6 +171,7 @@ import { canAfford } from "./economy";
 import {
   createEmptyStreak,
   dayIndex as streakDayIndex,
+  effectiveStreakTier,
   pickKeepsakeOffers,
   resolveLadderReward,
   streakLootBonus,
@@ -210,6 +223,34 @@ import {
 } from "./progression/events";
 import { BOUNTY_TEMPLATES as contentBountyTemplates } from "../content/bountyTemplates";
 import { MILESTONES as contentMilestones } from "../content/milestones";
+// ROUND 2F — THE PROGRESSION SPINE (docs/progression-bible.md §0/§1): Keep
+// XP, ONE spine, applied in ONE place (`applyKeepXpForAction` below,
+// mirroring 2C's `touchProgressionVisit` wrapper). `xp.ts` is the pure
+// per-source calculator; this file composes it against the real
+// GameState/GameAction — same division of labour as every 2C module.
+import {
+  albumXpFromDeltas,
+  bountyCompleteXp,
+  bountyDayClearXp,
+  careActionXp,
+  evolveXp,
+  expeditionSendXp,
+  firstBuildXp,
+  firstJobXp,
+  hatchXp,
+  isNextTierXpReady,
+  jobTickXp,
+  masteryTierXp as masteryTierXpAward,
+  renownLevelFor,
+  revealXp,
+  rosterUpgradeXp,
+  sanctuaryFirstArrivalXp,
+  streakDayXp,
+} from "./progression/xp";
+// RENOWN FLAIR (bible §1.7) — content, read only for the id list; the level
+// arithmetic is `core/progression/xp.ts`'s.
+import { renownFlairEarnedBetween } from "../content/flair";
+import { jobs as contentJobs } from "../content/jobs";
 
 /** Genesis stream (starter rolls at createNewGame). Its cursor persists
  * in `rngState` like every other stream (spec §2 rule 3). */
@@ -354,6 +395,35 @@ export interface GameState {
    * nothing in the game removes a flourish, so a break can never take one
    * (bible §0.1). Absent key ≡ not earned. */
   readonly flair: Readonly<Record<string, number>>;
+  /** ROUND 2F — THE PROGRESSION SPINE (docs/progression-bible.md §0.1/§1):
+   * lifetime Keep XP, forward-only, integer. ONE spine belonging to the
+   * KEEP, never to a Pip — every meaningful action feeds it (see
+   * `applyKeepXpForAction`), so no session is wasted and retiring a Pip
+   * never costs progress. Current tier remains `keep.level` (unchanged,
+   * still the single source of truth for every gate); this field only
+   * says how close the NEXT tier is
+   * (`tuning.progression.levelXp`) and paces — never gates alone — every
+   * `PURCHASE_KEEP_LEVEL`. Never decreases; nothing in this round spends,
+   * decays, or resets it (bible §0.3). */
+  readonly keepXp: number;
+  /** ROUND 2F — the player-witnessed Keep-tier-up moment (progression
+   * bible §1.2/§6.3), parked like every other `last*Outcome` echo: a tier
+   * only ever lands on a player's own `PURCHASE_KEEP_LEVEL` tap (never
+   * while away), so the UI's celebration banner has something to animate
+   * from. Null until the first purchase. */
+  readonly lastLevelUp: LevelUpOutcome | null;
+}
+
+/** What one successful `PURCHASE_KEEP_LEVEL` did — the UI's tier-up
+ * banner data source (parked in `state.lastLevelUp`, like every other
+ * `last*Outcome`). Refusals (max level, XP not ready, can't afford) leave
+ * the state unchanged BY REFERENCE (module doc / spec §9's established
+ * refusal contract) and so never touch this field — there is nothing to
+ * celebrate about a tap that did nothing. */
+export interface LevelUpOutcome {
+  readonly at: number;
+  readonly fromLevel: number;
+  readonly toLevel: number;
 }
 
 /** What one EVOLVE_PIP request did — the UI's evolution-moment data
@@ -795,6 +865,10 @@ export function createNewGame(
     activeEvents: [],
     keepsakes: {},
     flair: {},
+    // ROUND 2F: a fresh Keep has done nothing yet — the bar starts at
+    // the very bottom of tier 1, and no tier-up has ever happened.
+    keepXp: 0,
+    lastLevelUp: null,
   };
 }
 
@@ -832,15 +906,79 @@ function unlockedExpeditionIdsAt(level: number): readonly string[] {
 }
 
 /**
+ * ROUND 2F (docs/progression-bible.md §3) — the Keep's aggregated building
+ * effects, resolved from `state.keep` (placements never change mid-
+ * dispatch, so every call site below computes this ONCE and reuses it).
+ * The single call site of `core/keep/effects.ts`'s `resolveKeepEffects`
+ * against the real GameState — everywhere else in this file that needs a
+ * building effect receives the already-resolved `ResolvedKeepEffects`
+ * (or, for needs decay/rest speed, the `KeepComfortEffect` view of it),
+ * never `state.keep` itself, matching the established pattern every other
+ * `core/state.ts` progression helper already uses (mastery, streak, …).
+ */
+function computeKeepEffects(state: GameState): ResolvedKeepEffects {
+  return resolveKeepEffects(state.keep, state.keep.level);
+}
+
+/**
+ * HOW MANY PIPS THE KEEP SLEEPS (spec §7.4, extended by progression bible
+ * §2's tier-11 headline "a sixth bed — the roster cap rises to 6").
+ *
+ * `base + (Cozy Bunks ? +2 : 0) + tier bonus`, all derived — there is no
+ * stored cap and this round adds none. The two things that raise it are:
+ *
+ *   - `rosterUpgradePurchased` — the shipped Cozy Bunks upgrade (3 → 5),
+ *     completely untouched by this round;
+ *   - `tuning.progression.rosterCapBonusByLevel` — extra beds granted by
+ *     Keep TIER, cumulative across every tier already passed.
+ *
+ * ROUND 2F INTEGRATE — THE SECOND DEAD UNLOCK. `rosterCapBonusByLevel`
+ * shipped as content with `{ 11: 1 }` in it and NOTHING read it: both
+ * call sites computed the cap straight from `rosterUpgradePurchased`, so
+ * tier 11's own headline ("the roster cap rises to 6") bought the player
+ * exactly nothing. Written to content, invisible in play — the standing
+ * rule spec §16 v1.3 added after the third such feature. This function is
+ * the one place that reads it, and both call sites now go through it.
+ *
+ * Cumulative on purpose: a table with entries at (say) 11 and 14 must
+ * grant BOTH by tier 14, never just the last one — the same "sum every
+ * tier already passed" shape `gridBounds` uses for `gridGrowth`.
+ */
+export function rosterCapFor(state: GameState): number {
+  const base = state.rosterUpgradePurchased
+    ? contentTuning.rosterCapUpgraded
+    : contentTuning.rosterCap;
+  let bonus = 0;
+  for (const [level, extra] of Object.entries(
+    contentTuning.progression.rosterCapBonusByLevel,
+  )) {
+    if (state.keep.level >= Number(level)) bonus += extra;
+  }
+  return base + bonus;
+}
+
+/** The `core/pips/needs.ts` view of `keepEffects` — comfort multipliers +
+ * rest-speed multiplier, the two things `applyNeedsDelta`/`runCatchup`
+ * consult. */
+function keepComfortFrom(keepEffects: ResolvedKeepEffects): KeepComfortEffect {
+  return {
+    multiplier: keepComfortMultipliers(keepEffects),
+    restSpeedMultiplier: keepEffects.restSpeedMultiplier,
+  };
+}
+
+/**
  * The already-composed, already-clamped loot-bonus roll chance for ONE
  * pip's trip on ONE biome (docs/retention-bible.md §9): Curious's own
  * +10% (folded in here so `rollExpeditionLoot`'s override path replaces
  * rather than adds to its internal calculation, per that function's doc
  * comment) plus this pip's mastery tier in the biome plus the player's
- * current streak tier plus any active event's contribution — summed then
- * clamped by `core/progression/multipliers.ts`. A fresh save (no mastery,
- * no streak, no event, non-Curious pip) evaluates to exactly 0; a Curious
- * one evaluates to exactly `tuning.quirks.curiousLootBonus` — both
+ * current streak tier plus any active event's contribution PLUS the
+ * Keep's building/set contribution (round 2F, progression bible §3.1 rule
+ * 4 — "a Trail Post's +3% enters the same sum") — summed then clamped by
+ * `core/progression/multipliers.ts`. A fresh save (no mastery, no streak,
+ * no event, no building, non-Curious pip) evaluates to exactly 0; a
+ * Curious one evaluates to exactly `tuning.quirks.curiousLootBonus` — both
  * BYTE-IDENTICAL to the pre-round-2C behaviour (the cursor-parity
  * contract `rollExpeditionLoot`'s doc comment describes).
  */
@@ -848,6 +986,7 @@ function resolveLootBonusChanceFor(
   state: GameState,
   pip: PipState,
   expeditionId: string,
+  keepEffects: ResolvedKeepEffects,
 ): number {
   const expedition = contentExpeditions[expeditionId as keyof typeof contentExpeditions];
   const durationMs = expedition?.durationMs ?? 0;
@@ -858,6 +997,7 @@ function resolveLootBonusChanceFor(
       masteryBonusChance: masteryBonusRollChance(trips, durationMs, contentTuning),
       streakBonusChance: streakLootBonus(state.streak, contentTuning),
       eventBonusChance: activeEventLootBonusChance(state.activeEvents, contentTuning),
+      buildingBonusChance: keepEffects.expeditionLootBonusChance,
     },
     contentTuning,
   );
@@ -865,7 +1005,8 @@ function resolveLootBonusChanceFor(
 
 /**
  * The already-composed egg chance for ONE pip's trip on ONE biome
- * (docs/retention-bible.md §6.3 mastery top tier + §8.4 event bonus): the
+ * (docs/retention-bible.md §6.3 mastery top tier + §8.4 event bonus, plus
+ * round 2F's building/set contribution — e.g. the Weathervane): the
  * biome's base `eggChance` plus the summed-then-clamped bonus POINTS, with
  * `eggChanceCeiling` as a hard ceiling so a biome's odds can never become
  * a certainty. This is the ONE call site of the egg-chance channel — the
@@ -873,15 +1014,17 @@ function resolveLootBonusChanceFor(
  * reason mastery tier 5's "small additive egg-chance bonus" and Lantern
  * Nights' `eggChanceBonusPoints` are things that actually happen in game.
  *
- * A fresh save (no mastery, no event) evaluates to exactly the biome's
- * base `eggChance`, so the egg roll is byte-identical to before this round
- * — and because the roll is a single `stream.chance` call whatever the
- * probability, the cursor cannot shift even when a bonus IS active.
+ * A fresh save (no mastery, no event, no building) evaluates to exactly
+ * the biome's base `eggChance`, so the egg roll is byte-identical to
+ * before this round — and because the roll is a single `stream.chance`
+ * call whatever the probability, the cursor cannot shift even when a
+ * bonus IS active.
  */
 function resolveEggChanceFor(
   state: GameState,
   pip: PipState,
   expeditionId: string,
+  keepEffects: ResolvedKeepEffects,
 ): number {
   const expedition = contentExpeditions[expeditionId as keyof typeof contentExpeditions];
   if (expedition === undefined) return 0;
@@ -894,6 +1037,7 @@ function resolveEggChanceFor(
         contentTuning,
       ),
       eventPoints: activeEventEggChanceBonusPoints(state.activeEvents, expeditionId),
+      buildingPoints: keepEffects.eggChanceBonusPoints,
     },
     contentTuning,
   );
@@ -1261,6 +1405,332 @@ function applyBountyProgressForAction(
   return { ...next, bounties, counters };
 }
 
+/**
+ * ROUND 2F — KEEP XP, applied in this ONE place (docs/progression-bible.md
+ * §1.3's award table), mirroring `touchProgressionVisit`'s own boundary:
+ * every branch below keys off the SAME outcome fields
+ * `bumpCountersForAction` already trusts (`lastCareOutcome.applied`,
+ * `lastAssignOutcome.ok`, …) and never re-validates legality itself — so
+ * a unit test dispatching (say) a REFUSED FEED against a hand-built
+ * fixture never silently gains XP the outcome itself didn't earn.
+ *
+ * Three sources are computed GENERICALLY, as a diff of an already
+ * forward-only total, rather than special-cased per action — so a future
+ * action nobody thought to wire in still pays correctly (ruling #5: every
+ * XP source must be mechanical, observable, and impossible to forget):
+ * the Album (`pipdex.formsSeen`/`formsCaught`/`variantsCaught` — covers
+ * ACKNOWLEDGE_REVEAL's field notes, HATCH_EGG's portrait, and
+ * EVOLVE_PIP's portrait+variant with ONE calculation), and completed
+ * bounties / day-clears (the counters `applyBountyProgressForAction`,
+ * just above this call site, already bumped).
+ */
+function applyKeepXpForAction(
+  prev: GameState,
+  next: GameState,
+  action: GameAction,
+): GameState {
+  let gained = 0;
+  let counters = next.counters;
+
+  switch (action.type) {
+    case "FEED":
+    case "CLEAN":
+    case "PLAY":
+    case "PET":
+    case "GIVE_ITEM":
+      if (next.lastCareOutcome?.applied === true) gained += careActionXp(contentTuning);
+      break;
+    case "REST_TOGGLE":
+      // Only a nap that STARTS pays (bible row 8) — mirrors the `naps`
+      // counter's own condition just above in `bumpCountersForAction`.
+      if (
+        next.lastCareOutcome?.applied === true &&
+        next.pips[action.pipId]?.activity === PipActivity.Resting
+      ) {
+        gained += careActionXp(contentTuning);
+      }
+      break;
+    case "ASSIGN_EXPEDITION":
+      if (next.lastAssignOutcome?.ok === true) gained += expeditionSendXp(contentTuning);
+      break;
+    case "ACKNOWLEDGE_REVEAL": {
+      const reveal = prev.pendingReveals[0];
+      if (reveal !== undefined) {
+        const durationMs =
+          (
+            contentExpeditions as Readonly<Record<string, { durationMs: number }>>
+          )[reveal.expeditionId]?.durationMs ?? 0;
+        gained += revealXp(durationMs, contentTuning);
+
+        // Mastery tier-up (bible row 32): compare this pip's mastery tier
+        // on this biome BEFORE (prev, untouched by this dispatch yet) vs
+        // AFTER (`applyMasteryForAction`, run just above this call site
+        // in `applyProgressionEffects`, has already incremented `next`'s
+        // trip count). Idempotent via `counters["masteryTier.<pipId>.
+        // <biomeId>"]` holding the highest tier already paid — granting
+        // ONLY the new tier's multiple, never the sum of every tier
+        // skipped through (mirrors `masteryEggChanceBonusPoints`'s own
+        // "top tier only" reasoning, just at every tier instead of one).
+        const prevPip = prev.pips[reveal.pipId];
+        const nextPip = next.pips[reveal.pipId];
+        if (prevPip !== undefined && nextPip !== undefined) {
+          const prevTrips = prevPip.mastery?.[reveal.expeditionId] ?? 0;
+          const nextTrips = nextPip.mastery?.[reveal.expeditionId] ?? 0;
+          if (nextTrips > prevTrips) {
+            const prevTier = masteryTier(prevTrips, durationMs, contentTuning);
+            const nextTier = masteryTier(nextTrips, durationMs, contentTuning);
+            if (nextTier > prevTier) {
+              const key = `masteryTier.${reveal.pipId}.${reveal.expeditionId}`;
+              const paidTier = counters[key] ?? 0;
+              if (nextTier > paidTier) {
+                gained += masteryTierXpAward(nextTier, contentTuning);
+                counters = { ...counters, [key]: nextTier };
+              }
+            }
+          }
+        }
+      }
+      break;
+    }
+    case "HATCH_EGG":
+      if (next.lastHatchOutcome?.ok === true) gained += hatchXp(contentTuning);
+      break;
+    case "EVOLVE_PIP":
+      if (next.lastEvolveOutcome?.ok === true) gained += evolveXp(contentTuning);
+      break;
+    case "PLACE_ITEM": {
+      // First-ever placement of this item TYPE (bible row 13) — ANY
+      // placeable or decoration, not just decorations (unlike the
+      // `decorationsPlaced` counter `bumpCountersForAction` bumps above).
+      // Idempotent via `counters["built.<itemId>"]`, paid once per type,
+      // forever — closing the place → refund → place printer (row 13b).
+      if (next.keep !== prev.keep) {
+        const key = `built.${action.itemId}`;
+        if ((counters[key] ?? 0) === 0) {
+          gained += firstBuildXp(contentTuning);
+          counters = { ...counters, [key]: 1 };
+        }
+      }
+      break;
+    }
+    case "ASSIGN_JOB":
+      // First-ever shift at this job TYPE (bible row 17), idempotent via
+      // `counters["job.<jobId>"]`.
+      if (next.lastJobOutcome?.action === "assignJob" && next.lastJobOutcome.ok) {
+        const key = `job.${next.lastJobOutcome.jobId}`;
+        if ((counters[key] ?? 0) === 0) {
+          gained += firstJobXp(contentTuning);
+          counters = { ...counters, [key]: 1 };
+        }
+      }
+      break;
+    case "PURCHASE_ROSTER_UPGRADE":
+      // The flag itself is the idempotence key (base reducer refuses a
+      // repeat purchase by returning `state` unchanged, so reaching here
+      // with the flag newly true IS the one-time moment).
+      if (next.rosterUpgradePurchased && !prev.rosterUpgradePurchased) {
+        gained += rosterUpgradeXp(contentTuning);
+      }
+      break;
+    case "CLAIM_STREAK_REWARD":
+      // `rewardedForDay` is the base reducer's own idempotence key (a
+      // repeat claim for the same day returns `state` unchanged).
+      if (next.streak.rewardedForDay !== prev.streak.rewardedForDay) {
+        gained += streakDayXp(effectiveStreakTier(next.streak, contentTuning), contentTuning);
+      }
+      break;
+    case "CLAIM_MILESTONE": {
+      // `rootReducer`'s own `next === state` gate already means reaching
+      // here IS a genuine new earn (an already-earned or not-yet-met id
+      // refuses by returning the SAME `state` reference — see the base
+      // switch's CLAIM_MILESTONE arm) — no second idempotence check
+      // needed. `xp` is optional content (defaults to 0) so this stays
+      // forward-compatible with a content pass that has not yet filled
+      // every milestone's value in.
+      const def = contentMilestones.find((m) => m.id === action.id);
+      gained += def?.xp ?? 0;
+      break;
+    }
+    case "TICK":
+    case "CATCHUP": {
+      // Job production tick XP (bible row 16), derived from WHAT WAS ACTUALLY
+      // PRODUCED: spec §6.2 is "1 item per tick", and during TICK/CATCHUP the
+      // only thing that adds to `inventory`/`resources` is `settleJobTicks`
+      // (expedition loot lands in `pendingReveals` and is not collected until
+      // ACKNOWLEDGE_REVEAL), so the count of new items IS the count of ticks.
+      // Already bounded by the same `offlineRateCapMs` production obeys.
+      //
+      // IT USED TO DIFF `jobs[pipId].lastProducedAt`, WHICH SILENTLY LOST THE
+      // WHOLE GRANT on the most common long absence there is. `reconcileJobs`
+      // PRUNES a job whose pip is no longer AssignedJob, and entering Sulking
+      // does exactly that (spec §4.4) — so an absence long enough to take a
+      // need to 0 ended with `next.jobs` empty, the diff finding nothing to
+      // measure, and the player paid resources for their station's whole shift
+      // but zero XP for it. Measured: a 20h absence with a staffed Gathering
+      // Station banked 8 Wood + 29 Fiber and +0 XP. Diffing the produced
+      // totals cannot lose the grant, because it reads the thing that happened
+      // rather than the bookkeeping that survived.
+      const countAll = (state: GameState): number => {
+        let total = 0;
+        for (const n of Object.values(state.inventory)) total += n;
+        for (const n of Object.values(state.resources)) total += n;
+        return total;
+      };
+      const ticks = Math.max(0, countAll(next) - countAll(prev));
+      gained += jobTickXp(ticks, contentTuning);
+      break;
+    }
+    case "RETIRE_PIP": {
+      // FIRST-ever arrival only (bible row 22). Deliberately NOT keyed on
+      // `SanctuaryRecord.visits` — `core/sanctuary`'s `retirePip` resets
+      // that to 0 on every arrival, so it cannot tell a first retirement
+      // from a retrieve → retire loop. `counters["sanctuaryArrival.
+      // <pipId>"]` can, because counters never get deleted.
+      if (
+        next.lastSanctuaryOutcome?.ok === true &&
+        next.lastSanctuaryOutcome.action === "retire"
+      ) {
+        const key = `sanctuaryArrival.${action.pipId}`;
+        if ((counters[key] ?? 0) === 0) {
+          gained += sanctuaryFirstArrivalXp(contentTuning);
+          counters = { ...counters, [key]: 1 };
+        }
+      }
+      break;
+    }
+    default:
+      break;
+  }
+
+  // Bounty completions / day-clears (bible rows 30–31) — the counters
+  // `applyBountyProgressForAction` (just above this call site) already
+  // bumped; diffing them is the generic form (usually 0 or 1, occasionally
+  // more when one action ticks off several bounties at once).
+  const completedDelta =
+    (next.counters["bountiesCompleted"] ?? 0) - (prev.counters["bountiesCompleted"] ?? 0);
+  const dayClearDelta =
+    (next.counters["bountyDaysCleared"] ?? 0) - (prev.counters["bountyDaysCleared"] ?? 0);
+  gained +=
+    bountyCompleteXp(completedDelta, contentTuning) +
+    bountyDayClearXp(dayClearDelta, contentTuning);
+
+  // The Album (bible rows 33–35) — see the module-doc note above.
+  const seenDelta = next.pipdex.formsSeen - prev.pipdex.formsSeen;
+  const caughtDelta = next.pipdex.formsCaught - prev.pipdex.formsCaught;
+  const variantDelta = next.pipdex.variantsCaught - prev.pipdex.variantsCaught;
+  gained += albumXpFromDeltas(seenDelta, caughtDelta, variantDelta, contentTuning);
+
+  // THE `xpBonus` BUILDING CHANNEL (progression bible §3.1/§3.4), applied
+  // HERE and nowhere else — the last step, so it scales EVERY row of the
+  // award table uniformly rather than a hand-picked subset (which is what
+  // "+8% Keep XP" on the Weathervane's card promises the player, and what
+  // `ui/keepUpgrade.ts`'s "How the Keep helps" readout prints back to them).
+  //
+  // Round-2F integration note (ruling #5): the effects engine resolved and
+  // capped `xpBonusFraction` from the moment it landed, and both the Build
+  // sheet's effect line and the Comfort readout displayed it — but nothing
+  // multiplied by it. That is the exact shape of the "written to state,
+  // invisible in play" dead feature spec §16 v1.3 made a standing rule
+  // against, inverted: visible in the UI, absent from the simulation. This
+  // is the one line that makes the promise true.
+  //
+  // Resolved from `next.keep` (the Keep as it stands after this action), so
+  // the tap that places the Weathervane already earns its own bonus. Only
+  // computed when there is something to scale — `applyKeepXpForAction` runs
+  // on every TICK, and the overwhelming majority of ticks grant nothing.
+  // ROUNDED UP (`ceil`) on any positive grant so a bonus can never be
+  // invisible: at +5% a 4-XP care action pays 5, never a silent 4.
+  if (gained > 0) {
+    const xpBonusFraction = computeKeepEffects(next).xpBonusFraction;
+    if (xpBonusFraction > 0) gained = Math.ceil(gained * (1 + xpBonusFraction));
+  }
+
+  if (gained === 0 && counters === next.counters) return next;
+
+  const keepXp = next.keepXp + gained;
+
+  // RENOWN FLAIR (bible §1.7) — the endgame's ONLY payout, and the reason
+  // the bar past tier 12 is not full and dead. Every Renown level crossed by
+  // this award mints its `renown-*` flourish from `content/flair.ts` into the
+  // same `state.flair` bag milestone flair already uses, so it draws through
+  // renderers that already exist (`ui/pipdex.ts`'s cover strip and page
+  // frame, `ui/sanctuary.ts`'s gate sign, `ui/focusView.ts`'s Pip title) and
+  // `ui/xpBar.ts` names the NEXT one on the bar itself.
+  //
+  // A RECONCILIATION, NOT AN EDGE DETECTOR. It asks "which flourishes has this
+  // Keep earned?" and grants any that are missing, rather than "did this
+  // dispatch cross a boundary?" — because the boundary form silently forfeits
+  // banked Renown XP: a player who banks two Renown levels' worth at level 11
+  // and then buys tier 12 crosses no boundary on the next action, so the
+  // edge-detecting form paid them nothing, ever. `grantFlair` never overwrites
+  // an existing entry, so this is idempotent by construction and multi-level
+  // jumps (a long CATCHUP, a debug grant) cannot skip a flourish either.
+  //
+  // GATED ON ACTUALLY BEING AT THE TOP TIER, because §1.7 is "AFTER tier 12:
+  // Renown". `renownLevelFor` reads `keepXp` alone, so without this a player
+  // sitting at level 11 with a Ready tier 12 unpurchased would start collecting
+  // Renown flourishes before finishing the named ladder — Renown would arrive
+  // before the thing it is meant to come after. Nothing is lost by waiting: the
+  // XP is banked, and the flourishes mint the moment the tier is bought.
+  let flair = next.flair;
+  if (
+    gained > 0 &&
+    contentTuning.progression.renown.flairEveryLevels > 0 &&
+    next.keep.level >= contentTuning.progression.levelXp.length
+  ) {
+    const earnedLevel = renownLevelFor(keepXp, contentTuning);
+    if (earnedLevel > 0) {
+      const at = actionAt(action) ?? 0;
+      for (const def of renownFlairEarnedBetween(0, earnedLevel)) {
+        flair = grantFlair(flair, def.id, at);
+      }
+    }
+  }
+
+  return { ...next, counters, keepXp, flair };
+}
+
+/**
+ * ROUND 2F — WHAT THE ABSENCE PAID (docs/progression-bible.md §6.3).
+ *
+ * The Doorstep reported ONLY decay: three-to-twelve lines of `Hunger ↓49
+ * Cleanliness ↓59 …` and nothing else. On a measured 20h return that had
+ * actually earned +140 Keep XP and 22 Wood / 31 Fiber / 2 Shell from a staffed
+ * Gathering Station, the return screen was a chore report with no pull — the
+ * one screen whose entire job is to make coming back feel good.
+ *
+ * Both numbers are computed HERE rather than in the UI because only the
+ * reducer can see both sides of the dispatch. They ride on `lastCatchup`,
+ * which `core/save/serialize.ts` treats as `passThroughTransient` (a UI echo,
+ * never validated state) — so this needs no schema bump, no migration and no
+ * new fixture, and both fields are optional so every pre-2F fixture and
+ * hand-built summary in the test suite stays valid.
+ *
+ * Only ever POSITIVE deltas: an absence cannot cost XP (bible §0.3) and
+ * spending happens on player taps, never inside CATCHUP, so a negative here
+ * would be a bug and is dropped rather than rendered as a loss.
+ */
+function recordCatchupGains(
+  prev: GameState,
+  next: GameState,
+  action: GameAction,
+): GameState {
+  if (action.type !== "CATCHUP") return next;
+  const summary = next.lastCatchup;
+  if (summary === null) return next;
+
+  const keepXpGained = Math.max(0, next.keepXp - prev.keepXp);
+
+  const produced: Record<string, number> = {};
+  for (const [resourceId, count] of Object.entries(next.resources)) {
+    const gain = count - (prev.resources[resourceId] ?? 0);
+    if (gain > 0) produced[resourceId] = gain;
+  }
+
+  if (keepXpGained === 0 && Object.keys(produced).length === 0) return next;
+  return { ...next, lastCatchup: { ...summary, keepXpGained, produced } };
+}
+
 /** The `at` timestamp on actions that carry one (most do); `null` for the
  * handful of genuinely time-free ones (SET_ACTIVE_PIP, ONBOARDING_ADVANCE,
  * DEBUG_GRANT, LOAD_SAVE, SET_DAY_OFFSET, SET_ACTIVE_EVENTS) — see the
@@ -1361,6 +1831,15 @@ function applyProgressionEffects(
   }
   result = applyMasteryForAction(prev, result, action);
   result = applyBountyProgressForAction(prev, result, action);
+  // ROUND 2F — Keep XP (docs/progression-bible.md §1.3): AFTER mastery
+  // (reads the already-incremented trip count) and bounty progress
+  // (reads the already-bumped completion counters), same "runs only when
+  // baseReducer actually changed something" safety the whole wrapper has.
+  result = applyKeepXpForAction(prev, result, action);
+  // ROUND 2F — what the absence actually PAID (bible §6.3): recorded onto the
+  // same transient `lastCatchup` echo the Doorstep already reads, once the XP
+  // and production above have landed. See `recordCatchupGains`.
+  result = recordCatchupGains(prev, result, action);
 
   const visitAt = STREAK_VISIT_ACTION_TYPES.has(action.type) ? actionAt(action) : null;
   if (visitAt !== null) {
@@ -1393,8 +1872,17 @@ function baseReducer(state: GameState, action: GameAction): GameState {
       const elapsedMs = Math.max(0, action.at - state.lastTickAt);
       const hours = elapsedMs / HOUR_MS;
       const registry: SpeciesEvolutionRegistry = contentSpecies;
+      // ROUND 2F (progression bible §3.2) — the Keep's building effects,
+      // resolved ONCE for this dispatch (placements don't change mid-TICK):
+      // comfort multiplies every pip's decay, restSpeedMultiplier speeds
+      // Resting energy regen — both via effectiveRates' new fifth factor,
+      // which is the identity on an unbuilt Keep (state.keep.placements
+      // empty ⇒ keepEffects === IDENTITY_KEEP_EFFECTS in every observable
+      // way), so this is byte-identical for every pre-2F save/fixture.
+      const keepEffects = computeKeepEffects(state);
+      const keepComfort = keepComfortFrom(keepEffects);
       const pips = mapPips(state, (pip) => {
-        let next = applyNeedsDelta(pip, hours);
+        let next = applyNeedsDelta(pip, hours, contentTuning, keepComfort);
         // Live ticks are short; the mid-tick Pipling→Adult rate boundary
         // is negligible here (CATCHUP segments it exactly, spec §4.5).
         next = updateLifeStage(next, Math.max(action.at, state.lastTickAt));
@@ -1424,12 +1912,16 @@ function baseReducer(state: GameState, action: GameAction): GameState {
       // ROUND 2C: mastery/streak/event loot bonus AND the mastery/event
       // egg-chance bonus, both resolved per returning pip (see
       // resolveLootBonusChanceFor / resolveEggChanceFor's doc comments for
-      // the cursor-parity contract this preserves on a fresh save).
+      // the cursor-parity contract this preserves on a fresh save) — PLUS
+      // round 2F's building/set contribution (same keepEffects) and the
+      // Keep's incubation-speed multiplier for any egg a returning trip
+      // finds.
       return processDueExpeditionReturns(ticked, action.at, {
         resolveLootBonusChance: (pip, expeditionId) =>
-          resolveLootBonusChanceFor(ticked, pip, expeditionId),
+          resolveLootBonusChanceFor(ticked, pip, expeditionId, keepEffects),
         resolveEggChance: (pip, expeditionId) =>
-          resolveEggChanceFor(ticked, pip, expeditionId),
+          resolveEggChanceFor(ticked, pip, expeditionId, keepEffects),
+        keepIncubationSpeedMultiplier: keepEffects.incubationSpeedMultiplier,
       });
     }
 
@@ -1473,11 +1965,17 @@ function baseReducer(state: GameState, action: GameAction): GameState {
       });
 
     case "ASSIGN_EXPEDITION": {
+      // ROUND 2F (progression bible §3.2): the Keep's building
+      // expedition-speed multiplier, baked into the trip's `durationMs` at
+      // send-off (never recomputed later — same rule as Hardworking's
+      // quirk) via `effectiveExpeditionDurationMs`'s composition + floor.
+      const keepEffects = computeKeepEffects(state);
       const { state: next, outcome } = assignExpedition(
         state,
         action.pipId,
         action.expeditionId,
         action.at,
+        { keepSpeedMultiplier: keepEffects.expeditionSpeedMultiplier },
       );
       return { ...next, lastAssignOutcome: outcome };
     }
@@ -1578,14 +2076,12 @@ function baseReducer(state: GameState, action: GameAction): GameState {
       // owned. Friendly refusal, egg untouched — it stays Pipping and
       // never expires, however long it waits. The pre-upgrade message
       // carries the upgrade nudge; the post-upgrade one just reassures.
-      const rosterCap = state.rosterUpgradePurchased
-        ? contentTuning.rosterCapUpgraded
-        : contentTuning.rosterCap;
+      const rosterCap = rosterCapFor(state);
       if (state.rosterOrder.length >= rosterCap) {
         return refuse(
           "rosterFull",
           state.rosterUpgradePurchased
-            ? ROSTER_FULL_MAX_MESSAGE
+            ? rosterFullMaxMessage(rosterCap)
             : ROSTER_FULL_MESSAGE,
         );
       }
@@ -1713,6 +2209,13 @@ function baseReducer(state: GameState, action: GameAction): GameState {
         jobs: state.jobs,
         firedJobTicks: [] as readonly JobTick[],
       };
+      // ROUND 2F (progression bible §3.2) — same building-effects
+      // resolution as the live TICK path, computed once against
+      // `state.keep` (placements are frozen for the whole pass) and
+      // threaded into the engine so an offline absence decays/rests at the
+      // SAME effective rate a live tick would have.
+      const keepEffects = computeKeepEffects(state);
+      const keepComfort = keepComfortFrom(keepEffects);
       const result = runCatchup(
         adapter,
         action.savedAt,
@@ -1722,6 +2225,7 @@ function baseReducer(state: GameState, action: GameAction): GameState {
           ...collectEggCatchupEvents(s, windowStart, windowEnd),
           ...collectJobCatchupEvents(s, windowStart, windowEnd),
         ],
+        keepComfort,
       );
       const pips: Record<PipId, PipState> = { ...state.pips };
       for (const pip of result.state.pips) {
@@ -1769,12 +2273,23 @@ function baseReducer(state: GameState, action: GameAction): GameState {
           next = settleExpeditionReturn(next, event.pipId, event.expedition, event.at, {
             effectiveLootBonusChance:
               returningPip !== undefined
-                ? resolveLootBonusChanceFor(next, returningPip, event.expedition.expeditionId)
+                ? resolveLootBonusChanceFor(
+                    next,
+                    returningPip,
+                    event.expedition.expeditionId,
+                    keepEffects,
+                  )
                 : undefined,
             effectiveEggChance:
               returningPip !== undefined
-                ? resolveEggChanceFor(next, returningPip, event.expedition.expeditionId)
+                ? resolveEggChanceFor(
+                    next,
+                    returningPip,
+                    event.expedition.expeditionId,
+                    keepEffects,
+                  )
                 : undefined,
+            keepIncubationSpeedMultiplier: keepEffects.incubationSpeedMultiplier,
           });
         }
       }
@@ -1794,6 +2309,52 @@ function baseReducer(state: GameState, action: GameAction): GameState {
         action.y,
       );
       if (!result.ok) return state;
+
+      // THE KEEPSAKE SHELF (docs/retention-bible.md §11.2, progression
+      // bible §5.4 — and Keep tier 1's own advertised unlock).
+      //
+      // ROUND 2F INTEGRATE — THE FOURTH DEAD FEATURE, CLOSED. `state.
+      // keepsakes` has been WRITTEN since round 2C (by `CLAIM_MILESTONE`'s
+      // keepsake reward and by `RESOLVE_STREAK_CHOICE`'s day-5 pick) and
+      // READ BY NOTHING: no surface listed it, and this arm charged full
+      // resources for a decoration the player had already been given. A
+      // day-5 streak player chose from three offers and received,
+      // observably, nothing. `Placement.granted` — the flag this file's own
+      // `keepsakes` doc comment describes as closing the free-decoration
+      // resource-printer exploit — existed in the type and the save format
+      // and was never once set.
+      //
+      // A granted copy is spent FIRST and costs nothing; only when the
+      // shelf is empty does the resource spend happen. That ordering is
+      // what makes a keepsake feel like a gift instead of a rebate.
+      const keepsakeCount = state.keepsakes[action.itemId] ?? 0;
+      if (keepsakeCount > 0) {
+        const placement = result.keep.placements[placementId];
+        const remaining = keepsakeCount - 1;
+        const keepsakes = { ...state.keepsakes };
+        if (remaining > 0) keepsakes[action.itemId] = remaining;
+        else delete keepsakes[action.itemId];
+        return {
+          ...state,
+          keep:
+            placement === undefined
+              ? result.keep
+              : {
+                  ...result.keep,
+                  placements: {
+                    ...result.keep.placements,
+                    // `granted` is what tells REMOVE_ITEM to hand the
+                    // keepsake BACK to the shelf rather than pay out its
+                    // resource cost — place → tuck away → place must never
+                    // print materials the player never spent.
+                    [placementId]: { ...placement, granted: true },
+                  },
+                },
+          keepsakes,
+          nextPlacementNumber: state.nextPlacementNumber + 1,
+        };
+      }
+
       // Placing a NEW item buys it (spec §6.3): all-or-nothing spend of
       // the content-defined cost. Short = refused, state unchanged (the
       // Build sheet greys unaffordable cards with the same canAfford).
@@ -1822,14 +2383,31 @@ function baseReducer(state: GameState, action: GameAction): GameState {
       // Full refund of the content cost (the inverse of PLACE_ITEM's
       // spend): "Tuck away" never destroys value — there is no stored-
       // items inventory in MVP, so the materials come back instead.
-      let next: GameState = {
-        ...state,
-        keep: result.keep,
-        resources: mergeCounts(
-          state.resources,
-          bundleToCounts(PLACEMENT_ITEM_COSTS[removed.itemId]),
-        ),
-      };
+      //
+      // …UNLESS it was a keepsake (`granted`), in which case it goes back
+      // on the shelf it came from, still free and still re-placeable. This
+      // is the half of the Keepsake Shelf that keeps the economy honest:
+      // refunding resources for a decoration the player never bought would
+      // turn every gift into a resource printer (the exploit `state.
+      // keepsakes`'s own doc comment named, and which nothing implemented
+      // until this round's integrate pass).
+      let next: GameState = removed.granted === true
+        ? {
+            ...state,
+            keep: result.keep,
+            keepsakes: {
+              ...state.keepsakes,
+              [removed.itemId]: (state.keepsakes[removed.itemId] ?? 0) + 1,
+            },
+          }
+        : {
+            ...state,
+            keep: result.keep,
+            resources: mergeCounts(
+              state.resources,
+              bundleToCounts(PLACEMENT_ITEM_COSTS[removed.itemId]),
+            ),
+          };
       // A job cannot outlive its station (spec §6.2): unassign any pip
       // working at the removed placement back to Idle.
       for (const [pipId, job] of Object.entries(state.jobs)) {
@@ -1843,20 +2421,35 @@ function baseReducer(state: GameState, action: GameAction): GameState {
 
     case "PURCHASE_KEEP_LEVEL": {
       // Buy the NEXT level (spec §6.3 costs, §9 gates). Refusals — no
-      // next level defined, or short on resources — leave the state
-      // unchanged by reference (spend never goes negative, economy/).
+      // next level defined, XP gate not cleared, or short on resources —
+      // leave the state unchanged by reference (spend never goes
+      // negative, economy/).
       const nextLevel = state.keep.level + 1;
       const def = contentKeepLevels.find((level) => level.level === nextLevel);
       if (def === undefined) return state;
+      // ROUND 2F (progression bible §1.2) — TWO keys, not one: a tier is
+      // "earned" with XP and "paid for" with resources. Six of eleven
+      // tiers cost nothing at all, so this gate is the only one they
+      // have — and it is the same gate every priced tier ALSO clears.
+      // Never a countdown: a ready tier waits forever (bible §0.3), so
+      // this is a plain threshold check, nothing time-based.
+      if (!isNextTierXpReady(state.keepXp, state.keep.level, contentTuning)) {
+        return state;
+      }
       const paid = spend(state.resources, def.cost);
       if (!paid.ok) return state;
       return {
         ...state,
         resources: paid.resources,
         // Raising the level IS the unlock: expedition gating reads
-        // keep.level (Forest at 2, Shore at 3 — spec §6.1/§9), and the
-        // grid grows via gridBounds(level) with no data migration.
+        // keep.level (Forest at 2, Snowdrift at 3, Shore at 4, the
+        // Lanterngrotto at 5 — spec §6.1/§9), and the grid grows via
+        // gridBounds(level) with no data migration.
         keep: { ...state.keep, level: nextLevel },
+        // The player-witnessed tier-up moment (bible §1.2/§6.3): the UI's
+        // celebration banner animates from this, never from an offline
+        // tick — PURCHASE_KEEP_LEVEL only ever fires on a tap.
+        lastLevelUp: { at: action.at, fromLevel: state.keep.level, toLevel: nextLevel },
       };
     }
 
@@ -1974,12 +2567,23 @@ function baseReducer(state: GameState, action: GameAction): GameState {
       // Straight to Incubating at `at` (skipping the reveal queue — this
       // is the QA seam, spec §14): time-skip past the incubation, watch
       // it pip, tap to hatch.
+      //
+      // HONOURS THE KEEP'S incubationSpeed, like both player paths do. It did
+      // not, so a debug-spawned egg on a Nest-Warmer-built Keep snapshotted
+      // the unbuilt 2h duration and the effect looked DEAD to whoever was
+      // hand-checking it — and the debug menu is precisely how a QA pass would
+      // check it. A seam that lies about a shipped effect is worse than no
+      // seam (spec §16 v1.3's standing rule, applied to the QA surface).
       const egg = beginIncubation(
-        createEgg({
-          id: `egg-${state.nextEggNumber}`,
-          foundAt: action.at,
-          sourceExpeditionId: null,
-        }),
+        createEgg(
+          {
+            id: `egg-${state.nextEggNumber}`,
+            foundAt: action.at,
+            sourceExpeditionId: null,
+          },
+          contentTuning,
+          computeKeepEffects(state).incubationSpeedMultiplier,
+        ),
         action.at,
       );
       return {
@@ -2001,6 +2605,7 @@ function baseReducer(state: GameState, action: GameAction): GameState {
         lastJobOutcome: null,
         lastEvolveOutcome: null,
         lastSanctuaryOutcome: null,
+        lastLevelUp: null,
       };
     }
 
@@ -2026,9 +2631,7 @@ function baseReducer(state: GameState, action: GameAction): GameState {
       // ROUND 2C — "Ask them home" (docs/retention-bible.md §2.5). Free;
       // gated only by minStayMs and the roster cap (core/sanctuary owns
       // both refusals).
-      const rosterCap = state.rosterUpgradePurchased
-        ? contentTuning.rosterCapUpgraded
-        : contentTuning.rosterCap;
+      const rosterCap = rosterCapFor(state);
       const { state: retrieved, outcome } = retrieveFromSanctuary(
         state,
         action.pipId,

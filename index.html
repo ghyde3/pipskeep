@@ -17,7 +17,21 @@
         margin: 0;
         padding: 0;
         height: 100%;
-        overflow: hidden;
+        /* `clip`, NOT `hidden` (round 2F integrate — found in the 375px
+           browser smoke). `overflow: hidden` hides the scrollbar but leaves
+           the document a SCROLL PORT: `scrollTop` still moves on a focus(),
+           a wheel event, or a scrollIntoView. Every sheet in this app parks
+           off-screen at translateY(105%) while closed, so the document's
+           scrollable area is genuinely ~214px taller than the viewport —
+           and one focus-scroll slid the ENTIRE game (top bar, Keep XP bar,
+           action bar) up by that much, permanently, with no scrollbar for
+           the player to put it back.
+           `overflow: clip` clips identically and creates no scroll port, so
+           the root can never scroll. Latent since the first parked sheet;
+           this round's fourth Nook tab is what pushed the overflow over the
+           edge and made it reproducible. `#ui` and `.pk-phase5` carry the
+           same fix for the same reason (see ui.css). */
+        overflow: clip;
         background: #eef7ea;
         overscroll-behavior: none;
       }

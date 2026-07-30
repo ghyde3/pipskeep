@@ -58,6 +58,21 @@ export interface FlairDef {
   /** `pageFrame` only: higher wins when several are earned. Ordered by how
    * long-haul the milestone behind it is, so the rarest frame shows. */
   readonly rank?: number;
+  /**
+   * ROUND 2F — RENOWN (docs/progression-bible.md §1.7). Set on the twelve
+   * `renown-*` entries only: the Renown level that mints this flourish.
+   * Everything else is minted by a milestone and leaves this undefined.
+   *
+   * WHY THESE EXIST. The bible called Renown "the LAST thing to cut from the
+   * round" and it was cut anyway: `tuning.progression.renown` shipped with
+   * its `flairEveryLevels` DELETED and a comment explaining that
+   * `content/flair.ts` had no Renown entries to mint. So the reward for
+   * 3,000 XP past tier 12 — roughly four engaged days, and the whole answer
+   * to "what is there at day 30" — was the level chip's text changing. These
+   * twelve entries are the other half, and `core/state.ts` grants them on
+   * every Renown level crossed.
+   */
+  readonly renownLevel?: number;
 }
 
 export const FLAIR: readonly FlairDef[] = [
@@ -231,7 +246,156 @@ export const FLAIR: readonly FlairDef[] = [
     note: "Added when five friends were settled over the hill.",
     glyph: "🌼",
   },
+
+  // ---- ROUND 2F: RENOWN (bible §1.7) — one flourish per Renown level ----
+  //
+  // Twelve, deliberately spread across ALL FIVE kinds so the endgame keeps
+  // changing a DIFFERENT surface each time rather than stacking twelve
+  // stickers in one strip: the Album cover (stamps + ribbons), its page
+  // border (frames), a Pip's card (titles) and the Long Meadow's gate
+  // (signs). Every one of those renderers already exists and is already
+  // tested, which is exactly why the bible could call Renown "the cheapest
+  // possible answer to what is there at day 60".
+  //
+  // Flair only, forever: no resources, no capability, no cap change — so
+  // this whole block is provably outside `balance.test.ts`'s reach.
+  {
+    id: "renown-lamplight-stamp",
+    kind: "coverStamp",
+    renownLevel: 1,
+    name: "Lamplight Stamp",
+    note: "Lit the night the Keep first outgrew its own ladder.",
+    glyph: "🏮",
+  },
+  {
+    id: "renown-well-known-ribbon",
+    kind: "ribbon",
+    renownLevel: 2,
+    name: "Well-Known Ribbon",
+    note: "Word got round. People know this place now.",
+    glyph: "🎖",
+  },
+  {
+    id: "renown-keeper-title",
+    kind: "pipTitle",
+    renownLevel: 3,
+    name: "Keeper of the Keep",
+    note: "Has the run of the place, and is quietly smug about it.",
+    glyph: "🗝",
+  },
+  {
+    id: "renown-brass-frame",
+    kind: "pageFrame",
+    renownLevel: 4,
+    name: "Brass Frame",
+    note: "Pages bound in something that catches the light.",
+    glyph: "🔆",
+    rank: 6,
+  },
+  {
+    id: "renown-orchard-sign",
+    kind: "sanctuarySign",
+    renownLevel: 5,
+    name: "Mind the pears — they're for everyone",
+    note: "Carved the year there was fruit enough to spare.",
+    glyph: "🍐",
+  },
+  {
+    id: "renown-high-summer-stamp",
+    kind: "coverStamp",
+    renownLevel: 6,
+    name: "High Summer Stamp",
+    note: "Pressed in during one long, easy summer.",
+    glyph: "🌻",
+  },
+  {
+    id: "renown-hearthside-ribbon",
+    kind: "ribbon",
+    renownLevel: 7,
+    name: "Hearthside Ribbon",
+    note: "For a great many evenings in, with the door shut.",
+    glyph: "🧡",
+  },
+  {
+    id: "renown-old-hand-title",
+    kind: "pipTitle",
+    renownLevel: 8,
+    name: "Old Hand of the Keep",
+    note: "Was here before most of the furniture.",
+    glyph: "🌾",
+  },
+  {
+    id: "renown-lantern-frame",
+    kind: "pageFrame",
+    renownLevel: 9,
+    name: "Lantern Frame",
+    note: "A warm border, for pages read late.",
+    glyph: "🪔",
+    rank: 7,
+  },
+  {
+    id: "renown-far-hill-sign",
+    kind: "sanctuarySign",
+    renownLevel: 10,
+    name: "You can see the whole valley from here",
+    note: "Put up where the path finally levels out.",
+    glyph: "🏞",
+  },
+  {
+    id: "renown-north-star-stamp",
+    kind: "coverStamp",
+    renownLevel: 11,
+    name: "North Star Stamp",
+    note: "The one everyone steers home by.",
+    glyph: "⭐",
+  },
+  {
+    id: "renown-evergreen-ribbon",
+    kind: "ribbon",
+    renownLevel: 12,
+    name: "Evergreen Ribbon",
+    note: "Still here. Still green. No particular reason to stop.",
+    glyph: "🌲",
+  },
 ] as const;
+
+/** Every Renown flourish, ordered by the level that mints it (bible §1.7).
+ * `content/flair.test.ts` pins this against `tuning.progression.renown` so a
+ * retuned `xpPerLevel` can never outrun the flourishes it promises. */
+export const RENOWN_FLAIR: readonly FlairDef[] = FLAIR.filter(
+  (f) => f.renownLevel !== undefined,
+).sort((a, b) => (a.renownLevel ?? 0) - (b.renownLevel ?? 0));
+
+/** The highest Renown level that mints a flourish — past this the chip keeps
+ * counting honestly ("Renown 14") and the Album says every flourish is in. */
+export const RENOWN_TOP_FLAIR_LEVEL: number = RENOWN_FLAIR.reduce(
+  (max, f) => Math.max(max, f.renownLevel ?? 0),
+  0,
+);
+
+/** The flourish minted by reaching exactly `level`, or null (level ≤ 0, or
+ * past the end of the ladder). */
+export function renownFlairForLevel(level: number): FlairDef | null {
+  if (level <= 0) return null;
+  return RENOWN_FLAIR.find((f) => f.renownLevel === level) ?? null;
+}
+
+/** Every flourish minted by crossing from `fromLevel` to `toLevel` — the
+ * grant seam `core/state.ts` calls after each XP award. Handles multi-level
+ * jumps (a big CATCHUP, a debug grant) without skipping a flourish, and
+ * returns nothing at all when the level did not move. */
+export function renownFlairEarnedBetween(
+  fromLevel: number,
+  toLevel: number,
+): readonly FlairDef[] {
+  if (toLevel <= fromLevel) return [];
+  const out: FlairDef[] = [];
+  for (let lvl = Math.max(1, fromLevel + 1); lvl <= toLevel; lvl++) {
+    const def = renownFlairForLevel(lvl);
+    if (def !== null) out.push(def);
+  }
+  return out;
+}
 
 export function flairById(id: string): FlairDef | undefined {
   return FLAIR.find((f) => f.id === id);

@@ -118,15 +118,20 @@ export function diffPhase5(prev: GameState, next: GameState): Phase5Effects {
   const sounds: string[] = [];
   let confettiBursts = 0;
 
-  // Keep level-up (spec §9): celebratory toast + confetti + sound.
-  if (next.keep.level > prev.keep.level) {
-    toasts.push({
-      kind: "info",
-      message: LEVEL_UP_TOASTS[next.keep.level] ?? LEVEL_UP_TOAST_FALLBACK,
-    });
-    confettiBursts += 1;
-    sounds.push("keep.levelup");
-  }
+  // Keep level-up (spec §9): NOT celebrated here any more.
+  //
+  // ROUND 2F INTEGRATION (docs/progression-bible.md §1.2/§6.3): the tier-up
+  // moment is now `ui/levelUp.ts`'s banner — it names the tier AND lists
+  // what that tier actually unlocked, straight from `content/keep.ts`, and
+  // it fires its own confetti + `keep.levelup` sound. Leaving this branch in
+  // meant every purchase announced itself TWICE (a toast and a banner) with
+  // two confetti bursts and two overlapping sounds. The banner is strictly
+  // the better surface, so this one yields.
+  //
+  // `LEVEL_UP_TOASTS` itself is NOT dead: `ui/keepUpgrade.ts` still owns it
+  // and still shows each tier's line on the upgrade card BEFORE the purchase
+  // (the "here is what you are buying" copy). Only the post-purchase toast
+  // moved.
 
   // Cozy Bunks (spec §7.4).
   if (next.rosterUpgradePurchased && !prev.rosterUpgradePurchased) {
@@ -234,6 +239,9 @@ export interface Phase5UiDeps {
 }
 
 export interface Phase5Ui {
+  /** Opens the Keep upgrade card — the seam `ui/xpBar.ts`'s level chip taps
+   * (see the note on the returned implementation). */
+  openUpgrades(): void;
   dispose(): void;
 }
 
@@ -502,7 +510,11 @@ export function initPhase5Ui(deps: Phase5UiDeps): Phase5Ui {
 
   // --- Store subscription: sync chrome, execute effect lists ---
   const syncChrome = (state: GameState): void => {
-    keepChip.textContent = `Keep Lv ${state.keep.level}`;
+    // ROUND 2F: no longer repeats the level. `ui/xpBar.ts`'s chip is the ONE
+    // Keep-level readout now (and, since this round, the one that opens this
+    // card when tapped) — two chips showing "Lv 3" in opposite corners, only
+    // one of which responded, was the confusing half of that finding.
+    keepChip.textContent = "The Keep";
     keepChip.setAttribute(
       "aria-label",
       `The Keep, level ${state.keep.level} — open upgrades`,
@@ -543,6 +555,15 @@ export function initPhase5Ui(deps: Phase5UiDeps): Phase5Ui {
   });
 
   return {
+    // ROUND 2F: the seam that lets the Keep XP bar's own level chip open this
+    // card. The chip reads `Lv 5 ▸ Ready` and pulses gold when a tier is
+    // waiting, and before this it was an inert `role="status"` div while the
+    // actual tap target was a SECOND Keep-level chip in the opposite corner —
+    // two competing readouts, and the loud one did nothing. Bible §1.2
+    // specifies one widget: "Tapping it opens the upgrade card."
+    openUpgrades(): void {
+      upgradeCard.open();
+    },
     dispose(): void {
       unsubscribe();
       setPipTapHandler(null);

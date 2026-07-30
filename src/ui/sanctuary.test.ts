@@ -130,6 +130,8 @@ function makeState(sanctuary: SanctuaryState, pips: Readonly<Record<string, PipS
     activeEvents: [],
     keepsakes: {},
     flair: {},
+    keepXp: 0,
+    lastLevelUp: null,
   } as GameState;
 }
 

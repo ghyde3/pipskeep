@@ -35,6 +35,11 @@ import { createEmptyStreak } from "../progression/streak";
 import { createEmptyMilestones, grantFounderMilestone } from "../progression/milestones";
 import { createEmptyBounties } from "../progression/bounties";
 import { tuning as contentTuning } from "../../content/tuning";
+// ROUND 2F — THE PROGRESSION SPINE (docs/progression-bible.md §8.4): the
+// v7 → v8 `keepXp` backfill reads milestone `xp` values, the same content
+// registry `core/state.ts`'s CLAIM_MILESTONE arm reads.
+import { MILESTONES as contentMilestones } from "../../content/milestones";
+import { masteryTier } from "../progression/mastery";
 
 /**
  * One schema upgrade step: takes a raw vN blob, returns a raw v(N+1)
@@ -156,6 +161,135 @@ function deriveCounters(pipsRaw: unknown): Record<string, number> {
     // The player has visited at least once (this save exists).
     visitDays: 1,
   };
+}
+
+/**
+ * v6 → v8 `keepXp` backfill (docs/progression-bible.md §8.4): "never above
+ * the truth, never below what is provable" — the same rule the v6 Album
+ * backfill (`derivePipdex` above) already follows.
+ *
+ *   keepXp = max(
+ *     levelXp[keep.level − 1],           // you demonstrably REACHED this
+ *                                        // tier (levelXp is 0-indexed by
+ *                                        // tier − 1 — bible §1.1)
+ *     4·careActions + 2·expeditionsTotal + 40·eggsHatched + 90·evolutions
+ *       + 25·(distinct placed itemIds) + 15·bountiesCompleted
+ *       + Σ xp of every milestone already in milestones.earned,
+ *   )
+ *
+ * Both terms are provable from state that already exists; a veteran may
+ * land several tiers' worth of XP at once (the `founder` precedent — a
+ * GIFT, never a reset), and because tiers still require the player's own
+ * tap (PURCHASE_KEEP_LEVEL's `needsXp` gate never fires itself), they get
+ * a sequence of celebratory tier-up banners on their first session back,
+ * each naming a real unlock. This function must NOT grant resources (the
+ * `preLevel2WoodCap` guard) and must NOT auto-purchase a tier — it only
+ * ever raises the number the bar reads, never the level itself.
+ *
+ * Defensive throughout, like every migration step: a pre-v8 blob is not
+ * yet validated, so every read degrades to a safe default.
+ */
+function deriveKeepXp(state: Readonly<Record<string, unknown>>): number {
+  const keepValue = state["keep"];
+  const level =
+    isPlainRecord(keepValue) && typeof keepValue["level"] === "number"
+      ? keepValue["level"]
+      : 1;
+  const levelXp = contentTuning.progression.levelXp;
+  const floor = levelXp[Math.max(0, level - 1)] ?? 0;
+
+  const countersValue = state["counters"];
+  const counters = isPlainRecord(countersValue) ? countersValue : {};
+  const numCounter = (id: string): number => {
+    const value = counters[id];
+    return typeof value === "number" ? value : 0;
+  };
+
+  const placementsValue = isPlainRecord(keepValue) ? keepValue["placements"] : undefined;
+  const distinctPlacedItemIds = isPlainRecord(placementsValue)
+    ? new Set(
+        Object.values(placementsValue)
+          .filter(isPlainRecord)
+          .map((placement) => placement["itemId"])
+          .filter((id): id is string => typeof id === "string"),
+      ).size
+    : 0;
+
+  const milestonesValue = state["milestones"];
+  const earnedValue = isPlainRecord(milestonesValue) ? milestonesValue["earned"] : undefined;
+  const earnedIds = isPlainRecord(earnedValue) ? Object.keys(earnedValue) : [];
+  let milestoneXp = 0;
+  for (const id of earnedIds) {
+    const def = contentMilestones.find((m) => m.id === id);
+    milestoneXp += def?.xp ?? 0;
+  }
+
+  const xp = contentTuning.progression.xp;
+  const provable =
+    xp.care * numCounter("careActions") +
+    xp.expeditionSend * numCounter("expeditionsTotal") +
+    xp.hatch * numCounter("eggsHatched") +
+    xp.evolve * numCounter("evolutions") +
+    xp.firstBuild * distinctPlacedItemIds +
+    xp.bountyComplete * numCounter("bountiesCompleted") +
+    milestoneXp;
+
+  return Math.max(floor, Math.round(provable));
+}
+
+/**
+ * Seed the round's three new idempotence key families (bible §1.1/§8.4)
+ * so a migrated veteran's FIRST post-migration action never re-grants XP
+ * for a build/job/mastery-tier the save already provably has: `built.
+ * <itemId>` from every currently-placed item, `job.<jobId>` from every
+ * standing assignment, `masteryTier.<pipId>.<biomeId>` from each Pip's
+ * existing mastery trips (the highest tier those trips already reach).
+ * No new schema field — `counters` is already a validated, forward-only
+ * bag; these are just new keys in it.
+ */
+function deriveXpIdempotenceCounters(
+  state: Readonly<Record<string, unknown>>,
+): Record<string, number> {
+  const counters: Record<string, number> = {};
+
+  const keepValue = state["keep"];
+  const placementsValue = isPlainRecord(keepValue) ? keepValue["placements"] : undefined;
+  if (isPlainRecord(placementsValue)) {
+    for (const placement of Object.values(placementsValue)) {
+      if (!isPlainRecord(placement)) continue;
+      const itemId = placement["itemId"];
+      if (typeof itemId === "string") counters[`built.${itemId}`] = 1;
+    }
+  }
+
+  const jobsValue = state["jobs"];
+  if (isPlainRecord(jobsValue)) {
+    for (const job of Object.values(jobsValue)) {
+      if (!isPlainRecord(job)) continue;
+      const jobId = job["jobId"];
+      if (typeof jobId === "string") counters[`job.${jobId}`] = 1;
+    }
+  }
+
+  const pipsValue = state["pips"];
+  if (isPlainRecord(pipsValue)) {
+    for (const [pipId, pip] of Object.entries(pipsValue)) {
+      if (!isPlainRecord(pip)) continue;
+      const masteryValue = pip["mastery"];
+      if (!isPlainRecord(masteryValue)) continue;
+      for (const [expeditionId, tripsValue] of Object.entries(masteryValue)) {
+        if (typeof tripsValue !== "number") continue;
+        const durationMs =
+          (
+            contentExpeditions as Readonly<Record<string, { durationMs: number }>>
+          )[expeditionId]?.durationMs ?? 0;
+        const tier = masteryTier(tripsValue, durationMs, contentTuning);
+        if (tier > 0) counters[`masteryTier.${pipId}.${expeditionId}`] = tier;
+      }
+    }
+  }
+
+  return counters;
 }
 
 function derivePipCounter(pips: unknown): number {
@@ -398,6 +532,33 @@ export const MIGRATIONS: Readonly<Record<number, MigrationStep>> = {
         flair["album-founder-stamp"] = founderAt;
       }
       out["state"] = { ...state, flair };
+    }
+    return out;
+  },
+
+  /**
+   * v7 → v8 (round 2F — docs/progression-bible.md §8.4): THE PROGRESSION
+   * SPINE arrives. Two fields, the whole round's schema delta:
+   *
+   * - `keepXp` — derived generously (`deriveKeepXp` above), never above
+   *   the truth, never below what is provable. Grants no resources, does
+   *   not auto-purchase a tier.
+   * - `Placement.granted` needs no migration at all: it is OPTIONAL
+   *   (`undefined ≡ false`, same as `sulking`/`mastery`), so every
+   *   existing placement round-trips untouched with the field simply
+   *   absent — exactly the point of making it optional.
+   */
+  7: (blob) => {
+    const out: Record<string, unknown> = { ...blob, schemaVersion: 8 };
+    const state = blob["state"];
+    if (isPlainRecord(state)) {
+      const priorCounters = isPlainRecord(state["counters"]) ? state["counters"] : {};
+      out["state"] = {
+        ...state,
+        keepXp: deriveKeepXp(state),
+        lastLevelUp: null,
+        counters: { ...priorCounters, ...deriveXpIdempotenceCounters(state) },
+      };
     }
     return out;
   },

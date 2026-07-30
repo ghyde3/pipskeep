@@ -80,6 +80,30 @@ const tone = {
   potBody: "#6b665e",
   potDark: "#4a463f",
   gold: "#e8c468",
+  // ROUND 2F (progression bible §5.1/§5.2) — the nine new stations' and
+  // twelve new decorations' own tones. Same soft-pastel family (spec §11).
+  // WHY THIS BLOCK EXISTS: the round doubled the catalog to 45 items to
+  // answer "we need reasons to build", and 21 of them had no `RESOLVERS`
+  // entry — so the tier-10 Beacon (12 Wood + 5 Shell + 3 Driftwood) and a
+  // 3-Fiber Clover Patch both rendered as the identical placeholder crate.
+  // A build reward the player cannot SEE is the dead-feature class spec §16
+  // v1.3 made a standing rule against, so every catalog id now draws.
+  snow: "#eef4fb",
+  snowShade: "#cbdcee",
+  ice: "#c3e6f4",
+  iceDeep: "#8ec7e0",
+  hay: "#e6c56a",
+  hayDark: "#bf9c43",
+  pine: "#5c8d64",
+  pineDark: "#3e6749",
+  clover: "#84c46d",
+  fernGreen: "#79ae6c",
+  glowCool: "#a6ebda",
+  glowCoolDeep: "#5cb7a6",
+  linen: "#f1e7d4",
+  soap: "#dbeaf5",
+  stoneWarm: "#d6b39a",
+  netTwine: "#cbb98f",
 } as const;
 
 type DrawFn = (wrap: Container, w: number, h: number, tileW: number) => void;
@@ -791,6 +815,832 @@ const drawMossyFountain: DrawFn = (wrap, w, h, tileW) => {
   wrap.addChild(g);
 };
 
+// ---------------------------------------------------------------------------
+// ROUND 2F — the nine new stations (content/placeables.ts §5.1)
+//
+// Each one has to read as ITS OWN THING at a glance, because the Build card's
+// promise ("every trip comes home sooner") is only legible if the thing you
+// placed looks like the thing you paid for. Silhouette first: the Beacon is
+// the tallest object in the Keep, the Larder is the widest closed box, the
+// Weathervane is the only spinning thing, and so on.
+// ---------------------------------------------------------------------------
+
+const drawWashBasin: DrawFn = (wrap, w, h, tileW) => {
+  ground(wrap, w * 0.8);
+  const g = new Graphics();
+  const u = w * 0.5;
+  const bh = tileW * 0.66;
+  const stroke = Math.max(1.5, tileW * 0.03);
+  // Pedestal.
+  g.roundRect(-u * 0.16, -bh * 0.62, u * 0.32, bh * 0.62, u * 0.06).fill(tone.woodDark);
+  // Wide shallow basin on top.
+  g.ellipse(0, -bh * 0.68, u * 0.66, u * 0.26)
+    .fill(tone.pebble)
+    .stroke({ width: stroke, color: tone.pebbleDark, alpha: 0.6 });
+  g.ellipse(0, -bh * 0.72, u * 0.52, u * 0.19).fill(tone.soap);
+  // Suds: three bubbles cresting the rim.
+  for (const [bx, by, r] of [
+    [-u * 0.26, -bh * 0.86, u * 0.12],
+    [u * 0.04, -bh * 0.96, u * 0.15],
+    [u * 0.32, -bh * 0.84, u * 0.1],
+  ] as const) {
+    g.circle(bx, by, r).fill({ color: 0xffffff, alpha: 0.72 });
+    g.circle(bx - r * 0.3, by - r * 0.3, r * 0.28).fill({ color: 0xffffff, alpha: 0.9 });
+  }
+  // A scrub brush hooked on the rim.
+  g.roundRect(u * 0.5, -bh * 0.78, u * 0.3, u * 0.13, u * 0.05).fill(tone.wood);
+  for (const t of [0.1, 0.35, 0.6, 0.85]) {
+    g.moveTo(u * (0.5 + 0.3 * t), -bh * 0.65)
+      .lineTo(u * (0.5 + 0.3 * t), -bh * 0.52)
+      .stroke({ width: stroke * 0.7, color: tone.fiber, cap: "round" });
+  }
+  wrap.addChild(g);
+};
+
+const drawPlayPost: DrawFn = (wrap, w, h, tileW) => {
+  ground(wrap, w * 0.7);
+  const g = new Graphics();
+  const u = w * 0.5;
+  const ph = tileW * 1.45;
+  const stroke = Math.max(1.5, tileW * 0.032);
+  // Post with a cross-arm.
+  g.roundRect(-u * 0.08, -ph, u * 0.16, ph, u * 0.05)
+    .fill(tone.wood)
+    .stroke({ width: stroke * 0.7, color: tone.woodDark, alpha: 0.5 });
+  g.moveTo(-u * 0.52, -ph * 0.92)
+    .lineTo(u * 0.52, -ph * 0.92)
+    .stroke({ width: stroke * 1.2, color: tone.woodDark, cap: "round" });
+  // A ball on a string, mid-swing.
+  g.moveTo(u * 0.44, -ph * 0.92)
+    .quadraticCurveTo(u * 0.56, -ph * 0.6, u * 0.5, -ph * 0.44)
+    .stroke({ width: stroke * 0.6, color: tone.fiber, cap: "round" });
+  g.circle(u * 0.5, -ph * 0.36, u * 0.16).fill(tone.kiteAccent);
+  g.circle(u * 0.44, -ph * 0.42, u * 0.05).fill({ color: 0xffffff, alpha: 0.5 });
+  // A ribbon streamer on the other arm.
+  g.moveTo(-u * 0.46, -ph * 0.92)
+    .quadraticCurveTo(-u * 0.72, -ph * 0.7, -u * 0.4, -ph * 0.52)
+    .quadraticCurveTo(-u * 0.68, -ph * 0.38, -u * 0.44, -ph * 0.24)
+    .stroke({ width: stroke * 1.1, color: tone.paintBlue, alpha: 0.8, cap: "round" });
+  // A knotted rope loop at the base to tug on.
+  g.ellipse(-u * 0.02, -u * 0.14, u * 0.22, u * 0.1).stroke({
+    width: stroke,
+    color: tone.wickerDark,
+  });
+  wrap.addChild(g);
+};
+
+const drawLarder: DrawFn = (wrap, w, h, tileW) => {
+  ground(wrap, w * 0.9);
+  const g = new Graphics();
+  const u = w * 0.5;
+  const bh = tileW * 1.5;
+  const stroke = Math.max(1.5, tileW * 0.032);
+  // Tall cupboard carcass — the widest closed box in the Keep.
+  g.roundRect(-u * 0.7, -bh, u * 1.4, bh, u * 0.07)
+    .fill(tone.woodLight)
+    .stroke({ width: stroke, color: tone.woodDark, alpha: 0.7 });
+  // Left door closed, right door ajar showing shelves.
+  g.roundRect(-u * 0.64, -bh * 0.94, u * 0.6, bh * 0.88, u * 0.05)
+    .fill(tone.wood)
+    .stroke({ width: stroke * 0.7, color: tone.woodDark, alpha: 0.5 });
+  g.circle(-u * 0.12, -bh * 0.5, u * 0.05).fill(tone.metal);
+  g.roundRect(u * 0.06, -bh * 0.94, u * 0.58, bh * 0.88, u * 0.05).fill("#6f5233");
+  for (const sy of [0.7, 0.44, 0.18]) {
+    g.moveTo(u * 0.08, -bh * sy)
+      .lineTo(u * 0.62, -bh * sy)
+      .stroke({ width: stroke * 0.8, color: tone.woodDark });
+  }
+  // Preserve jars on the shelves — the pantry that keeps.
+  for (const [jx, jy, col] of [
+    [u * 0.2, 0.7, tone.berry],
+    [u * 0.42, 0.7, tone.hay],
+    [u * 0.24, 0.44, tone.mossDark],
+    [u * 0.48, 0.44, tone.berryRed],
+  ] as const) {
+    g.roundRect(jx - u * 0.08, -bh * jy - u * 0.19, u * 0.16, u * 0.19, u * 0.04).fill(col);
+    g.roundRect(jx - u * 0.09, -bh * jy - u * 0.23, u * 0.18, u * 0.06, u * 0.02).fill(
+      tone.linen,
+    );
+  }
+  // A garland of dried fiber under the top rail.
+  g.moveTo(-u * 0.6, -bh * 0.98)
+    .quadraticCurveTo(0, -bh * 0.9, u * 0.6, -bh * 0.98)
+    .stroke({ width: stroke * 0.8, color: tone.fiber, alpha: 0.8 });
+  wrap.addChild(g);
+};
+
+const drawNestWarmer: DrawFn = (wrap, w, h, tileW) => {
+  ground(wrap, w * 0.85);
+  const g = new Graphics();
+  const u = w * 0.5;
+  const stroke = Math.max(1.5, tileW * 0.028);
+  // A warm stone underneath, glowing out around the nest's rim.
+  g.ellipse(0, -u * 0.16, u * 0.7, u * 0.24).fill(tone.emberGlow);
+  g.ellipse(0, -u * 0.16, u * 0.7, u * 0.24).fill({ color: tone.emberCore, alpha: 0.35 });
+  // Woven nest bowl.
+  g.ellipse(0, -u * 0.42, u * 0.62, u * 0.3)
+    .fill(tone.wicker)
+    .stroke({ width: stroke, color: tone.wickerDark, alpha: 0.7 });
+  g.ellipse(0, -u * 0.5, u * 0.44, u * 0.2).fill(tone.wickerDark);
+  // Twig weave.
+  for (const a of [0.3, 1.1, 2.0, 3.0, 3.9, 4.8, 5.7]) {
+    const sx = Math.cos(a) * u * 0.6;
+    const sy = -u * 0.42 + Math.sin(a) * u * 0.28;
+    g.moveTo(sx, sy)
+      .lineTo(sx * 0.7, sy - u * 0.1)
+      .stroke({ width: stroke * 0.6, color: tone.wickerDark, alpha: 0.5, cap: "round" });
+  }
+  // The egg it keeps warm, with a soft halo.
+  g.circle(0, -u * 0.66, u * 0.34).fill({ color: tone.lanternGlow, alpha: 0.22 });
+  g.ellipse(0, -u * 0.62, u * 0.2, u * 0.26).fill(tone.shellCream);
+  g.ellipse(-u * 0.06, -u * 0.7, u * 0.07, u * 0.09).fill({ color: 0xffffff, alpha: 0.6 });
+  wrap.addChild(g);
+};
+
+const drawTrailPost: DrawFn = (wrap, w, h, tileW) => {
+  ground(wrap, w * 0.7);
+  const g = new Graphics();
+  const u = w * 0.5;
+  const ph = tileW * 1.55;
+  const stroke = Math.max(1.5, tileW * 0.03);
+  // Signpost.
+  g.roundRect(-u * 0.08, -ph, u * 0.16, ph, u * 0.05)
+    .fill(tone.woodDark)
+    .stroke({ width: stroke * 0.6, color: "#6f5233", alpha: 0.6 });
+  // Three arrow boards pointing different ways — six trails, all named.
+  const boards: readonly (readonly [number, number, string])[] = [
+    [0.9, 1, tone.woodLight],
+    [0.68, -1, tone.wicker],
+    [0.46, 1, tone.driftLight],
+  ];
+  for (const [t, dir, col] of boards) {
+    const y = -ph * t;
+    const x0 = dir > 0 ? u * 0.06 : -u * 0.06 - u * 0.62;
+    g.poly([
+      x0,
+      y - u * 0.11,
+      x0 + u * 0.62,
+      y - u * 0.11,
+      x0 + u * (dir > 0 ? 0.74 : 0.62),
+      y,
+      x0 + u * (dir > 0 ? 0.62 : 0.62),
+      y + u * 0.11,
+      x0,
+      y + u * 0.11,
+    ])
+      .fill(col)
+      .stroke({ width: stroke * 0.7, color: tone.woodDark, alpha: 0.6 });
+    g.moveTo(x0 + u * 0.1, y)
+      .lineTo(x0 + u * 0.5, y)
+      .stroke({ width: stroke * 0.6, color: tone.woodDark, alpha: 0.4 });
+  }
+  // A little lantern hung for late returns.
+  g.circle(u * 0.3, -ph * 0.24, u * 0.13).fill(tone.lanternGlow);
+  g.circle(u * 0.3, -ph * 0.24, u * 0.2).fill({ color: tone.lanternGlow, alpha: 0.18 });
+  wrap.addChild(g);
+};
+
+const drawWorkbench: DrawFn = (wrap, w, h, tileW) => {
+  ground(wrap, w * 0.9);
+  const g = new Graphics();
+  const u = w * 0.5;
+  const bh = tileW * 0.78;
+  const stroke = Math.max(1.5, tileW * 0.032);
+  // Legs.
+  for (const lx of [-u * 0.6, u * 0.6]) {
+    g.roundRect(lx - u * 0.06, -bh * 0.62, u * 0.12, bh * 0.62, u * 0.03).fill(tone.woodDark);
+  }
+  // Thick worktop.
+  g.roundRect(-u * 0.78, -bh * 0.78, u * 1.56, bh * 0.2, u * 0.04)
+    .fill(tone.woodLight)
+    .stroke({ width: stroke, color: tone.woodDark, alpha: 0.7 });
+  // Tool rack behind: saw, hammer, awl.
+  g.moveTo(-u * 0.7, -bh * 0.78)
+    .lineTo(-u * 0.7, -bh * 1.5)
+    .stroke({ width: stroke, color: tone.woodDark });
+  g.moveTo(u * 0.7, -bh * 0.78)
+    .lineTo(u * 0.7, -bh * 1.5)
+    .stroke({ width: stroke, color: tone.woodDark });
+  g.moveTo(-u * 0.7, -bh * 1.46)
+    .lineTo(u * 0.7, -bh * 1.46)
+    .stroke({ width: stroke * 0.9, color: tone.woodDark, alpha: 0.7 });
+  // Saw: a toothed blade.
+  g.poly([-u * 0.5, -bh * 1.4, -u * 0.08, -bh * 1.4, -u * 0.12, -bh * 1.12, -u * 0.5, -bh * 1.2])
+    .fill(tone.metal)
+    .stroke({ width: stroke * 0.5, color: tone.charcoal, alpha: 0.5 });
+  for (let i = 0; i < 6; i++) {
+    const tx = -u * 0.48 + i * u * 0.07;
+    g.moveTo(tx, -bh * (1.2 - i * 0.012))
+      .lineTo(tx + u * 0.035, -bh * (1.15 - i * 0.012))
+      .stroke({ width: stroke * 0.4, color: tone.charcoal, alpha: 0.6 });
+  }
+  // Hammer.
+  g.roundRect(u * 0.16, -bh * 1.42, u * 0.06, u * 0.5, u * 0.02).fill(tone.wood);
+  g.roundRect(u * 0.06, -bh * 1.44, u * 0.28, u * 0.14, u * 0.03).fill(tone.metal);
+  // A half-mended thing and wood shavings on the top.
+  g.roundRect(-u * 0.3, -bh * 0.96, u * 0.4, u * 0.18, u * 0.04).fill(tone.wicker);
+  for (const [sx, sy] of [
+    [u * 0.3, -bh * 0.8],
+    [u * 0.46, -bh * 0.82],
+    [-u * 0.56, -bh * 0.8],
+  ] as const) {
+    g.ellipse(sx, sy, u * 0.08, u * 0.03).fill({ color: tone.fiber, alpha: 0.9 });
+  }
+  wrap.addChild(g);
+};
+
+const drawSunBunks: DrawFn = (wrap, w, h, tileW) => {
+  ground(wrap, w * 0.92);
+  const g = new Graphics();
+  const u = w * 0.5;
+  const bh = tileW * 1.3;
+  const stroke = Math.max(1.5, tileW * 0.032);
+  // Frame posts.
+  for (const lx of [-u * 0.66, u * 0.66]) {
+    g.roundRect(lx - u * 0.06, -bh, u * 0.12, bh, u * 0.03).fill(tone.woodDark);
+  }
+  // Lower bunk.
+  g.roundRect(-u * 0.7, -bh * 0.34, u * 1.4, bh * 0.16, u * 0.06)
+    .fill(tone.cushion)
+    .stroke({ width: stroke * 0.8, color: tone.cushionEdge, alpha: 0.6 });
+  g.roundRect(-u * 0.62, -bh * 0.42, u * 0.34, bh * 0.1, u * 0.05).fill(tone.pillow);
+  // Upper bunk.
+  g.roundRect(-u * 0.7, -bh * 0.72, u * 1.4, bh * 0.16, u * 0.06)
+    .fill(tone.cushion)
+    .stroke({ width: stroke * 0.8, color: tone.cushionEdge, alpha: 0.6 });
+  g.roundRect(-u * 0.62, -bh * 0.8, u * 0.34, bh * 0.1, u * 0.05).fill(tone.pillow);
+  // A little ladder between them.
+  g.moveTo(u * 0.44, -bh * 0.72)
+    .lineTo(u * 0.44, -bh * 0.2)
+    .stroke({ width: stroke * 0.7, color: tone.wood });
+  g.moveTo(u * 0.6, -bh * 0.72)
+    .lineTo(u * 0.6, -bh * 0.2)
+    .stroke({ width: stroke * 0.7, color: tone.wood });
+  for (const ry of [0.3, 0.44, 0.58]) {
+    g.moveTo(u * 0.44, -bh * ry)
+      .lineTo(u * 0.6, -bh * ry)
+      .stroke({ width: stroke * 0.6, color: tone.woodDark });
+  }
+  // The SUN half: a scalloped canopy over the top, and warm light under it.
+  g.poly([-u * 0.82, -bh, u * 0.82, -bh, u * 0.66, -bh * 0.88, -u * 0.66, -bh * 0.88])
+    .fill(tone.canvasB)
+    .stroke({ width: stroke * 0.7, color: tone.canvasEdge, alpha: 0.7 });
+  for (let i = 0; i < 5; i++) {
+    const cx = -u * 0.62 + i * u * 0.31;
+    g.ellipse(cx, -bh * 0.87, u * 0.16, u * 0.07).fill(tone.canvasA);
+  }
+  g.ellipse(0, -bh * 0.78, u * 0.66, u * 0.14).fill({ color: tone.lanternGlow, alpha: 0.2 });
+  wrap.addChild(g);
+};
+
+const drawBeacon: DrawFn = (wrap, w, h, tileW) => {
+  ground(wrap, w * 0.8);
+  const g = new Graphics();
+  const u = w * 0.5;
+  const bh = tileW * 2.5; // deliberately the TALLEST thing in the Keep.
+  const stroke = Math.max(1.5, tileW * 0.034);
+  // Stone base.
+  g.poly([-u * 0.62, 0, u * 0.62, 0, u * 0.42, -bh * 0.18, -u * 0.42, -bh * 0.18])
+    .fill(tone.pebbleDark)
+    .stroke({ width: stroke, color: tone.charcoal, alpha: 0.5 });
+  // Tapering tower, banded.
+  g.poly([
+    -u * 0.42,
+    -bh * 0.18,
+    u * 0.42,
+    -bh * 0.18,
+    u * 0.26,
+    -bh * 0.78,
+    -u * 0.26,
+    -bh * 0.78,
+  ])
+    .fill(tone.linen)
+    .stroke({ width: stroke, color: tone.pebbleDark, alpha: 0.7 });
+  for (const [t, hw] of [
+    [0.34, 0.38],
+    [0.54, 0.33],
+  ] as const) {
+    g.roundRect(-u * hw, -bh * t, u * hw * 2, bh * 0.07, u * 0.03).fill({
+      color: tone.paintRed,
+      alpha: 0.8,
+    });
+  }
+  // Gallery rail.
+  g.roundRect(-u * 0.36, -bh * 0.84, u * 0.72, bh * 0.06, u * 0.02).fill(tone.metal);
+  // The lamp room, lit.
+  g.roundRect(-u * 0.24, -bh * 0.98, u * 0.48, bh * 0.15, u * 0.05)
+    .fill(tone.lanternGlow)
+    .stroke({ width: stroke * 0.8, color: tone.lanternBody, alpha: 0.8 });
+  g.circle(0, -bh * 0.9, u * 0.42).fill({ color: tone.lanternGlow, alpha: 0.2 });
+  // Two light beams sweeping out — the "every trip comes home sooner" tell.
+  for (const dir of [-1, 1]) {
+    g.poly([
+      dir * u * 0.2,
+      -bh * 0.93,
+      dir * u * 1.5,
+      -bh * 1.12,
+      dir * u * 1.5,
+      -bh * 0.7,
+    ]).fill({ color: tone.lanternGlow, alpha: 0.13 });
+  }
+  // Cap and finial.
+  g.poly([-u * 0.3, -bh * 0.98, u * 0.3, -bh * 0.98, 0, -bh * 1.1]).fill(tone.charcoal);
+  g.circle(0, -bh * 1.13, u * 0.06).fill(tone.gold);
+  wrap.addChild(g);
+};
+
+const drawWeathervane: DrawFn = (wrap, w, h, tileW) => {
+  ground(wrap, w * 0.6);
+  const g = new Graphics();
+  const u = w * 0.5;
+  const ph = tileW * 1.85;
+  const stroke = Math.max(1.5, tileW * 0.028);
+  // Slim mast.
+  g.moveTo(0, 0)
+    .lineTo(0, -ph)
+    .stroke({ width: stroke * 1.3, color: tone.metal, cap: "round" });
+  // N/S/E/W crossbars with little letter ticks.
+  const cy = -ph * 0.72;
+  g.moveTo(-u * 0.42, cy)
+    .lineTo(u * 0.42, cy)
+    .stroke({ width: stroke * 0.8, color: tone.metal, cap: "round" });
+  g.moveTo(0, cy - u * 0.3)
+    .lineTo(0, cy + u * 0.3)
+    .stroke({ width: stroke * 0.8, color: tone.metal, cap: "round" });
+  for (const [tx, ty] of [
+    [-u * 0.42, cy],
+    [u * 0.42, cy],
+    [0, cy - u * 0.3],
+    [0, cy + u * 0.3],
+  ] as const) {
+    g.circle(tx, ty, u * 0.05).fill(tone.gold);
+  }
+  // The vane itself: an arrow with a swallowtail, up top where it spins.
+  g.poly([
+    -u * 0.46,
+    -ph * 0.94,
+    u * 0.1,
+    -ph * 0.94,
+    u * 0.1,
+    -ph * 0.86,
+    u * 0.5,
+    -ph * 0.9,
+    u * 0.1,
+    -ph * 0.94,
+  ]).fill(tone.gold);
+  g.poly([
+    -u * 0.46,
+    -ph * 0.98,
+    -u * 0.1,
+    -ph * 0.9,
+    -u * 0.46,
+    -ph * 0.82,
+  ]).fill(tone.lanternBody);
+  g.circle(0, -ph, u * 0.07).fill(tone.gold);
+  // A faint sparkle: the Keep XP bonus made visible.
+  for (const [sx, sy] of [
+    [u * 0.6, -ph * 1.02],
+    [-u * 0.62, -ph * 0.7],
+  ] as const) {
+    g.moveTo(sx - u * 0.07, sy)
+      .lineTo(sx + u * 0.07, sy)
+      .stroke({ width: stroke * 0.6, color: tone.lanternGlow, alpha: 0.8, cap: "round" });
+    g.moveTo(sx, sy - u * 0.07)
+      .lineTo(sx, sy + u * 0.07)
+      .stroke({ width: stroke * 0.6, color: tone.lanternGlow, alpha: 0.8, cap: "round" });
+  }
+  wrap.addChild(g);
+};
+
+// ---------------------------------------------------------------------------
+// ROUND 2F — the twelve new decorations (content/decorations.ts §5.2)
+//
+// Five are FLAT per bible §5.2 (`clover-patch`, `fern-cluster`, `sled`,
+// `glow-pool`, `warm-stones`): a `RESOLVERS` entry is the ONLY way
+// `isFlatItem` can return true, so before this round all five silently
+// blocked pip movement — which was the whole mitigation content bible §9.11
+// asked for once 32 decorations share a 12×14 grid.
+// ---------------------------------------------------------------------------
+
+const drawCloverPatch: DrawFn = (wrap, w) => {
+  const g = new Graphics();
+  const u = w * 0.5;
+  // A low spread of trefoils, drawn as ground cover (flat — walk over it).
+  const leaves: readonly (readonly [number, number, number])[] = [
+    [-u * 0.42, -u * 0.3, u * 0.15],
+    [-u * 0.02, -u * 0.44, u * 0.18],
+    [u * 0.38, -u * 0.26, u * 0.14],
+    [u * 0.1, -u * 0.1, u * 0.16],
+    [-u * 0.3, -u * 0.04, u * 0.13],
+  ];
+  for (const [cx, cy, r] of leaves) {
+    for (const a of [-1.2, 0, 1.2]) {
+      g.ellipse(cx + Math.sin(a) * r * 0.72, cy - Math.cos(a) * r * 0.72, r * 0.55, r * 0.62)
+        .fill(tone.clover);
+    }
+    g.circle(cx, cy, r * 0.16).fill(tone.mossDark);
+  }
+  // Two lucky four-leafers, slightly brighter.
+  g.circle(u * 0.1, -u * 0.1, u * 0.05).fill({ color: 0xffffff, alpha: 0.4 });
+  wrap.addChild(g);
+};
+
+const drawHayBale: DrawFn = (wrap, w, h, tileW) => {
+  ground(wrap, w * 0.85);
+  const g = new Graphics();
+  const u = w * 0.5;
+  const stroke = Math.max(1.5, tileW * 0.028);
+  // A round bale, seen end-on.
+  g.circle(0, -u * 0.52, u * 0.5)
+    .fill(tone.hay)
+    .stroke({ width: stroke, color: tone.hayDark, alpha: 0.7 });
+  // Spiral of packed straw.
+  for (const r of [0.36, 0.24, 0.12]) {
+    g.circle(0, -u * 0.52, u * r).stroke({
+      width: stroke * 0.7,
+      color: tone.hayDark,
+      alpha: 0.45,
+    });
+  }
+  // Binding twine, two bands.
+  for (const bx of [-u * 0.2, u * 0.2]) {
+    g.moveTo(bx, -u * 0.52 - u * 0.46)
+      .lineTo(bx, -u * 0.52 + u * 0.46)
+      .stroke({ width: stroke * 0.8, color: tone.fiber, alpha: 0.9 });
+  }
+  // Loose wisps escaping the top.
+  for (const [sx, lean] of [
+    [-u * 0.2, -0.4],
+    [u * 0.06, 0.1],
+    [u * 0.26, 0.45],
+  ] as const) {
+    g.moveTo(sx, -u * 0.94)
+      .lineTo(sx + lean * u * 0.3, -u * 1.16)
+      .stroke({ width: stroke * 0.6, color: tone.hayDark, cap: "round" });
+  }
+  wrap.addChild(g);
+};
+
+const drawRopeLadder: DrawFn = (wrap, w, h, tileW) => {
+  ground(wrap, w * 0.6);
+  const g = new Graphics();
+  const u = w * 0.5;
+  // 1×2 footprint: this one is TALL, so h drives the height.
+  const lh = Math.max(h * 0.9, tileW * 1.6);
+  const stroke = Math.max(1.5, tileW * 0.03);
+  // A frame it hangs from.
+  g.moveTo(-u * 0.6, -lh)
+    .lineTo(u * 0.6, -lh)
+    .stroke({ width: stroke * 1.4, color: tone.woodDark, cap: "round" });
+  g.moveTo(u * 0.6, -lh)
+    .lineTo(u * 0.66, 0)
+    .stroke({ width: stroke * 1.2, color: tone.woodDark, cap: "round" });
+  // Two slightly-swaying side ropes.
+  for (const dir of [-1, 1]) {
+    g.moveTo(dir * u * 0.3, -lh)
+      .quadraticCurveTo(dir * u * 0.42, -lh * 0.5, dir * u * 0.26, -lh * 0.06)
+      .stroke({ width: stroke, color: tone.netTwine, cap: "round" });
+  }
+  // Rungs, narrowing slightly toward the bottom.
+  for (let i = 0; i < 6; i++) {
+    const t = 0.1 + i * 0.145;
+    const y = -lh * (0.92 - t * 0.86);
+    const half = u * (0.3 + 0.1 * Math.sin(t * 3));
+    g.roundRect(-half, y - u * 0.045, half * 2, u * 0.09, u * 0.035)
+      .fill(tone.wood)
+      .stroke({ width: stroke * 0.5, color: tone.woodDark, alpha: 0.6 });
+  }
+  wrap.addChild(g);
+};
+
+const drawPineMarker: DrawFn = (wrap, w, h, tileW) => {
+  ground(wrap, w * 0.75);
+  const g = new Graphics();
+  const u = w * 0.5;
+  const th = tileW * 1.25;
+  const stroke = Math.max(1.5, tileW * 0.028);
+  // A small conical pine.
+  g.roundRect(-u * 0.05, -th * 0.24, u * 0.1, th * 0.24, u * 0.03).fill(tone.woodDark);
+  for (const [t, hw] of [
+    [0.28, 0.44],
+    [0.5, 0.35],
+    [0.72, 0.24],
+  ] as const) {
+    g.poly([-u * hw, -th * t, u * hw, -th * t, 0, -th * (t + 0.3)])
+      .fill(tone.pine)
+      .stroke({ width: stroke * 0.5, color: tone.pineDark, alpha: 0.5 });
+  }
+  g.circle(0, -th * 1.04, u * 0.05).fill(tone.snow);
+  // The marker stake beside it, with a carved notch.
+  g.roundRect(u * 0.52, -th * 0.62, u * 0.14, th * 0.62, u * 0.04)
+    .fill(tone.driftLight)
+    .stroke({ width: stroke * 0.6, color: tone.driftDark, alpha: 0.7 });
+  g.poly([u * 0.5, -th * 0.62, u * 0.68, -th * 0.62, u * 0.59, -th * 0.72]).fill(tone.driftDark);
+  for (const ny of [0.5, 0.42]) {
+    g.moveTo(u * 0.54, -th * ny)
+      .lineTo(u * 0.64, -th * ny)
+      .stroke({ width: stroke * 0.5, color: tone.woodDark, alpha: 0.6 });
+  }
+  wrap.addChild(g);
+};
+
+const drawLogPile: DrawFn = (wrap, w, h, tileW) => {
+  ground(wrap, w * 0.92);
+  const g = new Graphics();
+  const u = w * 0.5;
+  const r = Math.min(u * 0.2, tileW * 0.2);
+  const stroke = Math.max(1.5, tileW * 0.026);
+  // Stacked cut logs, end-grain toward the player: 3 + 2 + 1.
+  const rows: readonly (readonly [number, number])[][] = [
+    [
+      [-r * 2.1, 0],
+      [0, 0],
+      [r * 2.1, 0],
+    ],
+    [
+      [-r * 1.05, 1],
+      [r * 1.05, 1],
+    ],
+    [[0, 2]],
+  ];
+  for (const row of rows) {
+    for (const [lx, tier] of row) {
+      const cy = -r - tier * r * 1.82;
+      g.circle(lx, cy, r)
+        .fill(tone.woodLight)
+        .stroke({ width: stroke, color: tone.woodDark, alpha: 0.75 });
+      g.circle(lx, cy, r * 0.62).stroke({
+        width: stroke * 0.6,
+        color: tone.woodDark,
+        alpha: 0.4,
+      });
+      g.circle(lx, cy, r * 0.26).stroke({
+        width: stroke * 0.5,
+        color: tone.woodDark,
+        alpha: 0.35,
+      });
+    }
+  }
+  // A retaining stake at each end.
+  for (const dir of [-1, 1]) {
+    g.moveTo(dir * (r * 3.3), 0)
+      .lineTo(dir * (r * 3.5), -r * 5.2)
+      .stroke({ width: stroke * 1.2, color: tone.woodDark, cap: "round" });
+  }
+  wrap.addChild(g);
+};
+
+const drawFernCluster: DrawFn = (wrap, w) => {
+  const g = new Graphics();
+  const u = w * 0.5;
+  // Flat: fronds spraying out low and wide, drawn as ground cover.
+  const fronds: readonly (readonly [number, number])[] = [
+    [-1, 0.15],
+    [-0.62, 0.55],
+    [0, 0.72],
+    [0.62, 0.55],
+    [1, 0.15],
+  ];
+  for (const [dx, dy] of fronds) {
+    const tipX = dx * u * 0.72;
+    const tipY = -u * 0.16 - dy * u * 0.44;
+    g.moveTo(0, -u * 0.1)
+      .quadraticCurveTo(tipX * 0.5, tipY * 1.15, tipX, tipY)
+      .stroke({ width: Math.max(1.5, u * 0.07), color: tone.fernGreen, cap: "round" });
+    // Pinnae along each frond.
+    for (const t of [0.35, 0.55, 0.75]) {
+      const px = tipX * t;
+      const py = -u * 0.1 + (tipY + u * 0.1) * t;
+      g.ellipse(px, py, u * 0.09, u * 0.045).fill({ color: tone.mossDark, alpha: 0.75 });
+    }
+  }
+  g.ellipse(0, -u * 0.08, u * 0.14, u * 0.07).fill(tone.mossDark);
+  wrap.addChild(g);
+};
+
+const drawSnowLantern: DrawFn = (wrap, w, h, tileW) => {
+  ground(wrap, w * 0.75);
+  const g = new Graphics();
+  const u = w * 0.5;
+  const stroke = Math.max(1.5, tileW * 0.026);
+  // Three snowballs, the top one hollowed for a candle.
+  g.circle(0, -u * 0.3, u * 0.42)
+    .fill(tone.snow)
+    .stroke({ width: stroke * 0.7, color: tone.snowShade, alpha: 0.8 });
+  g.circle(0, -u * 0.76, u * 0.32)
+    .fill(tone.snow)
+    .stroke({ width: stroke * 0.7, color: tone.snowShade, alpha: 0.8 });
+  g.circle(0, -u * 1.1, u * 0.24)
+    .fill(tone.snow)
+    .stroke({ width: stroke * 0.7, color: tone.snowShade, alpha: 0.8 });
+  // Candle glow shining out of the middle ball's little window.
+  g.circle(0, -u * 0.76, u * 0.5).fill({ color: tone.lanternGlow, alpha: 0.18 });
+  g.ellipse(0, -u * 0.76, u * 0.16, u * 0.19).fill(tone.lanternGlow);
+  g.ellipse(0, -u * 0.8, u * 0.06, u * 0.1).fill(tone.emberCore);
+  // Shading on the left of each ball so it reads as round, not flat.
+  for (const [cy, r] of [
+    [-u * 0.3, u * 0.42],
+    [-u * 0.76, u * 0.32],
+    [-u * 1.1, u * 0.24],
+  ] as const) {
+    g.ellipse(-r * 0.5, cy + r * 0.2, r * 0.32, r * 0.24).fill({
+      color: tone.snowShade,
+      alpha: 0.5,
+    });
+  }
+  wrap.addChild(g);
+};
+
+const drawIcicleArch: DrawFn = (wrap, w, h, tileW) => {
+  ground(wrap, w * 0.85);
+  const g = new Graphics();
+  const u = w * 0.5;
+  const ah = tileW * 1.5;
+  const stroke = Math.max(1.5, tileW * 0.028);
+  // Two legs and a curved lintel of packed snow.
+  for (const dir of [-1, 1]) {
+    g.roundRect(dir * u * 0.62 - u * 0.09, -ah * 0.72, u * 0.18, ah * 0.72, u * 0.05)
+      .fill(tone.snow)
+      .stroke({ width: stroke * 0.6, color: tone.snowShade, alpha: 0.7 });
+  }
+  g.moveTo(-u * 0.71, -ah * 0.7)
+    .quadraticCurveTo(0, -ah * 1.06, u * 0.71, -ah * 0.7)
+    .quadraticCurveTo(0, -ah * 0.92, -u * 0.71, -ah * 0.7)
+    .fill(tone.snow);
+  g.moveTo(-u * 0.71, -ah * 0.7)
+    .quadraticCurveTo(0, -ah * 1.06, u * 0.71, -ah * 0.7)
+    .stroke({ width: stroke * 0.8, color: tone.snowShade, alpha: 0.8 });
+  // Icicles hanging from the underside, longest in the middle.
+  const icicles: readonly (readonly [number, number])[] = [
+    [-0.56, 0.16],
+    [-0.32, 0.3],
+    [-0.08, 0.4],
+    [0.16, 0.34],
+    [0.4, 0.24],
+    [0.6, 0.14],
+  ];
+  for (const [dx, len] of icicles) {
+    const x = dx * u;
+    const y = -ah * (0.78 + 0.1 * (1 - Math.abs(dx)));
+    g.poly([x - u * 0.06, y, x + u * 0.06, y, x, y + ah * len])
+      .fill(tone.ice)
+      .stroke({ width: stroke * 0.4, color: tone.iceDeep, alpha: 0.6 });
+    g.moveTo(x - u * 0.015, y + ah * 0.03)
+      .lineTo(x - u * 0.005, y + ah * len * 0.7)
+      .stroke({ width: stroke * 0.4, color: 0xffffff, alpha: 0.6, cap: "round" });
+  }
+  wrap.addChild(g);
+};
+
+const drawSled: DrawFn = (wrap, w, h, tileW) => {
+  // Flat (bible §5.2) — a sled sits ON the ground and a pip can hop over it.
+  const g = new Graphics();
+  const u = w * 0.5;
+  const stroke = Math.max(1.5, tileW * 0.028);
+  g.ellipse(0, -u * 0.06, u * 0.72, u * 0.16).fill({ color: tone.shadow, alpha: 0.1 });
+  // Two curled runners.
+  for (const oy of [-u * 0.16, -u * 0.02]) {
+    g.moveTo(-u * 0.7, oy)
+      .lineTo(u * 0.5, oy)
+      .quadraticCurveTo(u * 0.78, oy, u * 0.72, oy - u * 0.2)
+      .stroke({ width: stroke * 1.2, color: tone.metal, cap: "round" });
+  }
+  // Slatted deck.
+  g.poly([-u * 0.66, -u * 0.24, u * 0.5, -u * 0.28, u * 0.5, -u * 0.06, -u * 0.66, -u * 0.02])
+    .fill(tone.woodLight)
+    .stroke({ width: stroke * 0.7, color: tone.woodDark, alpha: 0.7 });
+  for (const t of [0.2, 0.45, 0.7]) {
+    const x = -u * 0.66 + t * u * 1.16;
+    g.moveTo(x, -u * 0.26)
+      .lineTo(x, -u * 0.04)
+      .stroke({ width: stroke * 0.5, color: tone.woodDark, alpha: 0.45 });
+  }
+  // A pull-rope coiled at the front.
+  g.moveTo(u * 0.68, -u * 0.24)
+    .quadraticCurveTo(u * 0.95, -u * 0.1, u * 0.74, u * 0.02)
+    .stroke({ width: stroke * 0.7, color: tone.paintRed, alpha: 0.85, cap: "round" });
+  wrap.addChild(g);
+};
+
+const drawNetFloat: DrawFn = (wrap, w, h, tileW) => {
+  ground(wrap, w * 0.75);
+  const g = new Graphics();
+  const u = w * 0.5;
+  const stroke = Math.max(1.5, tileW * 0.026);
+  // A leaning driftwood stake.
+  g.moveTo(u * 0.42, 0)
+    .lineTo(u * 0.28, -u * 1.05)
+    .stroke({ width: stroke * 1.4, color: tone.driftDark, cap: "round" });
+  // The glass float: a big sea-green ball.
+  g.circle(-u * 0.1, -u * 0.44, u * 0.42).fill(tone.shellBlue);
+  g.circle(-u * 0.1, -u * 0.44, u * 0.42).stroke({
+    width: stroke * 0.7,
+    color: tone.waterDeep,
+    alpha: 0.55,
+  });
+  g.ellipse(-u * 0.26, -u * 0.6, u * 0.14, u * 0.09).fill({ color: 0xffffff, alpha: 0.55 });
+  // Net wrapped around it — diagonals both ways, knotted at the crossings.
+  for (const d of [-1, 1]) {
+    for (const off of [-0.28, 0, 0.28]) {
+      g.moveTo(-u * 0.1 + d * u * 0.42 * 0.7, -u * 0.44 + u * (off - 0.3))
+        .quadraticCurveTo(
+          -u * 0.1 + off * u * 0.4,
+          -u * 0.44 + off * u * 0.5,
+          -u * 0.1 - d * u * 0.42 * 0.7,
+          -u * 0.44 + u * (off + 0.3),
+        )
+        .stroke({ width: stroke * 0.5, color: tone.netTwine, alpha: 0.85 });
+    }
+  }
+  // A tail of net draping to the ground.
+  g.moveTo(-u * 0.5, -u * 0.3)
+    .quadraticCurveTo(-u * 0.7, -u * 0.1, -u * 0.44, 0)
+    .stroke({ width: stroke * 0.6, color: tone.netTwine, alpha: 0.7 });
+  wrap.addChild(g);
+};
+
+const drawGlowPool: DrawFn = (wrap, w) => {
+  // Flat (bible §5.2) — a pool you wade through, like the Tide Basin.
+  const g = new Graphics();
+  const u = w * 0.5;
+  // Rock rim.
+  g.ellipse(0, -u * 0.28, u * 0.76, u * 0.34)
+    .fill(tone.pebbleDark)
+    .stroke({ width: Math.max(1.5, u * 0.03), color: tone.charcoal, alpha: 0.35 });
+  // Glowing water, two layers so the centre reads brighter.
+  g.ellipse(0, -u * 0.3, u * 0.64, u * 0.27).fill(tone.glowCoolDeep);
+  g.ellipse(0, -u * 0.31, u * 0.52, u * 0.21).fill(tone.glowCool);
+  g.ellipse(0, -u * 0.32, u * 0.3, u * 0.12).fill({ color: 0xffffff, alpha: 0.4 });
+  // Ripple rings.
+  for (const r of [0.2, 0.36, 0.5] as const) {
+    g.ellipse(u * 0.06, -u * 0.31, u * r, u * r * 0.42).stroke({
+      width: Math.max(1, u * 0.02),
+      color: 0xffffff,
+      alpha: 0.3,
+    });
+  }
+  // Motes of light drifting off the surface.
+  for (const [mx, my, r] of [
+    [-u * 0.34, -u * 0.5, u * 0.05],
+    [u * 0.12, -u * 0.58, u * 0.04],
+    [u * 0.42, -u * 0.46, u * 0.035],
+  ] as const) {
+    g.circle(mx, my, r * 2.4).fill({ color: tone.glowCool, alpha: 0.2 });
+    g.circle(mx, my, r).fill({ color: 0xffffff, alpha: 0.8 });
+  }
+  // A few rim stones for silhouette.
+  for (const a of [0.5, 2.1, 3.6, 5.2]) {
+    g.ellipse(
+      Math.cos(a) * u * 0.74,
+      -u * 0.28 + Math.sin(a) * u * 0.32,
+      u * 0.11,
+      u * 0.07,
+    ).fill(tone.pebble);
+  }
+  wrap.addChild(g);
+};
+
+const drawWarmStones: DrawFn = (wrap, w) => {
+  // Flat (bible §5.2) — flat stones you stand on to warm your feet.
+  const g = new Graphics();
+  const u = w * 0.5;
+  // Warm glow seeping out from between them.
+  g.ellipse(0, -u * 0.26, u * 0.66, u * 0.3).fill({ color: tone.emberGlow, alpha: 0.2 });
+  const stones: readonly (readonly [number, number, number, number])[] = [
+    [-u * 0.34, -u * 0.34, u * 0.26, u * 0.15],
+    [u * 0.14, -u * 0.42, u * 0.29, u * 0.16],
+    [-u * 0.06, -u * 0.16, u * 0.31, u * 0.17],
+    [u * 0.42, -u * 0.16, u * 0.2, u * 0.12],
+  ];
+  stones.forEach(([sx, sy, rx, ry], i) => {
+    g.ellipse(sx, sy, rx, ry).fill(i % 2 === 0 ? tone.stoneWarm : tone.pebble);
+    g.ellipse(sx - rx * 0.22, sy - ry * 0.28, rx * 0.42, ry * 0.36).fill({
+      color: 0xffffff,
+      alpha: 0.25,
+    });
+    g.ellipse(sx, sy, rx, ry).stroke({
+      width: Math.max(1, u * 0.02),
+      color: tone.emberGlow,
+      alpha: 0.35,
+    });
+  });
+  // Two curls of rising warmth.
+  for (const [cx, dir] of [
+    [-u * 0.2, 1],
+    [u * 0.26, -1],
+  ] as const) {
+    g.moveTo(cx, -u * 0.5)
+      .quadraticCurveTo(cx + dir * u * 0.12, -u * 0.68, cx, -u * 0.84)
+      .stroke({
+        width: Math.max(1, u * 0.025),
+        color: tone.emberCore,
+        alpha: 0.45,
+        cap: "round",
+      });
+  }
+  wrap.addChild(g);
+};
+
 /** Unknown item id — a friendly placeholder crate, never a crash. */
 const drawFallbackCrate: DrawFn = (wrap, w, h, tileW) => {
   ground(wrap, w);
@@ -839,7 +1689,44 @@ const RESOLVERS: Readonly<Record<string, { draw: DrawFn; flat: boolean }>> = {
   "ember-brazier": { draw: drawEmberBrazier, flat: false },
   "wishing-cairn": { draw: drawWishingCairn, flat: false },
   "mossy-fountain": { draw: drawMossyFountain, flat: false },
+  // ROUND 2F (progression bible §5.1) — the nine new stations. Every tier
+  // from 2 upward hands out one of these BY NAME, so a crate here would make
+  // the ladder's headline unlock indistinguishable from a 3-Fiber decoration.
+  "wash-basin": { draw: drawWashBasin, flat: false },
+  "play-post": { draw: drawPlayPost, flat: false },
+  larder: { draw: drawLarder, flat: false },
+  "nest-warmer": { draw: drawNestWarmer, flat: false },
+  "trail-post": { draw: drawTrailPost, flat: false },
+  workbench: { draw: drawWorkbench, flat: false },
+  "sun-bunks": { draw: drawSunBunks, flat: false },
+  beacon: { draw: drawBeacon, flat: false },
+  weathervane: { draw: drawWeathervane, flat: false },
+  // ROUND 2F (progression bible §5.2) — the twelve new decorations. The five
+  // marked `flat: true` are the bible's explicit walkability mitigation:
+  // `isFlatItem` reads THIS table and nothing else, so a missing entry does
+  // not merely look wrong, it walls pips in.
+  "clover-patch": { draw: drawCloverPatch, flat: true },
+  "hay-bale": { draw: drawHayBale, flat: false },
+  "rope-ladder": { draw: drawRopeLadder, flat: false },
+  "pine-marker": { draw: drawPineMarker, flat: false },
+  "log-pile": { draw: drawLogPile, flat: false },
+  "fern-cluster": { draw: drawFernCluster, flat: true },
+  "snow-lantern": { draw: drawSnowLantern, flat: false },
+  "icicle-arch": { draw: drawIcicleArch, flat: false },
+  sled: { draw: drawSled, flat: true },
+  "net-float": { draw: drawNetFloat, flat: false },
+  "glow-pool": { draw: drawGlowPool, flat: true },
+  "warm-stones": { draw: drawWarmStones, flat: true },
 };
+
+/** Every item id this module can draw for real (i.e. NOT the fallback
+ * crate). Exported so `render/placeableSprites.test.ts` can assert the
+ * catalog and the resolver table agree — the guard that stops a content
+ * round from doubling the build catalog while half of it renders as an
+ * identical brown box (the round-2F finding this list exists to prevent). */
+export function drawableItemIds(): readonly string[] {
+  return Object.keys(RESOLVERS);
+}
 
 /** Item ids that render as flat ground decals (also consulted by the
  * scene's wander occupancy — flat items never block pips). */

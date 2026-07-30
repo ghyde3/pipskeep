@@ -29,7 +29,7 @@
  */
 
 import { ONBOARDING_STEPS } from "../state";
-import type { EvolveOutcome, GameState, OnboardingState } from "../state";
+import type { EvolveOutcome, GameState, LevelUpOutcome, OnboardingState } from "../state";
 import { LifeStage, NEED_IDS, PipActivity } from "../pips/types";
 import type {
   ActiveExpedition,
@@ -62,6 +62,29 @@ import type { KeepState, Placement, PlacementId } from "../keep";
 import type { JobAssignment, JobOutcome, JobsByPip } from "../keep/jobs";
 
 /**
+ * v8 (round 2F — docs/progression-bible.md §8.4): TWO new fields, the
+ * whole round's schema delta —
+ *
+ *   - `keepXp: number` (required, forward-only integer): lifetime Keep
+ *     XP, the progression spine (§1.1). Migrated saves backfill it
+ *     GENEROUSLY (never above the truth, never below what is provable —
+ *     the same rule §11.3 used for the v6 Album backfill): `max(the XP
+ *     the save's OWN `keep.level` proves it already reached, a sum of
+ *     provable lower bounds from `counters`/`milestones.earned`)`. See
+ *     `MIGRATIONS[7]`.
+ *   - `Placement.granted?: boolean` (optional, `undefined ≡ false` — the
+ *     same defensive-default pattern `PipState.sulking`/`mastery` already
+ *     use, so no existing fixture needs an edit). Marks a placement that
+ *     came from the Keepsake Shelf rather than a resource spend, so
+ *     `REMOVE_ITEM` can refund the shelf slot instead of resources it was
+ *     never charged. NOT wired into `PLACE_ITEM`/`REMOVE_ITEM` by this
+ *     patch (that is the Keepsake Shelf feature itself, §5.4, owned by a
+ *     separate round-2F task) — the field only needs to EXIST and
+ *     round-trip so that work is a pure data change, not a second schema
+ *     bump. `validatePlacement` below defaults an absent field to
+ *     `undefined` (never fabricated as `false`), matching the optional-
+ *     field contract exactly.
+ *
  * v7 (round 2C review): one new REQUIRED top-level slice — `flair`
  * (`flairId → earnedAt`, docs/retention-bible.md §4.3). Round 2C shipped 22
  * `kind: "flair"` milestone rewards against no state field, no serializer
@@ -100,7 +123,7 @@ import type { JobAssignment, JobOutcome, JobsByPip } from "../keep/jobs";
  * `nextPlacementNumber`, per-pip `evolved` records, and the two new
  * transient outcome echoes (job, evolve). v2, Phase 4: keepLevel, eggs,
  * pendingReveals, id counters.) */
-export const CURRENT_SCHEMA_VERSION = 7;
+export const CURRENT_SCHEMA_VERSION = 8;
 
 /** The on-disk envelope (spec §8). */
 export interface SaveBlob {
@@ -498,6 +521,12 @@ function validatePlacement(value: unknown, path: string): Placement {
     itemId: expectString(rec["itemId"], p(path, "itemId")),
     x: expectFiniteNumber(rec["x"], p(path, "x")),
     y: expectFiniteNumber(rec["y"], p(path, "y")),
+    // v8 (round 2F): optional exactly like `PipState.sulking`/`mastery` —
+    // absent stays absent, so a pre-Keepsake-Shelf placement round-trips
+    // byte-for-byte with no field materialising from nothing.
+    ...(rec["granted"] !== undefined
+      ? { granted: expectBoolean(rec["granted"], p(path, "granted")) }
+      : {}),
   };
 }
 
@@ -973,6 +1002,17 @@ function validateGameState(value: unknown, path: string): GameState {
     // `MIGRATIONS[6]` seeds it for every v6 save, so a blob reaching here
     // without it is genuinely malformed, not merely old.
     flair: validateNumberRecord(rec["flair"], p(path, "flair")),
+    // v8 (round 2F, progression bible §1/§8.4): lifetime Keep XP — the
+    // progression spine. Strictly required — `MIGRATIONS[7]` backfills it
+    // for every v7 save, so a blob reaching here without it is genuinely
+    // malformed, not merely old.
+    keepXp: expectFiniteNumber(rec["keepXp"], p(path, "keepXp")),
+    // v8 — the tier-up celebration echo. Transient like every other
+    // `last*Outcome`, so shape-checked only (module doc above).
+    lastLevelUp: passThroughTransient(
+      rec["lastLevelUp"],
+      p(path, "lastLevelUp"),
+    ) as LevelUpOutcome | null,
   };
 }
 

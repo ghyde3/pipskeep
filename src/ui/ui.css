@@ -16,7 +16,12 @@
   -webkit-user-select: none;
   user-select: none;
   -webkit-tap-highlight-color: transparent;
-  overflow: hidden;
+  /* `clip`, not `hidden` — see `.pk-phase5`'s note below. `hidden` leaves
+     this a scroll port whose `scrollTop` a stray wheel/focus can move,
+     silently sliding the ENTIRE UI layer (top bar, XP bar, action bar,
+     celebration surfaces) off the top of the screen with no scrollbar to
+     put it back. `clip` clips the same and cannot scroll. */
+  overflow: clip;
 }
 
 /* ---------- Top bar ---------- */
@@ -325,6 +330,38 @@
   -webkit-backdrop-filter: blur(6px);
   border-top: 1.5px solid rgba(95, 138, 94, 0.18);
   border-radius: 18px 18px 0 0;
+}
+
+/* ROUND 2F — the "why is this bar grey" pill. On a day-2 return the active Pip
+   is the one you left working, so every care button is disabled; before this
+   the bar carried no explanation and no affordance, and finding the way out
+   meant tapping a dead button and then guessing at the roster strip. Spans the
+   full grid width above the six buttons, and is itself the one-tap switch to a
+   Pip who IS free. */
+.pk-actionbar-reason {
+  grid-column: 1 / -1;
+  appearance: none;
+  border: 1.5px solid rgba(95, 138, 94, 0.22);
+  border-radius: 999px;
+  margin: 0 0 2px;
+  padding: 7px 14px;
+  background: rgba(124, 194, 131, 0.14);
+  color: #3d6b44;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 700;
+  text-align: center;
+  cursor: pointer;
+}
+
+.pk-actionbar-reason:disabled {
+  cursor: default;
+  color: #6c7a6c;
+  background: rgba(95, 138, 94, 0.08);
+}
+
+.pk-actionbar-reason:active:not(:disabled) {
+  transform: scale(0.98);
 }
 
 .pk-action {
@@ -1572,15 +1609,29 @@
 }
 
 /* Phase 5 chrome lives outside #ui, so it carries its own font stack.
-   overflow: hidden matters: the closed build sheet parks at
-   translateY(105%), and without the clip that transformed box would
-   grow the page's scrollable area (focus-scroll then shifts the whole
-   game off-screen). #ui clips for the same reason. */
+   The clip matters: the closed build sheet parks at translateY(105%), and
+   without it that transformed box would grow the page's scrollable area
+   (focus-scroll then shifts the whole game off-screen). #ui clips for the
+   same reason. */
 .pk-phase5 {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  overflow: hidden;
+  /* `clip`, NOT `hidden` (round 2F integrate — a real bug found in the
+     375px smoke). `overflow: hidden` still makes an element a SCROLL PORT:
+     its `scrollTop` can be moved by a wheel event, a `scrollIntoView` on a
+     descendant, or a focus() — there is just no visible scrollbar. This
+     layer's content is taller than the viewport whenever the Build sheet is
+     open (1366px against 812px at 375×812), so one stray wheel event over a
+     non-scrolling part of the sheet left `.pk-phase5` stuck at scrollTop
+     229.5 — and with no scrollbar, no way for the player to put it back.
+     Everything inside then rendered 229px too high: the Keep upgrade card's
+     whole header, its tier XP bar and its Buy button were off the top of
+     the screen and unreachable until reload.
+     `overflow: clip` clips identically but creates NO scroll container, so
+     `scrollTop` is permanently 0 and this cannot recur. Latent since Phase
+     5; this round's 24 → 45-item Build sheet is what made it easy to hit. */
+  overflow: clip;
   font-family:
     -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
     Arial, sans-serif;

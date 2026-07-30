@@ -1,0 +1,176 @@
+/* Build sheet (docs/progression-bible.md §4.1/§5.5) — the new classes
+   this round adds around ui.css's existing `.pk-item` / `.pk-build-card`
+   / `.pk-build-row` shapes (untouched, not owned by this file). Only NEW
+   selectors live here; nothing here redeclares a ui.css rule. */
+
+.pk-build-group-title {
+  font-size: 13px;
+  font-weight: 800;
+  margin: 14px 0 8px;
+  opacity: 0.85;
+}
+
+/* ROUND 2F — the six set groups are collapsible (bible §5.5 item 3). 45 cards
+   made this sheet 6,882px of scroll in a 527px window — 13 screens, with the
+   same two lines repeated on nearly every card. Collapsed, it is six taps'
+   worth of headers, each already carrying the reason to open it. */
+.pk-build-group-toggle {
+  appearance: none;
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 800;
+  color: inherit;
+  text-align: left;
+  width: 100%;
+  cursor: pointer;
+}
+
+.pk-build-group-toggle:focus-visible {
+  outline: 2px solid #3d6b44;
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.pk-build-group-title--bonus {
+  color: #3d6b44;
+  opacity: 1;
+}
+
+/* ROUND 2F — the set's two bonus tiers, stated (bible §3.5). Six sets × two
+   tiers = 12 non-random long-haul goals that were previously invisible; the
+   header only ever said "N of M placed". Earned tiers are green with a ✓,
+   unearned ones muted with a ○, so the group reads as a two-step ladder at a
+   glance rather than a wall of text. */
+.pk-build-group-bonus {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: -4px 0 10px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  background: rgba(95, 138, 94, 0.07);
+}
+
+.pk-build-group-bonus-line {
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: #6c7a6c;
+  font-variant-numeric: tabular-nums;
+}
+
+.pk-build-group-bonus-line--live {
+  color: #3d6b44;
+  font-weight: 700;
+}
+
+.pk-build-group-bonus-note {
+  margin-top: 2px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #8a5a12;
+}
+
+.pk-build-sets {
+  display: flex;
+  flex-direction: column;
+}
+
+.pk-build-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.pk-build-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* Room for the absolutely-positioned NEW badge (below) so a long name
+     never runs under it. */
+  padding-right: 34px;
+}
+
+.pk-build-name-wrap {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  flex: 1;
+}
+
+.pk-build-name-wrap .pk-item-name {
+  /* Wrap, never truncate — "Berry Planter" reading as "Berry Pl…" is
+     worse than a two-line card (found at 375px with the NEW badge
+     inline; moving the badge out of this row is what fixed it). */
+  overflow-wrap: break-word;
+}
+
+.pk-build-new {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  color: #fffdf6;
+  background: #e08b3d;
+  border-radius: 6px;
+  padding: 2px 5px;
+}
+
+.pk-build-effect {
+  font-size: 11px;
+  font-weight: 600;
+  color: #3d6b44;
+  line-height: 1.35;
+}
+
+.pk-build-effect::before {
+  content: "● ";
+  opacity: 0.6;
+}
+
+.pk-build-set {
+  font-size: 10.5px;
+  font-weight: 700;
+  opacity: 0.65;
+}
+
+.pk-build-set--active {
+  opacity: 1;
+  color: #3d6b44;
+}
+
+.pk-build-flavor {
+  font-size: 10.5px;
+  opacity: 0.6;
+  font-style: italic;
+  line-height: 1.3;
+}
+
+.pk-build-first {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #a8622f;
+}
+
+.pk-build-lock {
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0.7;
+  font-style: italic;
+}
+
+/* A free, already-granted copy from the Keepsake Shelf (state.keepsakes).
+   Gold, because it reads as a gift and not as a price. */
+.pk-build-keepsake {
+  font-size: 11px;
+  font-weight: 800;
+  color: #4a3300;
+  background: rgba(244, 185, 66, 0.35);
+  border-radius: 999px;
+  padding: 2px 7px;
+  align-self: flex-start;
+  margin-top: 2px;
+}

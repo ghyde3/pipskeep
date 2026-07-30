@@ -1,0 +1,192 @@
+/* Keep upgrade card (docs/progression-bible.md §1.2/§2/§4.3) — the new
+   classes this round adds around ui.css's existing `.pk-upcard*` shapes
+   (untouched, not owned by this file): the tier XP bar, the Comfort
+   readout, and the road-ahead ladder. */
+
+/* THE KNOWN BUG, WIDENED (see ui/layers.test.ts's module doc, and
+   buildSheet.ts's own `onOpenChange`): `.pk-keepbar` lives inside
+   `.pk-phase5`, its own stacking context, at z-index 9 (ui.css); this
+   card's wrapper is scoped there to z-index 8 (ui.css's
+   ".pk-phase5 .pk-upcard-wrap" rule) — harmless while the card stayed
+   short, because it never reached the keep bar's on-screen corner. This
+   round's "How the Keep helps" readout + 12-tier ladder routinely make
+   it tall enough to scroll into that exact spot, and the keep bar (a
+   real z-index, not "auto") wins the paint order there regardless of the
+   card's own content — the chip and Build button show through, crisp,
+   over both the dimmed backdrop and the card's text.
+   `ui/phase5.ts` owns the ACTUAL fix buildSheet.ts uses (hiding the bar
+   via `onOpenChange` — this file exposes the same optional hook below,
+   ready for that wiring) but is a peer's file, not this task's to edit.
+   Until it is wired, this MORE SPECIFIC selector — 3 classes vs. ui.css's
+   2 — outranks the keep bar unconditionally, which is safe: the keep
+   chip is itself hidden whenever `buildSheet` is open, and nothing else
+   opens from the same bar while this card is up (phase5.ts's own
+   `keepChip`/`buildBtn` handlers are mutually exclusive). */
+.pk-phase5 .pk-upcard-wrap.pk-upcard-wrap--open {
+  z-index: 10;
+}
+
+.pk-upcard-bar-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 10px;
+}
+
+.pk-upcard-bar-track {
+  height: 10px;
+  border-radius: 6px;
+  background: rgba(95, 138, 94, 0.16);
+  overflow: hidden;
+}
+
+.pk-upcard-bar-fill {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #7cc283, #a9d97f);
+  border-radius: 6px;
+  transition: width 260ms ease;
+}
+
+.pk-upcard-bar-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Comfort readout ("How the Keep helps") ---------- */
+
+.pk-upcard-comfort {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1.5px dashed rgba(95, 138, 94, 0.25);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pk-upcard-comfort-title {
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.pk-upcard-comfort-empty {
+  font-size: 12px;
+  opacity: 0.65;
+  font-style: italic;
+}
+
+.pk-upcard-comfort-row {
+  display: grid;
+  grid-template-columns: 46px 1fr auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.pk-upcard-comfort-scalar {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.pk-upcard-comfort-label {
+  font-size: 11.5px;
+  font-weight: 700;
+}
+
+.pk-upcard-comfort-track {
+  display: block;
+  height: 6px;
+  border-radius: 4px;
+  background: rgba(95, 138, 94, 0.14);
+  overflow: hidden;
+}
+
+.pk-upcard-comfort-fill {
+  display: block;
+  height: 100%;
+  background: #7cc283;
+  border-radius: 4px;
+}
+
+.pk-upcard-comfort-value {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #3d6b44;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.pk-upcard-comfort-sources {
+  grid-column: 2 / -1;
+  font-size: 9.5px;
+  opacity: 0.55;
+}
+
+.pk-upcard-comfort-sets {
+  font-size: 10.5px;
+  opacity: 0.65;
+  line-height: 1.5;
+}
+
+.pk-upcard-renown {
+  margin-top: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #a8622f;
+}
+
+/* ---------- The road-ahead ladder ---------- */
+
+.pk-upcard-ladder {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.pk-upcard-ladder-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 3px 0;
+}
+
+.pk-upcard-ladder-mark {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.pk-upcard-ladder-row--reached .pk-upcard-ladder-mark {
+  background: #7cc283;
+  color: #fffdf6;
+}
+
+.pk-upcard-ladder-row--next .pk-upcard-ladder-mark {
+  background: #f0b429;
+  color: #fffdf6;
+}
+
+.pk-upcard-ladder-row--locked .pk-upcard-ladder-mark {
+  background: rgba(95, 138, 94, 0.14);
+  color: rgba(61, 74, 61, 0.5);
+}
+
+.pk-upcard-ladder-row--locked {
+  opacity: 0.55;
+}
+
+.pk-upcard-ladder-row--next .pk-upcard-ladder-text {
+  color: #3d6b44;
+}

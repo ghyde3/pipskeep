@@ -28,6 +28,14 @@ const rawSources = import.meta.glob(
     "../../content/milestones.ts",
     "../../content/events.ts",
     "../../content/bountyTemplates.ts",
+    // ROUND 2F (docs/progression-bible.md §8.5): the isolation rule extends
+    // to the building-effects stack — a comfort/rest-speed/etc. effect is a
+    // NEW multiplicative factor applied in core/pips/needs.ts, never an
+    // edit to a rate, so none of these three should ever need to reach for
+    // the isolation-list keys either.
+    "../keep/effects.ts",
+    "../../content/buildingEffects.ts",
+    "../../content/decorSets.ts",
   ],
   { query: "?raw", import: "default", eager: true },
 ) as Record<string, string>;
@@ -57,7 +65,7 @@ describe("retention.isolation — no progression module touches the isolation li
   const entries = Object.entries(rawSources);
 
   it("scanned at least the expected number of files (not a vacuous pass)", () => {
-    expect(entries.length).toBe(10);
+    expect(entries.length).toBe(13);
   });
 
   for (const [path, raw] of entries) {

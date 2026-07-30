@@ -91,7 +91,10 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
     resources: {},
     rngState: {},
     seed: SEED,
-    keep: { level: 3, placements: {} },
+    // ROUND 2F: level 4 unlocks meadow/forest/shore (Shore moved 3 → 4,
+    // progression bible §2.1) — tests below that need a specific tier
+    // override `keep` explicitly.
+    keep: { level: 4, placements: {} },
     jobs: {},
     rosterUpgradePurchased: false,
     eggs: [],
@@ -141,6 +144,8 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
     activeEvents: [],
     keepsakes: {},
     flair: {},
+    keepXp: 0,
+    lastLevelUp: null,
     ...overrides,
   };
 }
