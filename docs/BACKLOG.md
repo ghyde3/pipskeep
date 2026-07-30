@@ -1,0 +1,61 @@
+# Backlog — rounds designed but not started
+
+These lived only in the session's task list, which does not travel with the repo. Written here so any agent, on any machine, can pick them up. Priority order is my recommendation, not a commitment.
+
+Two rounds are **in progress and take precedence** — see the "⏸ PAUSED MID-ROUND" section at the top of `PROGRESS.md`: round 2G (HUD, built but with 4 blockers + 11 majors unfixed) and round 2H (Pip lifecycle, design only). Finish those before starting anything below.
+
+---
+
+## Round 2D — Pip identity & variety
+
+Make every Pip feel like an individual. The owner's observation that started this: the three starter Pips look and read as the same creature.
+
+1. **INDIVIDUAL NAMES (biggest win).** Today `createPipFromGenome` sets `name: contentSpecies[genome.speciesId].name`, so **every Pip is literally named after its species** — three starters all called "Mosspip", and the away sheet reads "Mosspip / Mosspip / Mosspip". Add a warm name pool in `content/` rolled deterministically from the genesis/egg stream, plus player rename. Species becomes a subtitle ("Pipsqueak · Mosspip · Curious"). Migration must not silently rename existing Pips — offer names to Pips still carrying their species name.
+2. **STARTER TRIO = 3 DIFFERENT SPECIES.** Amends spec §7.1, which says "same species, three distinct palettes" — written when Mosspip was the only species. Now there are 7 lines / 14 forms. Preserve the genesis cursor-determinism property: the cursor must advance identically whichever candidate is picked.
+3. **ACCESSORIES BECOME REAL.** `accessorySlots` is a dead trait — it is copied from the species registry into every genome (so not even per-individual), the resolver builds and positions an `accessoryAnchor`, and **nothing is ever attached to it**. Author an accessory set (leaf cap, scarf, flower, shell pauldron, lantern), roll per-INDIVIDUAL, render through the single resolver path. Must work for Piplings, shinies and all 14 forms automatically.
+4. **PER-INDIVIDUAL JITTER.** Deterministic small variation in eye shape/spacing, proportion and marking placement so no two Pips of a species are pixel-identical. Must stay inside the fixed 118×98 sprite box — `keepScene` hit-tests against those module constants.
+
+Open question for the owner: should game-given names be permanent, or renameable? My lean is game-given with rename available but not prominent — the Pip *is* Pipsqueak, you didn't author it.
+
+---
+
+## Round 2I — Real notifications (Web Push)
+
+Unfenced by spec §16 v1.6. The highest-value remaining feature for this genre: PipsKeep runs on timers the player cannot see while the app is closed.
+
+The `notify(event)` seam (`src/ui/notify.ts`) was designed from Phase 4 to route in-app only, with Push as the named extension point.
+
+- Push for: expedition returns, eggs pipping, a Keep tier becoming affordable, and — critically after round 2H — a Pip contracting an ailment and its countdown nearing its end.
+- 2H's promise 1 is "loss is never a surprise". That promise is only honest for a player who is actually looking; push is what makes it true for everyone else.
+- Permission flow must be **earned, not cold** — ask after the first expedition send, when there is something worth being told about.
+- Respect quiet hours; cap per day; every notification type individually toggleable.
+- iOS PWA push needs add-to-home-screen (iOS 16.4+) — detect and explain rather than silently failing.
+- Extend the existing vite-plugin-pwa service worker; do not add a second SW.
+- No new runtime dependency without asking (the §1 allowlist still binds even though §12 is retired).
+
+---
+
+## Round 2J — Economy depth: fifth resource + crafting
+
+**1. FIFTH RESOURCE.** Asked for by rounds 2B, 2C and 2F. Round 2F proved the need arithmetically: with only four resources the most expensive bundle `reachability.test.ts` permits is ~3.5× level 2's cost, so only 5 of the 12 Keep tiers could be priced at all — the rest are XP-gated by necessity rather than design. Source it from the late biomes so the back half of the ladder can cost something real. `RESOURCE_IDS` lives in `core/economy` — a core change, now authorized.
+
+**2. CRAFTING.** The job system was deliberately built as a registry so Crafting could slot in without core changes (spec §6.2). Recipes as content, a crafting station placeable, resources + foods as inputs, outputs that matter: cure items for 2H's ailments, gift items that drive evolution variants, decorations, expedition provisions. Crafting gives accumulating resources a purpose beyond the Keep ladder.
+
+Both must keep `reachability.test.ts` and `balance.test.ts` green; every new cost obtainable from the prior tier's activities.
+
+---
+
+## Round 2K — Attractions & the living Keep
+
+Unfenced by §16 v1.6. The Keep-upgrade registry has carried `effect: "attraction"` as a deliberate no-op since Phase 5.
+
+- **Attractions**: placeables that draw WILD PIPS to the Keep over time — a passive acquisition channel distinct from expedition eggs and breeding. Different attractions appeal to different species/biomes, so what you build shapes who visits. A visitor can be welcomed into the roster (respecting the cap and the Long Meadow) or simply visit and leave.
+- Composes with 2H's mortality: attractions become a **third succession path** alongside lineage eggs and breeding, so a player who loses a Pip has more than one road back.
+- **A living Keep** generally: weather or time-of-day mood, ambient visitors, Pips reacting to each other and to decorations. The Keep is the screen players look at most and is currently static beyond wandering.
+
+---
+
+## Standing recommendations not yet scheduled
+
+- **Day 30 is thin.** Round 2F's design pass said so plainly: day 14 has four named pulls, day 30 has Renown and little else. 2H (individual Pips that develop and are finite) is the main answer; if it lands and day 30 is still thin, that is the next design problem.
+- **Six dead features have shipped so far** — `evolved.variantId`, milestone flair, the Album's bucketed patterns, `state.keepsakes`, Renown's reward, and the loot reveal's XP chip. Spec §16 v1.3 made it a standing rule: *"written to state" and "visible to the player" are separate acceptance criteria.* Every round since has still found one. Keep the mutation-testing stage that catches them.

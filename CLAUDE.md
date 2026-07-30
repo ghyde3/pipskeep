@@ -38,7 +38,12 @@ Run them **one at a time** — they were given disjoint file ownership on purpos
 
 ⚠️ `resumeFromRunId` will NOT work in a new session or machine. That cache lives in `~/.claude/projects/.../workflows/` and is never committed, so a fresh run re-pays the design passes. The scripts themselves are in `.claude/workflows/` and do travel.
 
-Design documents that carry the reasoning (all committed): `docs/content-bible.md`, `retention-bible.md`, `progression-bible.md`, `hud-redesign.md`, `lifecycle-bible.md`. `PIPSKEEP_SPEC.md` §16 holds every amendment — v1.5 made Pips finite (the five promises), v1.6 retired the scope fence.
+Everything a fresh agent needs is committed:
+- `docs/*-bible.md` — the reasoning behind each round (content, retention, progression, lifecycle) plus `hud-redesign.md`.
+- `docs/BACKLOG.md` — the four designed-but-unstarted rounds (2D, 2I, 2J, 2K), in full.
+- `docs/working-agreement.md` — how this project is built: the owner's preferences, the round pattern, and the non-negotiables learned the hard way.
+- `docs/workflow-archive/` — every round's orchestration script, as a pattern library. Reference only; do not re-run them.
+- `PIPSKEEP_SPEC.md` §16 — every amendment. v1.5 made Pips finite (the five promises); v1.6 retired the scope fence.
 
 ## Records
 
