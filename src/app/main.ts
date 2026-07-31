@@ -43,7 +43,7 @@ import {
   rootReducer,
 } from "../core/state";
 import type { GameState } from "../core/state";
-import { collectAlerts } from "./alerts";
+import { collectAlerts, collectCraftAlerts } from "./alerts";
 import type { PipState } from "../core/pips/types";
 import { createKeepScene } from "../render/keepScene";
 import { initUi, notify } from "../ui";
@@ -91,6 +91,12 @@ import { createPipLevelView } from "../ui/pipLevel";
 import { createAilmentView } from "../ui/ailment";
 import { createMemorialView } from "../ui/memorial";
 import { createBreedingView } from "../ui/breeding";
+// Round 2J — the Craft Table's recipe book (docs/economy-bible.md §3–§6.3).
+// Same parallel-module, static-import pattern as everything above: owns its
+// own DOM + CSS, mounts nothing until main.ts says where, reached from the
+// Nook menu exactly like the Album/Long Meadow/Nursery.
+import { createCraftingView } from "../ui/crafting";
+import { setCraftTableTapHandler } from "../render/craftTap";
 // Round 2A sound (amends spec §12): the `sound(slotId)` seam is no longer
 // a no-op — app/audio/ synthesizes every cue procedurally. initSound is
 // the only wiring the app needs; every call site was already in place.
@@ -133,6 +139,9 @@ function generateSeed(clock: Clock): number {
  * still announced). */
 function watchAlerts(prev: GameState, next: GameState): void {
   for (const alert of collectAlerts(prev, next)) notify(alert);
+  // ROUND 2J FIX STAGE — "a craft finished" reaches the player. Silent on a
+  // catch-up transition, where the Doorstep says it instead.
+  for (const alert of collectCraftAlerts(prev, next)) notify(alert);
 }
 
 /** Display name for an expedition id (registry, with a safe fallback). */
@@ -378,10 +387,21 @@ async function startGame(
   // trail passes straight through to the same dispatch; a risky one shows the
   // confirm first. This is promise 1 ("loss is never a surprise") at the only
   // moment it can be kept — BEFORE the player sends someone into danger.
+  // Forward declaration, same `let`-then-assign pattern
+  // `openExpeditionPicker` above uses: the ailment card's "Make one"
+  // affordance reaches into the crafting sheet, which is created a few
+  // lines below. Nothing calls it during any constructor.
+  let openCraftingSheet: (() => void) | null = null;
   const ailmentView = createAilmentView({
     dispatch: (a) => store.dispatch(a),
     getState: () => store.getState(),
     clock,
+    // ⚠️ ROUND 2J FIX STAGE — the load-bearing discoverability seam
+    // (docs/economy-bible.md §6.3). Before this, a player with an ill Pip
+    // and an empty Satchel was told to go and run the trail that made the
+    // Pip ill; the recipe book was reachable only from the Nook menu, and
+    // only if they already suspected crafting was the answer.
+    onOpenCrafting: () => openCraftingSheet?.(),
   });
   const memorialView = createMemorialView({
     dispatch: (a) => store.dispatch(a),
@@ -394,11 +414,30 @@ async function startGame(
     getState: () => store.getState(),
     clock,
   });
+  // Round 2J — the Craft Table's recipe book, reached from the Nook menu
+  // (see the navMenu wiring below) rather than from any lifecycle seam, so
+  // it is created and mounted here alongside its siblings for the same
+  // "exists before initUi/navMenu need it" reason.
+  const craftingView = createCraftingView({
+    dispatch: (a) => store.dispatch(a),
+    getState: () => store.getState(),
+    clock,
+  });
+  openCraftingSheet = () => {
+    ui.closeSurfaces();
+    craftingView.open();
+  };
+  // ROUND 2J FIX STAGE — tapping the bench in the Keep opens its book
+  // (economy-bible §6.3: "a recipe sheet opened from the Craft Table AND
+  // from the nav menu" — only the nav route shipped). Same module-level
+  // seam the egg tap uses; the scene holds no reference to the UI.
+  setCraftTableTapHandler(() => openCraftingSheet?.());
   document.body.append(
     pipLevelView.el,
     ailmentView.el,
     memorialView.el,
     breedingView.el,
+    craftingView.el,
   );
 
   // --- DOM UI overlay ---
@@ -535,6 +574,9 @@ async function startGame(
       pipLevelView.close();
       breedingView.close();
       memorialView.closeLineageBoard();
+      // Round 2J: the Craft Table joins the same one-surface-at-a-time
+      // routine — a Nook destination like every other one above.
+      craftingView.close();
       // Round 2I's settings sheet joins the same routine (it is reached
       // via `onOpenNotifications` below, not this switch, but it must
       // still yield to any OTHER destination the player picks instead).
@@ -543,6 +585,7 @@ async function startGame(
       else if (id === "meadow") sanctuaryView.open();
       else if (id === "today") dailies.open();
       else if (id === "nursery") breedingView.open();
+      else if (id === "crafting") craftingView.open();
       else if (id === "lineage") memorialView.openLineageBoard();
     },
     // ROUND 2H — SHIELD SIX (docs/lifecycle-bible.md §7.7). One dispatch,
@@ -565,6 +608,7 @@ async function startGame(
       pipLevelView.close();
       breedingView.close();
       memorialView.closeLineageBoard();
+      craftingView.close();
       notifySettings.open();
     },
   });
@@ -616,6 +660,7 @@ async function startGame(
   ailmentView.sync(prevState);
   memorialView.sync(prevState);
   breedingView.sync(prevState);
+  craftingView.sync(prevState);
 
   store.subscribe((state) => {
     const prev = prevState;
@@ -634,6 +679,7 @@ async function startGame(
     ailmentView.sync(state);
     memorialView.sync(state);
     breedingView.sync(state);
+    craftingView.sync(state);
     watchAlerts(prev, state);
 
     if (state.lastCareOutcome !== prev.lastCareOutcome && state.lastCareOutcome !== null) {

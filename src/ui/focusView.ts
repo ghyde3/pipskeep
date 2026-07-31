@@ -297,8 +297,21 @@ export interface JobRowModel {
   readonly stationName: string;
   /** "Gathering" — the job registry's display name. */
   readonly jobName: string;
-  /** "every 10 min" cadence chip. */
+  /** "every 10 min" cadence chip — or "by the recipe" for a crafting
+   * station, which has no cadence at all (round 2J fix stage: the Craft
+   * Table's deliberate `intervalMs: 0` rendered as "every 0 min"). */
   readonly cadenceLabel: string;
+  /**
+   * ROUND 2J FIX STAGE — the card's flavor line, CONTENT-OWNED.
+   * `createFocusView` hard-coded one Gathering-Station string ("Steady
+   * paws, steady snacks — the basket fills itself. Almost.") onto every
+   * job card. That was merely inaccurate for the Stockpot and the
+   * Workbench; for the Craft Table it is actively misleading, because
+   * Crafting is the one job that fills no basket on its own — a player
+   * who clocks a Pip in here must go and queue a recipe, and the card
+   * said the opposite.
+   */
+  readonly flavor: string;
   readonly status: JobRowStatus;
   /** Warm one-liner under the row; null when it speaks for itself. */
   readonly note: string | null;
@@ -330,11 +343,16 @@ export function buildJobRows(state: GameState, pip: PipState): JobRowModel[] {
     );
     if (job === undefined) continue;
 
+    const crafting = job.kind === "crafting";
     const base = {
       stationPlacementId: placementId,
       stationName: stationDisplayName(placement.itemId),
       jobName: job.name,
-      cadenceLabel: `every ${formatDurationShort(job.intervalMs)}`,
+      // A crafting station has no interval — its pace is whatever recipe
+      // is queued. Saying "every 0 min" was both meaningless and a
+      // promise the station cannot keep.
+      cadenceLabel: crafting ? "by the recipe" : `every ${formatDurationShort(job.intervalMs)}`,
+      flavor: job.cardFlavor,
     };
 
     if (myJob?.stationPlacementId === placementId) {
@@ -343,7 +361,9 @@ export function buildJobRows(state: GameState, pip: PipState): JobRowModel[] {
         status: "assigned",
         // Content-owned per-job verb (content bible §8.2.4): a Pip at the
         // Stockpot is "simmering away", not "gathering away".
-        note: `${pip.name} is ${job.verbing} away — a little something ${base.cadenceLabel}.`,
+        note: crafting
+          ? `${pip.name} is ${job.verbing} away — queue a recipe from the Craft Table in the Nook menu and they'll get on with it.`
+          : `${pip.name} is ${job.verbing} away — a little something ${base.cadenceLabel}.`,
         assignable: false,
         unassignable: true,
       });
@@ -1405,8 +1425,9 @@ export function createFocusView(deps: FocusViewDeps): FocusView {
 
         const flavor = document.createElement("div");
         flavor.className = "pk-exp-flavor";
-        flavor.textContent =
-          "Steady paws, steady snacks — the basket fills itself. Almost.";
+        // Round 2J fix stage: content-owned, per job — see
+        // `JobRowModel.flavor`.
+        flavor.textContent = jobRow.flavor;
         card.appendChild(flavor);
 
         if (jobRow.note !== null) {

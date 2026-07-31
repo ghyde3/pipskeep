@@ -62,6 +62,26 @@ export interface DecorationDef {
   setId?: string;
   /** Procedural glyph id (bible §4.2) — see `content/icons.ts`. */
   icon: IconSpec;
+  /**
+   * ROUND 2J FIX STAGE (docs/economy-bible.md §4.4) — CRAFT-ONLY. This
+   * decoration has NO Build-sheet price; the only way to get one is to
+   * make it at a Craft Table, which lands a copy on round 2F's Keepsake
+   * Shelf. `cost` is `{}` for these, and both halves are load-bearing:
+   *
+   * - `ui/buildMode.ts`'s catalogue FILTERS them out, so the Build sheet
+   *   never offers a free item. (The Keepsake Shelf section still lists
+   *   any copy you already own — that is where they show up.)
+   * - `core/state.ts`'s PLACE_ITEM REFUSES a craft-only item whose
+   *   keepsake count is 0, so an empty `cost` can never become a
+   *   free-decoration printer.
+   *
+   * Why craft-only at all: `content/recipes.ts`'s own header worked out
+   * that a crafted decoration which is ALSO directly buyable is a recipe
+   * a rational player never uses (buying is instant and ties up no Pip) —
+   * a dead feature by spec §16 v1.3's standing rule, from a quieter door.
+   * The recipe has to be the only door, or it is not a door.
+   */
+  craftOnly?: true;
 }
 
 export const decorations: readonly DecorationDef[] = [
@@ -436,5 +456,82 @@ export const decorations: readonly DecorationDef[] = [
     effects: [{ kind: "comfort", need: "energy", decayReduction: 0.02 }],
     setId: "lantern-ember",
     icon: { motif: "stone" },
+  },
+  // -------------------------------------------------------------------
+  // ROUND 2J FIX STAGE — THE FIVE CRAFT-ONLY KEEPSAKES
+  // (docs/economy-bible.md §4.4). These are the round's answer to its own
+  // §5 sink problem, and the fix-stage blocker that named it: every
+  // other sink in the game is FINITE (the ladder is 11 purchases; the
+  // catalogue is 45 items), so a tier-12 player had a permanent lodestone
+  // income and nothing left to spend it on. A craft-only decoration is
+  // repeatable, permanent, and the only thing in the game whose price is
+  // paid in the late resource — you can place as many Cairns as you have
+  // grid for, forever.
+  //
+  // ⚠️ Each carries NO `cost` (see `craftOnly`) and NO `setId`: they are
+  // not members of the six themed sets, so they cannot short-cut a set
+  // bonus that the six themed groups are pacing.
+  //
+  // Effects are deliberately SMALL and every one of them feeds a channel
+  // that is already summed-and-clamped somewhere: `remedy` at
+  // `crafting.buildingRemedyMax`, `craftSpeed` at `crafting.speedMin`,
+  // `expeditionSpeed` at `effectCaps.expeditionSpeedMin`, `xpBonus` at
+  // `effectCaps.xpBonusMax`. Ten Cairns is not an immunity.
+  // -------------------------------------------------------------------
+  {
+    id: "lodestone-cairn",
+    name: "Lodestone Cairn",
+    cost: {},
+    craftOnly: true,
+    footprint: { w: 1, h: 1 },
+    spriteRef: "deco/lodestone-cairn",
+    flavor: "Three stones, balanced, pointing. Trips out go a little more carefully near it.",
+    effects: [{ kind: "remedy", contractReduction: 0.04, cureBonus: 0 }],
+    icon: { motif: "stone" },
+  },
+  {
+    id: "herb-rail",
+    name: "Herb Rail",
+    cost: {},
+    craftOnly: true,
+    footprint: { w: 1, h: 1 },
+    spriteRef: "deco/herb-rail",
+    flavor:
+      "Everything drying in one place, where you can reach it at three in the morning.",
+    effects: [{ kind: "remedy", contractReduction: 0, cureBonus: 0.03 }],
+    icon: { motif: "leaf" },
+  },
+  {
+    id: "chime-rail",
+    name: "Chime Rail",
+    cost: {},
+    craftOnly: true,
+    footprint: { w: 2, h: 1 },
+    spriteRef: "deco/chime-rail",
+    flavor: "Lodestone rings differently. Work goes quicker when something is keeping time.",
+    effects: [{ kind: "craftSpeed", multiplier: 0.94 }],
+    icon: { motif: "arch" },
+  },
+  {
+    id: "compass-rose",
+    name: "Compass Rose",
+    cost: {},
+    craftOnly: true,
+    footprint: { w: 2, h: 2 },
+    spriteRef: "deco/compass-rose",
+    flavor: "Laid into the ground at the gate. Nobody gets lost on the way back.",
+    effects: [{ kind: "expeditionSpeed", multiplier: 0.96 }],
+    icon: { motif: "spark" },
+  },
+  {
+    id: "wayhome-lantern",
+    name: "Wayhome Lantern",
+    cost: {},
+    craftOnly: true,
+    footprint: { w: 2, h: 2 },
+    spriteRef: "deco/wayhome-lantern",
+    flavor: "The biggest light the Keep has. It is not for finding your way out.",
+    effects: [{ kind: "xpBonus", fraction: 0.03 }],
+    icon: { motif: "lantern" },
   },
 ];

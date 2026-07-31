@@ -193,7 +193,13 @@ const TRINKET_AND_TOOL = [
   "Parasol",
   "Buckle",
   "Tassel",
-  "Compass",
+  // ROUND 2J FIX STAGE: "Compass" moved out — the crafted Compass Rose
+  // (a craft-only decoration) claimed the word, and docs/economy-bible.md
+  // §6.4 is explicit that when the derived forbidden-vocabulary set and
+  // the name pool collide, THE POOL ENTRY MOVES, never the content noun.
+  // "Sextant" keeps the same nautical-instrument register and the same
+  // 140-name count.
+  "Sextant",
   "Anchor",
   "Quill",
   "Inkwell",

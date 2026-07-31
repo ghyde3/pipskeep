@@ -89,7 +89,18 @@ export const keepLevels: readonly KeepLevelDef[] = [
     level: 4,
     cost: costFor(4),
     headline: "The Shore, and Cozy Bunks",
-    unlocks: ["Shore expedition", "Cozy Bunks becomes purchasable (roster 3 → 5)"],
+    // ROUND 2J (docs/economy-bible.md §3.1/§6.3) — the Craft Table lands
+    // one tier before the Lanterngrotto, so the Build sheet's own
+    // road-ahead names the answer to "my Pip came home ill" before the
+    // riskiest trail opens. Named here, not just left to the Build sheet's
+    // generic "hosts a job" card copy, because this is the one surface the
+    // bible's visibility table calls out by file (§6.3: "tier 4's `unlocks`
+    // list in `content/keep.ts`").
+    unlocks: [
+      "Shore expedition",
+      "Cozy Bunks becomes purchasable (roster 3 → 5)",
+      "the Craft Table — a Pip can craft what the Keep needs, including a cure",
+    ],
   },
   {
     level: 5,

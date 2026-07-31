@@ -39,6 +39,7 @@ import { keepLevels, keepUpgrades } from "../../content/keep";
 import { placeables } from "../../content/placeables";
 import { decorations } from "../../content/decorations";
 import { jobs } from "../../content/jobs";
+import { recipes } from "../../content/recipes";
 import { createRng } from "../rng";
 import { rollExpeditionLoot } from "../expeditions";
 import type { ExpeditionView } from "../expeditions";
@@ -231,10 +232,42 @@ const pricedPlaceables: readonly PricedThing[] = placeables.map((item) => ({
   payableAt: item.unlockKeepLevel,
 }));
 
+/**
+ * ROUND 2J FIX STAGE (docs/economy-bible.md §6.4 items 1–2) — RECIPES JOIN
+ * THE GUARD SUITE, on BOTH layers.
+ *
+ * The round shipped a fifth registry that authors resource prices —
+ * `content/recipes.ts` — and did not add it here. Structural cover was
+ * reimplemented inside `content/validate.ts` (that round's content agent
+ * could not edit this file), which is genuinely data-driven and does bind
+ * shipped content; what was missing was the RATE layer, the one this
+ * file's own header says exists to catch "the softer failure where
+ * something is technically reachable at a 0.5% drop weight". A recipe
+ * priced in something obtainable but at a glacial drop rate would have
+ * passed unnoticed.
+ *
+ * `payableAt = unlockKeepLevel` — a recipe is priced like a placeable, not
+ * like a Keep level: you make it while standing AT the tier it appears on,
+ * not with the tier below's income.
+ *
+ * Only the RESOURCE half is modelled here, because this suite models
+ * expeditions as the resource faucet and nothing else. The Satchel-item
+ * half (glowcap, emberloaf, tideroll) is checked structurally by
+ * `content/validate.ts`'s `itemsObtainableFromExpeditionsAt`, which
+ * understands food drops; duplicating it here would need a second, weaker
+ * model of the same thing.
+ */
+const pricedRecipes: readonly PricedThing[] = Object.values(recipes).map((recipe) => ({
+  label: `Recipe "${recipe.id}"`,
+  cost: recipe.resources as ResourceBundle,
+  payableAt: recipe.unlockKeepLevel,
+}));
+
 const allPricedThings: readonly PricedThing[] = [
   ...pricedKeepLevels,
   ...pricedKeepUpgrades,
   ...pricedPlaceables,
+  ...pricedRecipes,
 ];
 
 // ---------------------------------------------------------------------------
@@ -242,6 +275,20 @@ const allPricedThings: readonly PricedThing[] = [
 describe("the deadlock that shipped (regression pins)", () => {
   it("Wood is obtainable at Keep level 1", () => {
     expect([...resourcesObtainableAt(1)]).toContain("wood");
+  });
+
+  // ROUND 2J (docs/economy-bible.md §1.3) — the fifth resource. Structural
+  // reachability is the layer that caught the two shipped deadlocks above;
+  // this is the same claim for lodestone, pinned directly rather than
+  // relying only on the data-driven sweep below to notice it.
+  it("Lodestone is NOT obtainable before Keep level 3 (it is a late resource by design)", () => {
+    expect([...resourcesObtainableAt(1)]).not.toContain("lodestone");
+    expect([...resourcesObtainableAt(2)]).not.toContain("lodestone");
+  });
+
+  it("Lodestone IS obtainable from Keep level 3 onward (the Snowdrift, then the Shore)", () => {
+    expect([...resourcesObtainableAt(3)]).toContain("lodestone");
+    expect([...resourcesObtainableAt(4)]).toContain("lodestone");
   });
 
   it("every resource Keep level 2 costs drops at Keep level 1", () => {
@@ -305,6 +352,27 @@ describe("structural reachability: every price is payable with already-unlocked 
     expect(pricedKeepLevels.length).toBeGreaterThan(0);
     expect(pricedKeepUpgrades.length).toBeGreaterThan(0);
     expect(pricedPlaceables.length).toBe(placeables.length);
+    // ROUND 2J FIX STAGE — recipes are covered the same data-driven way, so
+    // a sixth recipe is policed on both layers with no edit here.
+    expect(pricedRecipes.length).toBe(Object.keys(recipes).length);
+    expect(pricedRecipes.length).toBeGreaterThan(0);
+  });
+
+  /**
+   * ROUND 2J FIX STAGE — I2 (docs/economy-bible.md §0.2), asserted where
+   * the guards live rather than in a UI test file. A recipe that MINTED a
+   * base resource would be invisible to `resourcesObtainableAt` — this
+   * whole suite models expeditions as the only faucet — so the gating
+   * claim ("lodestone does not exist below tier 3") could be broken
+   * silently by a content edit two directories away.
+   */
+  it("no recipe outputs a base resource — crafting consumes the faucet, it never becomes one", () => {
+    for (const recipe of Object.values(recipes)) {
+      expect(
+        [...RESOURCE_IDS],
+        `recipe "${recipe.id}" outputs "${recipe.output.itemId}"`,
+      ).not.toContain(recipe.output.itemId);
+    }
   });
 
   it("every decoration is buyable by the time the Keep is fully built", () => {

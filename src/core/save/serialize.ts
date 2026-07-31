@@ -69,8 +69,19 @@ import type { Egg, HatchOutcome } from "../eggs";
 import type { AssignExpeditionOutcome, PendingReveal } from "../expeditions";
 import type { KeepState, Placement, PlacementId } from "../keep";
 import type { JobAssignment, JobOutcome, JobsByPip } from "../keep/jobs";
+import type { CraftCompletion, CraftOrder, CraftOutcome, CraftsByStation } from "../crafting";
 
 /**
+ * v11 (round 2J — docs/economy-bible.md §3, save schema): ONE new
+ * REQUIRED top-level slice — `crafts` (`PlacementId → CraftOrder`, the
+ * Craft Table's standing orders). Migrated saves backfill it to `{}`:
+ * nobody could have queued a recipe before this round shipped, so an
+ * empty book is the only honest value — never fabricated progress, never
+ * a lost one either (`MIGRATIONS[10]`). The two transient echoes
+ * (`lastCraftOutcome`, `lastCraftCompletions`) are OPTIONAL, same
+ * `undefined ≡ absent` precedent `lineageEggs`/`lastLossOutcome` already
+ * use, so no migration touches them at all.
+ *
  * v10 (round 2D — docs/BACKLOG.md "Round 2D — Pip identity & variety",
  * spec §7.1/§7.3 amended): INDIVIDUAL NAMES + the accessory seam.
  *
@@ -179,7 +190,7 @@ import type { JobAssignment, JobOutcome, JobsByPip } from "../keep/jobs";
  * `nextPlacementNumber`, per-pip `evolved` records, and the two new
  * transient outcome echoes (job, evolve). v2, Phase 4: keepLevel, eggs,
  * pendingReveals, id counters.) */
-export const CURRENT_SCHEMA_VERSION = 10;
+export const CURRENT_SCHEMA_VERSION = 11;
 
 /** The on-disk envelope (spec §8). */
 export interface SaveBlob {
@@ -774,6 +785,29 @@ function validateJobs(value: unknown, path: string): JobsByPip {
   return out;
 }
 
+/** v11 (round 2J, docs/economy-bible.md §3) — the Craft Table's standing
+ * orders, keyed by station `PlacementId`. Deep-validated (unlike the
+ * transient `last*Outcome` echoes below): the sim derives a craft's
+ * remaining time from `startedAt + effectiveMs` on every load, so a
+ * silently-wrong field here would misprice or misdate a real in-flight
+ * craft rather than just confuse a UI diff. */
+function validateCrafts(value: unknown, path: string): CraftsByStation {
+  const rec = expectRecord(value, path);
+  const out: Record<PlacementId, CraftOrder> = {};
+  for (const [placementId, order] of Object.entries(rec)) {
+    const orderPath = p(path, placementId);
+    const orderRec = expectRecord(order, orderPath);
+    out[placementId] = {
+      pipId: expectString(orderRec["pipId"], p(orderPath, "pipId")),
+      recipeId: expectString(orderRec["recipeId"], p(orderPath, "recipeId")),
+      startedAt: expectFiniteNumber(orderRec["startedAt"], p(orderPath, "startedAt")),
+      effectiveMs: expectFiniteNumber(orderRec["effectiveMs"], p(orderPath, "effectiveMs")),
+      queue: validateStringArray(orderRec["queue"], p(orderPath, "queue")),
+    };
+  }
+  return out;
+}
+
 /** Onboarding progress (v4, spec §10.1): the sim reads `completed`
  * (boot decides whether to resume the guided beats), so it is deeply
  * validated, unlike the transient echoes below. */
@@ -1162,6 +1196,10 @@ function validateGameState(value: unknown, path: string): GameState {
     seed: expectFiniteNumber(rec["seed"], p(path, "seed")),
     keep,
     jobs,
+    // v11 (round 2J) — required: `MIGRATIONS[10]` backfills `{}` for
+    // every pre-2J save, so a blob reaching here without it is genuinely
+    // malformed, not merely old (same contract as `flair`/`keepXp`).
+    crafts: validateCrafts(rec["crafts"], p(path, "crafts")),
     rosterUpgradePurchased: expectBoolean(
       rec["rosterUpgradePurchased"],
       p(path, "rosterUpgradePurchased"),
@@ -1284,7 +1322,43 @@ function validateGameState(value: unknown, path: string): GameState {
     ...(rec["settings"] !== undefined
       ? { settings: validateSettings(rec["settings"], p(path, "settings")) }
       : {}),
+    // v11 (round 2J) — the ENQUEUE_CRAFT/CANCEL_CRAFT echo. Transient
+    // like every other `last*Outcome`, so shape-checked only; OPTIONAL
+    // for the same reason as `lineageEggs` above.
+    ...(rec["lastCraftOutcome"] !== undefined
+      ? {
+          lastCraftOutcome: passThroughTransient(
+            rec["lastCraftOutcome"],
+            p(path, "lastCraftOutcome"),
+          ) as CraftOutcome | null,
+        }
+      : {}),
+    // v11 — craft completions from the most recent TICK/CATCHUP. An
+    // ARRAY (unlike the object-shaped `last*Outcome` echoes), so it gets
+    // its own light shape check rather than `passThroughTransient`'s
+    // record contract; still never read by the sim (UI/XP-diff only).
+    ...(rec["lastCraftCompletions"] !== undefined
+      ? {
+          lastCraftCompletions: validateCraftCompletions(
+            rec["lastCraftCompletions"],
+            p(path, "lastCraftCompletions"),
+          ),
+        }
+      : {}),
   };
+}
+
+/** v11 — shape-check only (transient, never read by the sim): an array
+ * of plain objects, passed through unchanged (same discipline
+ * `passThroughTransient` uses for the object-shaped echoes). */
+function validateCraftCompletions(
+  value: unknown,
+  path: string,
+): readonly CraftCompletion[] {
+  if (!Array.isArray(value)) {
+    fail("invalid-field", path, "expected an array");
+  }
+  return value.map((entry, i) => expectRecord(entry, p(path, String(i)))) as unknown as readonly CraftCompletion[];
 }
 
 /** v9 — `GameState.settings`. Every field optional, `undefined ≡ off`. */

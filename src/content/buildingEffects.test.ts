@@ -61,17 +61,60 @@ describe("every authored BuildingEffect strictly helps (bible §0.3/§3.1 rule 1
         case "job":
           expect(effect.jobId.length, label).toBeGreaterThan(0);
           break;
+        // ROUND 2J FIX STAGE — the three kinds this round wired. "Every
+        // effect strictly HELPS" applies to all three: a remedy may carry
+        // either half alone (0 is legal on one side, negative never is), a
+        // longevity bonus is always positive, and a craftSpeed multiplier
+        // is always < 1 (faster), like every other rate channel.
+        case "remedy":
+          expect(effect.contractReduction, label).toBeGreaterThanOrEqual(0);
+          expect(effect.cureBonus, label).toBeGreaterThanOrEqual(0);
+          expect(
+            effect.contractReduction + effect.cureBonus,
+            label,
+          ).toBeGreaterThan(0);
+          break;
+        case "longevity":
+          expect(effect.bonus, label).toBeGreaterThan(0);
+          break;
+        case "craftSpeed":
+          expect(effect.multiplier, label).toBeGreaterThan(0);
+          expect(effect.multiplier, label).toBeLessThan(1);
+          break;
       }
     });
   }
 });
 
-describe("round 2H: the Poultice Shelf (bible §3.5)", () => {
-  it("exists, is a real placeable, and carries no BuildingEffect (see content/buildingEffects.ts's round 2H note)", () => {
+describe("round 2H's Poultice Shelf, wired at last (round 2J fix stage)", () => {
+  // This test used to assert `effects === []` and call it correct, citing
+  // content/buildingEffects.ts's round-2H note. That note said the wiring
+  // was "the next round's" — and until this one, no round did it, so the
+  // shelf was a tier-5 headline that did literally nothing.
+  it("carries a real remedy effect, so the tier-5 headline is not a placebo", () => {
     const shelf = placeables.find((p) => p.id === "poultice-shelf");
     expect(shelf).toBeDefined();
-    expect(shelf?.effects ?? []).toEqual([]);
+    expect(shelf?.effects).toEqual([
+      { kind: "remedy", contractReduction: 0.1, cureBonus: 0.05 },
+    ]);
     expect(shelf?.unlockKeepLevel).toBe(5);
+  });
+
+  it("the three placeables docs/lifecycle-bible.md §2.2 claimed carried `longevity` actually do", () => {
+    const bonusOf = (id: string): number => {
+      const effects = placeables.find((p) => p.id === id)?.effects ?? [];
+      for (const effect of effects) if (effect.kind === "longevity") return effect.bonus;
+      return 0;
+    };
+    expect(bonusOf("nest-warmer")).toBe(0.06);
+    expect(bonusOf("sun-bunks")).toBe(0.1);
+    expect(bonusOf("larder")).toBe(0.05);
+    // The bible's own "a devoted player's Pip lives 15.6 days" depends on
+    // these three summing to 0.21 under the shipped 0.25 cap.
+    expect(bonusOf("nest-warmer") + bonusOf("sun-bunks") + bonusOf("larder")).toBeCloseTo(
+      0.21,
+      10,
+    );
   });
 });
 
@@ -158,22 +201,43 @@ describe("decoration set registry (bible §3.5)", () => {
 });
 
 describe("every shipped decoration is now mechanical, not cosmetic-only (the owner's 'just lovely' complaint)", () => {
-  it("all 20 shipped decorations carry at least one effect", () => {
+  /**
+   * ROUND 2J FIX STAGE — the five CRAFT-ONLY keepsakes are decorations in
+   * the registry but deliberately carry no `setId`: they are not members
+   * of the six themed sets (they must not short-cut a set bonus the six
+   * groups are pacing), and they never appear in the Build sheet's set
+   * groups because `buildCatalog` filters them out entirely.
+   *
+   * They are held to the STRICTER half of the rule below — every one of
+   * them carries an effect — just not to set membership.
+   */
+  const buyable = decorations.filter((d) => d.craftOnly !== true);
+
+  it("every shipped decoration carries at least one effect", () => {
     for (const d of decorations) {
       expect(d.effects?.length ?? 0, d.id).toBeGreaterThan(0);
     }
   });
 
-  it("all 20 shipped decorations carry a setId", () => {
-    for (const d of decorations) {
+  it("every BUYABLE decoration carries a setId", () => {
+    for (const d of buyable) {
       expect(d.setId, d.id).toBeDefined();
     }
   });
 
   it("every decoration's setId names a real set", () => {
     const knownSetIds = new Set(decorSets.map((s) => s.id));
-    for (const d of decorations) {
+    for (const d of buyable) {
       expect(knownSetIds.has(d.setId ?? ""), d.id).toBe(true);
+    }
+  });
+
+  it("no craft-only keepsake claims a set membership or a purchase price", () => {
+    const craftOnly = decorations.filter((d) => d.craftOnly === true);
+    expect(craftOnly.length).toBe(5);
+    for (const d of craftOnly) {
+      expect(d.setId, d.id).toBeUndefined();
+      expect(Object.keys(d.cost), d.id).toEqual([]);
     }
   });
 });

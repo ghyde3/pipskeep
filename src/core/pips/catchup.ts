@@ -216,6 +216,19 @@ export interface CatchupSummary {
    * "your Keep kept working" line the Doorstep was missing.
    */
   readonly produced?: Readonly<Record<string, number>>;
+  /**
+   * ROUND 2J FIX STAGE — recipes a staffed Craft Table finished during the
+   * absence (`recipeId → count`), same provenance as `keepXpGained` and
+   * `produced` above: `core/state.ts`'s `recordCatchupGains` stamps it
+   * after the pass, from `lastCraftCompletions`.
+   *
+   * It cannot be derived from `produced`, which is a RESOURCE delta only —
+   * crafted outputs land in `inventory` or `keepsakes` and could never
+   * appear there. That is precisely why a player who queued three
+   * Poultices, closed the app overnight and came back was told nothing
+   * about them (the round's own §6.3 "A craft finished" row).
+   */
+  readonly crafted?: Readonly<Record<string, number>>;
 }
 
 export interface CatchupResult<S extends CatchupState> {

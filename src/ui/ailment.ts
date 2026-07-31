@@ -43,6 +43,11 @@ import { contractReductionFor } from "../core/pips/level";
 import { pipSeason } from "../core/pips/lifecycle";
 import type { Clock } from "../core/clock";
 import type { GameAction, GameState } from "../core/state";
+import { recipes as contentRecipes } from "../content/recipes";
+import type { RecipeDef } from "../content/recipes";
+import { jobs as contentJobs } from "../content/jobs";
+import { formatBundle, formatMissing, missingFor } from "./buildMode";
+import { formatDurationShort } from "./focusView";
 import { buildPortraitEl } from "./pipdex";
 import type { PortraitVisual } from "./pipdex";
 import { sound } from "../app/sound";
@@ -152,10 +157,46 @@ export interface AilmentCardModel {
    * path gated on knowledge the game never gives is not a recovery path.
    */
   readonly poulticeSourceHint: string | null;
+  /**
+   * ⚠️ ROUND 2J FIX STAGE — THE "MAKE ONE" AFFORDANCE, and the whole
+   * reason the Poultice recipe exists.
+   *
+   * Round 2H's cruelty audit: "the only working cure was undiscoverable".
+   * Round 2J made the cure CRAFTABLE and then left this card — the one
+   * surface a frightened player is actually looking at — pointing them
+   * back down the trail that made the Pip ill. Played it: Keep level 4,
+   * Craft Table placed, 210 fiber and 60 lodestone in the bank, a Pip with
+   * Chillshake and zero Poultices, and the card read "[No Poultice on
+   * hand] (disabled) / Poultices turn up on the deep trails". The player
+   * could have made one in 75 minutes, guaranteed, and the game never said
+   * so. Economy-bible §6.3 flags this row with a ⚠️ and calls it "the
+   * load-bearing one".
+   *
+   * `null` when the player is holding a Poultice (the button above is the
+   * answer) or when the recipe registry has no cure recipe at all.
+   */
+  readonly makeOne: MakeOneModel | null;
   /** Shield six (bible §7.6): the Long Meadow freezes the countdown, for
    * as long as the player needs. Offered here because this card is where
    * a frightened player actually is. */
   readonly pauseHint: string;
+}
+
+/** The "Make one" row: a label, a warm explanation, and whether tapping it
+ * can lead anywhere yet. The button is ALWAYS offered once the recipe is a
+ * real thing in this save — a locked recipe you can see is the carrot; an
+ * invisible one teaches nothing. */
+export interface MakeOneModel {
+  /** "Make one" — the button. */
+  readonly label: string;
+  /** "6 Fiber + 1 Lodestone, about 1 h 15 min at a Craft Table." */
+  readonly costLine: string;
+  /** What stands in the way right now, or null when nothing does. */
+  readonly blockedLine: string | null;
+  /** False only when the Keep is below the recipe's own tier — the sheet
+   * still opens (it shows the locked card and its tier), but the copy says
+   * so first rather than letting the player tap into a dead end. */
+  readonly unlocked: boolean;
 }
 
 /** Bible §3.5's devoted-care route, in the player's words. Names the
@@ -186,7 +227,7 @@ const NEED_WORDS: Readonly<Record<string, string>> = {
 /** `null` when the Pip does not resolve or is not currently ailing —
  * defensive; the caller should not have offered the tap. */
 export function buildAilmentCardModel(
-  state: Pick<GameState, "pips" | "inventory">,
+  state: Pick<GameState, "pips" | "inventory" | "keep" | "resources" | "jobs">,
   pipId: PipId,
 ): AilmentCardModel | null {
   const pip = state.pips[pipId];
@@ -223,14 +264,90 @@ export function buildAilmentCardModel(
     freeChanceHint: freeChanceHint(pip, floor),
     poulticeSourceHint:
       (state.inventory[POULTICE_ITEM_ID] ?? 0) > 0 ? null : POULTICE_SOURCE_HINT,
+    makeOne:
+      (state.inventory[POULTICE_ITEM_ID] ?? 0) > 0 ? null : buildMakeOneModel(state),
     pauseHint: `Not ready? Send ${pip.name} to the Long Meadow — nothing gets worse while they're there, and you can ask them home any time.`,
   };
 }
 
 /** Named from the registry, so adding or renaming a risky biome can never
  * leave this copy stale (the same generated-not-authored discipline
- * `ui/itemsSheet.ts`'s `foodEffectLine` uses). */
-export const POULTICE_SOURCE_HINT = `Poultices turn up on the deep trails — ${riskyBiomeNames().join(", ")}.`;
+ * `ui/itemsSheet.ts`'s `foodEffectLine` uses).
+ *
+ * ROUND 2J FIX STAGE — it now names BOTH routes. The trails are the lucky
+ * one; the bench is the certain one, and until this round the card only
+ * ever mentioned the route that also causes the illness. */
+export const POULTICE_SOURCE_HINT = `Poultices turn up on the deep trails — ${riskyBiomeNames().join(", ")} — or you can make one at the Craft Table.`;
+
+/**
+ * THE CURE RECIPE, found by what it OUTPUTS rather than by id: the card
+ * must never disagree with the registry about how a Poultice is made, and
+ * "the recipe whose output is the cure item" is the honest definition.
+ */
+function cureRecipe(): RecipeDef | undefined {
+  return Object.values(contentRecipes).find(
+    (recipe) => recipe.output.kind === "item" && recipe.output.itemId === POULTICE_ITEM_ID,
+  );
+}
+
+/** Every placed Craft Table, by placement id. */
+function craftingStationPlacementIds(
+  state: Pick<GameState, "keep">,
+): readonly string[] {
+  const stationItemIds = new Set<string>();
+  for (const job of Object.values(contentJobs)) {
+    if (job.kind === "crafting") stationItemIds.add(job.stationItemId);
+  }
+  return Object.entries(state.keep.placements)
+    .filter(([, placement]) => stationItemIds.has(placement.itemId))
+    .map(([placementId]) => placementId);
+}
+
+export function buildMakeOneModel(
+  state: Pick<GameState, "keep" | "resources" | "jobs">,
+): MakeOneModel | null {
+  const recipe = cureRecipe();
+  if (recipe === undefined) return null;
+
+  const costLine = `${formatBundle(recipe.resources)} · about ${formatDurationShort(recipe.durationMs)} at a Craft Table.`;
+  const unlocked = state.keep.level >= recipe.unlockKeepLevel;
+  if (!unlocked) {
+    return {
+      label: "See the recipe",
+      costLine,
+      blockedLine: `The Craft Table opens at Keep level ${recipe.unlockKeepLevel}.`,
+      unlocked: false,
+    };
+  }
+
+  const stations = craftingStationPlacementIds(state);
+  if (stations.length === 0) {
+    return {
+      label: "Make one",
+      costLine,
+      blockedLine: "Build a Craft Table from the Build sheet first — it's on the Build sheet now.",
+      unlocked: true,
+    };
+  }
+
+  const staffed = stations.some((placementId) =>
+    Object.values(state.jobs).some((job) => job.stationPlacementId === placementId),
+  );
+  if (!staffed) {
+    return {
+      label: "Make one",
+      costLine,
+      blockedLine: "Nobody's working the Craft Table — put a Pip on it from their own page.",
+      unlocked: true,
+    };
+  }
+
+  const missing = missingFor(state.resources, recipe.resources);
+  if (Object.keys(missing).length > 0) {
+    return { label: "Make one", costLine, blockedLine: formatMissing(missing), unlocked: true };
+  }
+  return { label: "Make one", costLine, blockedLine: null, unlocked: true };
+}
 
 function riskyBiomeNames(): readonly string[] {
   const names: string[] = [];
@@ -329,6 +446,14 @@ export interface AilmentViewDeps {
   dispatch(action: GameAction): void;
   getState(): GameState;
   clock: Clock;
+  /**
+   * ROUND 2J FIX STAGE — open the recipe book, scrolled to nothing in
+   * particular: the Poultice is the first tier-4 recipe in the book, so
+   * "open it" is enough. Optional so every existing construction site
+   * (and every test) keeps compiling; when it is absent the "Make one"
+   * button simply closes the card, which is honest rather than broken.
+   */
+  onOpenCrafting?: () => void;
 }
 
 export interface AilmentView {
@@ -503,6 +628,37 @@ export function createAilmentView(deps: AilmentViewDeps): AilmentView {
     });
     actions.appendChild(poulticeBtn);
 
+    // ⚠️ ROUND 2J FIX STAGE — "MAKE ONE", the round's own named fix for
+    // 2H's cruelty finding. Shown in exactly the situation the disabled
+    // button above creates: an ill Pip and an empty Satchel. Tapping opens
+    // the recipe book, which is otherwise reachable only from the Nook
+    // menu — i.e. only if the player already suspected crafting was the
+    // answer.
+    if (model.makeOne !== null) {
+      const make = document.createElement("button");
+      make.type = "button";
+      make.className = "pk-ailment-makeone";
+      make.textContent = model.makeOne.label;
+      make.addEventListener("click", () => {
+        sound("ui.tap");
+        closeCard();
+        deps.onOpenCrafting?.();
+      });
+      actions.appendChild(make);
+
+      const cost = document.createElement("div");
+      cost.className = "pk-ailment-hint pk-ailment-hint--makeone";
+      cost.textContent = model.makeOne.costLine;
+      actions.appendChild(cost);
+
+      if (model.makeOne.blockedLine !== null) {
+        const blocked = document.createElement("div");
+        blocked.className = "pk-ailment-hint pk-ailment-hint--blocked";
+        blocked.textContent = model.makeOne.blockedLine;
+        actions.appendChild(blocked);
+      }
+    }
+
     // Where poultices come from — shown only when there are none to give,
     // i.e. exactly when the disabled button above is a dead end.
     if (model.poulticeSourceHint !== null) {
@@ -565,7 +721,10 @@ export function createAilmentView(deps: AilmentViewDeps): AilmentView {
           ? `${model.pipName} has already come through ${model.ailmentName ?? "this"} once — she can't catch it again.`
           : `About ${model.effectiveChancePct}% chance of coming home with ${model.ailmentName ?? "something"}. ` +
             `If it happens you'll see it coming days ahead, and good care alone gives a free chance to shake it off every day. ` +
-            `A Poultice makes it likelier still — the deep trails drop them.`;
+            // ROUND 2J FIX STAGE — the sentence used to end "the deep
+            // trails drop them", i.e. it answered "what can I do" with
+            // "run the dangerous trail again".
+            `A Poultice makes it likelier still — the deep trails drop them, and the Craft Table can make one.`;
         riskPanel.appendChild(detail);
       }
 

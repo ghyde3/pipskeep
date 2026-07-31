@@ -36,11 +36,33 @@ describe("the 12-tier Keep ladder", () => {
     }
   });
 
-  it("only the five tiers the bible prices (2, 3, 5, 7, 9) cost resources — the rest are XP-only", () => {
+  it("round 2J: all eleven non-starting tiers are priced (the fifth resource lets the whole ladder cost something real)", () => {
     const pricedTiers = keepLevels
       .filter((l) => Object.keys(l.cost).length > 0)
       .map((l) => l.level);
-    expect(pricedTiers).toEqual([2, 3, 5, 7, 9]);
+    expect(pricedTiers).toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+  });
+
+  it("round 2J: tiers 2 and 3 stay byte-identical to the shipped on-ramp (untouched by the re-pricing)", () => {
+    expect(keepLevels.find((l) => l.level === 2)!.cost).toEqual({ wood: 5, fiber: 6 });
+    expect(keepLevels.find((l) => l.level === 3)!.cost).toEqual({ wood: 22, fiber: 14 });
+  });
+
+  it("round 2J: tier 4 is deliberately lodestone-free (it is the tier that unlocks the Shore, lodestone's own faucet)", () => {
+    const tier4 = keepLevels.find((l) => l.level === 4)!;
+    expect(tier4.cost.lodestone).toBeUndefined();
+  });
+
+  it("round 2J: every resource column is non-decreasing tier over tier — a later tier never asks for less", () => {
+    const resourceIds = ["wood", "fiber", "shell", "driftwood", "lodestone"] as const;
+    for (const resourceId of resourceIds) {
+      let prev = 0;
+      for (const level of keepLevels) {
+        const amount = level.cost[resourceId] ?? 0;
+        expect(amount, `tier ${level.level} ${resourceId}`).toBeGreaterThanOrEqual(prev);
+        prev = amount;
+      }
+    }
   });
 
   it("every tier's unlock list names something a player can look forward to (non-empty, real words)", () => {

@@ -37,6 +37,27 @@ export interface JobDef {
    * instead (content bible §8.2.4) — job-specific, so "the basket can
    * wait" doesn't describe a pot. */
   restingNote: string;
+  /**
+   * ROUND 2J FIX STAGE — the warm one-liner on the focus view's job card.
+   * `ui/focusView.ts` hard-coded ONE Gathering-Station string ("Steady
+   * paws, steady snacks — the basket fills itself. Almost.") onto every
+   * job card in the game, so the Stockpot, the Workbench and the Craft
+   * Table all described a basket. For Crafting that is not merely wrong
+   * but misleading — it is the one job that fills nothing on its own.
+   * Content-owned for the same reason `verbing`/`restingNote` are.
+   */
+  cardFlavor: string;
+  /**
+   * ROUND 2J (docs/economy-bible.md §3.2) — "production" (Gathering/
+   * Simmering/Mending: a weighted table on a fixed interval) or
+   * "crafting" (a queue of recipes, `core/crafting`). Absent ≡
+   * "production", so all three shipped jobs stay byte-identical.
+   * `content/validate.ts`'s job rules (`intervalMs > 0`, non-empty
+   * `table`) branch on this; `core/keep/jobs.ts`'s `processJobProduction`/
+   * `collectJobCatchupEvents` need no edit at all — a crafting job's
+   * `intervalMs: 0` already trips their existing `intervalMs <= 0` skip.
+   */
+  kind?: "production" | "crafting";
 }
 
 export const jobs: Readonly<Record<string, JobDef>> = {
@@ -51,6 +72,7 @@ export const jobs: Readonly<Record<string, JobDef>> = {
     })),
     verbing: "gathering",
     restingNote: "Fast asleep. The basket can wait; the dream cannot.",
+    cardFlavor: "Steady paws, steady snacks — the basket fills itself. Almost.",
   },
   /**
    * ROUND 2B (content bible §5.4): the Stockpot's job — the pantry to
@@ -69,6 +91,7 @@ export const jobs: Readonly<Record<string, JobDef>> = {
     })),
     verbing: "simmering",
     restingNote: "Fast asleep. The pot will keep without them; the dream cannot.",
+    cardFlavor: "Something has been on the heat since this morning. Nobody is entirely sure what.",
   },
   /**
    * ROUND 2F (docs/progression-bible.md §3.4): the THIRD job, at the
@@ -87,5 +110,28 @@ export const jobs: Readonly<Record<string, JobDef>> = {
     })),
     verbing: "mending",
     restingNote: "Fast asleep. The mending will keep.",
+    cardFlavor: "Split handles, frayed rope, a wobbly leg. All of it fixable, given an afternoon.",
+  },
+  /**
+   * ROUND 2J (docs/economy-bible.md §3.1–§3.2): the Craft Table's job.
+   * Unlike its three siblings this is a QUEUE of recipes, not a weighted
+   * table on a fixed interval — `intervalMs: 0` and an empty `table` are
+   * deliberate (see `kind`'s own doc comment: the existing
+   * `intervalMs <= 0` skip in `core/keep/jobs.ts` already treats this as
+   * "nothing to produce here", so `processJobProduction`/
+   * `collectJobCatchupEvents` need no change at all). The ACTUAL recipe
+   * queue lives in `state.crafts[stationPlacementId]`, owned by
+   * `core/crafting`.
+   */
+  crafting: {
+    id: "crafting",
+    name: "Crafting",
+    stationItemId: "craft-table",
+    kind: "crafting",
+    intervalMs: 0,
+    table: [],
+    verbing: "crafting",
+    restingNote: "Fast asleep. The bench will keep; the dream cannot.",
+    cardFlavor: "Nothing gets made here until somebody says what. Open the Craft Table and pick a recipe.",
   },
 };

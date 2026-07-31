@@ -96,6 +96,13 @@ describe("buildRevealScript — staged timing", () => {
     expect(tierOf("driftwood")).toBe("uncommon");
   });
 
+  // ROUND 2J (docs/economy-bible.md §1.4/§6.3): the fifth resource gets the
+  // same ceremony Driftwood does — a late, scarce find, never a bare common.
+  it("Lodestone defaults to 'uncommon', joining Driftwood", () => {
+    const script = buildRevealScript(reveal({ items: ["wood", "lodestone"] }), PIPS);
+    expect(script.steps.find((s) => s.itemId === "lodestone")?.tier).toBe("uncommon");
+  });
+
   it("a plain resource with no FoodDef and no hardcoded entry stays common", () => {
     const script = buildRevealScript(reveal({ items: ["shell"] }), PIPS);
     expect(script.steps[0]?.tier).toBe("common");

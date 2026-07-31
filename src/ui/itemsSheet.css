@@ -13,3 +13,54 @@
   font-weight: 700;
   color: #3d6b44;
 }
+
+/* ---------- ROUND 2J — Materials (docs/hud-redesign.md §2.5) ----------
+   Read-only resource-count rows at the bottom of the sheet: no card grid
+   (nothing to tap), just a compact icon + name + count list. */
+
+.pk-materials-title {
+  margin-top: 4px;
+}
+
+.pk-materials-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-bottom: 4px;
+}
+
+.pk-materials-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 4px;
+  border-bottom: 1px solid rgba(95, 138, 94, 0.12);
+}
+
+.pk-materials-row:last-child {
+  border-bottom: none;
+}
+
+.pk-materials-name {
+  flex: 1;
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+.pk-materials-count {
+  font-size: 12.5px;
+  font-weight: 700;
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ROUND 2J FIX STAGE — the always-listed cure row at zero. Dimmed and
+   button-less: it exists to carry the "the Craft Table can make more"
+   sentence at the exact moment a player has none. */
+.pk-item--empty {
+  opacity: 0.62;
+}
+
+.pk-item--empty .pk-item-count {
+  color: rgba(90, 80, 66, 0.7);
+}

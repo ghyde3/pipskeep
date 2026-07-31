@@ -50,12 +50,17 @@ describe("placeableSprites — every catalog item has real art", () => {
     expect(orphans).toEqual([]);
   });
 
-  it("the catalog is the bible's §5 target, plus round 2H's Poultice Shelf", () => {
+  it("the catalog is the bible's §5 target, plus 2H's Poultice Shelf, 2J's Craft Table and 2J's five craft-only keepsakes", () => {
     // ROUND 2H (docs/lifecycle-bible.md §3.5) adds one station — the
     // Poultice Shelf — on top of the 45 items round 2F's bible §5 named.
-    expect(placeables.length).toBe(14);
-    expect(decorations.length).toBe(32);
-    expect(drawableItemIds().length).toBe(46);
+    // ROUND 2J (docs/economy-bible.md §3.1) adds one more — the Craft Table
+    // — and its FIX STAGE adds the five craft-only keepsakes (§4.4), which
+    // are decorations you cannot buy. Round 2F's brown-crate lesson applies
+    // to them exactly as much: each has its own drawing above.
+    expect(placeables.length).toBe(15);
+    expect(decorations.length).toBe(37);
+    expect(decorations.filter((d) => d.craftOnly === true).length).toBe(5);
+    expect(drawableItemIds().length).toBe(52);
   });
 });
 
@@ -80,6 +85,9 @@ describe("placeableSprites — the flat list is the walkability mitigation (bibl
     "sled",
     "glow-pool",
     "warm-stones",
+    // ROUND 2J FIX STAGE — the Compass Rose is laid INTO the ground at the
+    // gate; the other four craft-only keepsakes stand and block.
+    "compass-rose",
   ];
 
   for (const id of flatByDesign) {

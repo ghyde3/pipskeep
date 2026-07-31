@@ -409,6 +409,39 @@
   transform: scale(0.97);
 }
 
+/* ⚠️ ROUND 2J FIX STAGE — "Make one". Deliberately the SECOND-strongest
+   button on the card: the jar you already hold is the immediate answer,
+   the bench is the certain one. Outlined rather than filled so it never
+   competes with the green Give button when both are present (they never
+   are — `makeOne` is null while you hold a Poultice). */
+.pk-ailment-makeone {
+  appearance: none;
+  border: 1.5px solid rgba(107, 122, 153, 0.55);
+  border-radius: 14px;
+  min-height: 44px;
+  padding: 10px 12px;
+  background: rgba(107, 122, 153, 0.1);
+  color: #40506e;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 800;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: transform 90ms ease;
+}
+
+.pk-ailment-makeone:active {
+  transform: scale(0.97);
+}
+
+.pk-ailment-hint--makeone {
+  color: rgba(64, 80, 110, 0.85);
+}
+
+.pk-ailment-hint--blocked {
+  color: rgba(150, 96, 74, 0.95);
+}
+
 .pk-ailment-hint {
   font-size: 11.5px;
   opacity: 0.65;

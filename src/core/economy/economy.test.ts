@@ -5,7 +5,8 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { canAfford, spend } from "./index";
+import { canAfford, RESOURCE_IDS, spend } from "./index";
+import type { ResourceId } from "./index";
 
 describe("canAfford", () => {
   it("checks every entry of the bundle against the balances", () => {
@@ -57,5 +58,41 @@ describe("spend", () => {
     if (!result.ok) return;
     expect(result.resources).toEqual({ wood: 5 });
     expect(before).toEqual({ wood: 5 });
+  });
+});
+
+describe("ROUND 2J — the fifth resource (lodestone) is a ResourceId like any other", () => {
+  it("RESOURCE_IDS names exactly the five shipped resources, lodestone included", () => {
+    expect([...RESOURCE_IDS].sort()).toEqual(
+      ["fiber", "wood", "shell", "driftwood", "lodestone"].sort(),
+    );
+  });
+
+  it("canAfford treats lodestone identically to the shipped four", () => {
+    expect(canAfford({ lodestone: 12 }, { lodestone: 12 })).toBe(true);
+    expect(canAfford({ lodestone: 11 }, { lodestone: 12 })).toBe(false);
+    // Absent lodestone reads as zero, same as every other resource.
+    expect(canAfford({}, { lodestone: 1 })).toBe(false);
+    expect(canAfford({}, { lodestone: 0 })).toBe(true);
+  });
+
+  it("spend deducts lodestone exactly and composes with the other four in one bundle", () => {
+    const before = { wood: 30, fiber: 24, shell: 6, driftwood: 2, lodestone: 16 };
+    const result = spend(before, { wood: 30, fiber: 24, shell: 6, driftwood: 2, lodestone: 16 });
+    expect(result).toEqual({
+      ok: true,
+      resources: { wood: 0, fiber: 0, shell: 0, driftwood: 0, lodestone: 0 },
+    });
+  });
+
+  it("an insufficient lodestone balance produces the same typed refusal shape as any other resource", () => {
+    const result = spend({ lodestone: 5 }, { lodestone: 12 });
+    expect(result).toEqual({ ok: false, missing: { lodestone: 7 } });
+  });
+
+  it("every ResourceId, including lodestone, round-trips through a bundle keyed by the type", () => {
+    const cost: Partial<Record<ResourceId, number>> = {};
+    for (const id of RESOURCE_IDS) cost[id] = 1;
+    expect(canAfford(cost, cost)).toBe(true);
   });
 });

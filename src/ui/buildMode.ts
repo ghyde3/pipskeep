@@ -110,7 +110,15 @@ export function buildCatalog(): readonly BuildItemDef[] {
         icon: def.icon,
       }),
     ),
-    ...decorations.map(
+    // ROUND 2J FIX STAGE — CRAFT-ONLY decorations are filtered OUT of the
+    // buyable catalogue. They carry `cost: {}` (there is no price; the
+    // recipe is the only door), so leaving them in would put five free
+    // items on the Build sheet and make every keepsake recipe pointless.
+    // They still reach the player: `BuildSheetModel.keepsakes` lists any
+    // copy on the shelf, which is exactly where a crafted one lands.
+    ...decorations
+      .filter((def) => def.craftOnly !== true)
+      .map(
       (def): BuildItemDef => ({
         id: def.id,
         name: def.name,
@@ -127,9 +135,41 @@ export function buildCatalog(): readonly BuildItemDef[] {
   ];
 }
 
+/**
+ * ROUND 2J FIX STAGE — every decoration, INCLUDING the craft-only
+ * keepsakes `buildCatalog` filters out. The Keepsake Shelf must be able to
+ * render a crafted Cairn's card (name, icon, effect line) even though it
+ * is not for sale, so the shelf reads from this instead.
+ */
+export function buildCatalogWithCraftOnly(): readonly BuildItemDef[] {
+  const buyable = buildCatalog();
+  const known = new Set(buyable.map((item) => item.id));
+  return [
+    ...buyable,
+    ...decorations
+      .filter((def) => def.craftOnly === true && !known.has(def.id))
+      .map(
+        (def): BuildItemDef => ({
+          id: def.id,
+          name: def.name,
+          kind: "decoration",
+          cost: def.cost,
+          footprint: def.footprint,
+          flavor: def.flavor,
+          effects: def.effects ?? [],
+          setId: def.setId,
+          unlockKeepLevel: 1,
+          icon: def.icon,
+        }),
+      ),
+  ];
+}
+
 /** Catalog lookup by id (place-mode entry point). */
 export function findBuildItem(itemId: string): BuildItemDef | null {
-  return buildCatalog().find((item) => item.id === itemId) ?? null;
+  // Craft-only items are placeable (from the shelf) even though they are
+  // not buyable, so place mode must be able to resolve them.
+  return buildCatalogWithCraftOnly().find((item) => item.id === itemId) ?? null;
 }
 
 /** Display name for a resource/item id: registry name when the id is a
@@ -196,9 +236,24 @@ function pct(fraction: number): string {
   return `${Math.round(fraction * 100)}%`;
 }
 
+/**
+ * ROUND 2J FIX STAGE — this branched on nothing and read `intervalMs`
+ * unconditionally, so the Craft Table (a `kind: "crafting"` job with a
+ * deliberate `intervalMs: 0`) advertised itself on the Build sheet as
+ * "Crafting, one find every 1 minutes" — ungrammatical AND false, on the
+ * card that is the round's primary discovery point for the whole feature.
+ *
+ * A crafting station produces nothing on a cadence; what it needs from
+ * this line is the OTHER half of how it works — that you pick a recipe.
+ * So the two kinds get two different sentences, both generated from the
+ * registry, and a future crafting station needs no edit here.
+ */
 function jobEffectLine(jobId: string): string {
   const job = contentJobs[jobId];
   if (job === undefined) return "A Pip can work here.";
+  if (job.kind === "crafting") {
+    return `A Pip can work here — ${job.name}. Tap the bench (or open the Craft Table in the Nook) to pick a recipe.`;
+  }
   const minutes = Math.max(1, Math.round(job.intervalMs / 60_000));
   return `A Pip can work here — ${job.name}, one find every ${minutes} minutes.`;
 }
@@ -227,6 +282,24 @@ export function describeEffect(effect: BuildingEffect): string {
       return jobEffectLine(effect.jobId);
     case "xpBonus":
       return `+${pct(effect.fraction)} Keep XP from everything you do.`;
+    // ROUND 2J FIX STAGE — generated from the effect's own numbers like
+    // every line above, so the card and the simulation can never disagree.
+    // A `remedy` may carry either half alone (0 is legal on one side), so
+    // the sentence is assembled from whichever halves are real.
+    case "remedy": {
+      const parts: string[] = [];
+      if (effect.contractReduction > 0) {
+        parts.push(`Trips out are ${pct(effect.contractReduction)} less likely to make a Pip ill`);
+      }
+      if (effect.cureBonus > 0) {
+        parts.push(`every cure you try is ${pct(effect.cureBonus)} likelier to work`);
+      }
+      return parts.length === 0 ? "A little comfort on a bad night." : `${parts.join(", and ")}.`;
+    }
+    case "longevity":
+      return `Every Pip in the Keep lives ${pct(effect.bonus)} longer.`;
+    case "craftSpeed":
+      return `Crafts finish ${pct(1 - effect.multiplier)} sooner.`;
   }
 }
 
@@ -561,7 +634,13 @@ export function buildSheetModel(state: GameState): BuildSheetModel {
 
   // THE KEEPSAKE SHELF (bible §5.5 item 1) — one card per shelved gift, in
   // catalog order so it is stable between opens.
-  const keepsakes = catalog
+  //
+  // ROUND 2J FIX STAGE: reads `buildCatalogWithCraftOnly()`, not `catalog`.
+  // A crafted Cairn is not for sale and so is not in the buyable catalogue
+  // — but it IS on the shelf, and the shelf is the only place it can ever
+  // be seen. Filtering it out here would have made every keepsake recipe
+  // produce something invisible: written to state, unplaceable in play.
+  const keepsakes = buildCatalogWithCraftOnly()
     .filter((item) => (state.keepsakes[item.id] ?? 0) > 0)
     .map((item) => buildEntry(item, state, placedIds, activeSetBonusBySetId));
 

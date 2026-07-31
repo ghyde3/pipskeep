@@ -16,11 +16,14 @@ import { describe, expect, it } from "vitest";
 import { BADGE_IDS, MOTIF_IDS } from "../content/icons";
 import type { IconSpec } from "../content/icons";
 import { decorSets } from "../content/decorSets";
+import { RESOURCE_IDS } from "../core/economy";
 import {
   badgeForEffects,
   foodIconSpec,
   iconSvgMarkup,
   resolveItemIcon,
+  resourceIconSpec,
+  resourceTint,
   tintForSetId,
 } from "./icons";
 
@@ -149,5 +152,33 @@ describe("foodIconSpec — every food gets a motif, unknowns fall back safely", 
 
   it("an unknown id still returns a valid motif, never blank", () => {
     expect(MOTIF_IDS as readonly string[]).toContain(foodIconSpec("mystery-item").motif);
+  });
+});
+
+/**
+ * ROUND 2J — before this round no resource had an icon at all (the Satchel
+ * only ever rendered foods; see docs/hud-redesign.md §2.5). `RESOURCE_IDS`
+ * now includes the round's own fifth resource (`lodestone`), so this suite
+ * covers all five generically rather than pinning lodestone as a special
+ * case — the whole point is that it needs no special case.
+ */
+describe("resourceIconSpec / resourceTint — every base resource, lodestone included", () => {
+  it("names a real vocabulary motif for every RESOURCE_IDS entry", () => {
+    for (const id of RESOURCE_IDS) {
+      expect(MOTIF_IDS as readonly string[], id).toContain(resourceIconSpec(id).motif);
+    }
+  });
+
+  it("gives every RESOURCE_IDS entry its own distinct tint", () => {
+    const tints = RESOURCE_IDS.map((id) => resourceTint(id));
+    for (const tint of tints) expect(tint).toMatch(/^#[0-9a-f]{6}$/i);
+    expect(new Set(tints).size).toBe(RESOURCE_IDS.length);
+  });
+
+  it("an unknown resource id still returns a valid motif and a real hex tint", () => {
+    expect(MOTIF_IDS as readonly string[]).toContain(
+      resourceIconSpec("some-future-sixth-resource").motif,
+    );
+    expect(resourceTint("some-future-sixth-resource")).toMatch(/^#[0-9a-f]{6}$/i);
   });
 });

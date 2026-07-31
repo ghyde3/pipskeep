@@ -74,6 +74,28 @@ export interface KeepEffectsTuning {
       readonly tier2LiveAtKeepLevel: number;
     };
   };
+  /**
+   * ROUND 2J FIX STAGE — the three channels this round wired. Structurally
+   * OPTIONAL so the ~dozen bare `{ progression: {...} }` tuning fixtures
+   * across `core/keep`'s own tests keep compiling; an absent block means
+   * "no clamp beyond the identity", which is exactly what an unbuilt Keep
+   * resolves to anyway.
+   *
+   * `buildingRemedyMax` is the tighter BUILDING-SOURCED aggregate: a plain
+   * item's effects contribute per placement, so ten Poultice Shelves is
+   * ten contributions, and `lifecycle.ailments.contractReductionMax`
+   * (0.60) is far too loose to be that clamp on its own.
+   */
+  readonly crafting?: {
+    readonly speedMin?: number;
+    readonly buildingRemedyMax?: {
+      readonly contractReduction?: number;
+      readonly cureBonus?: number;
+    };
+  };
+  readonly lifecycle?: {
+    readonly lifespan?: { readonly buildingBonusMax?: number };
+  };
 }
 
 /** Injectable content, defaulting to the real merged registries (same
@@ -115,6 +137,26 @@ export interface ResolvedKeepEffects {
   readonly eggChanceBonusPoints: number;
   readonly incubationSpeedMultiplier: number;
   readonly xpBonusFraction: number;
+  /**
+   * ROUND 2J FIX STAGE — the `remedy` channel, summed once and clamped
+   * once at `tuning.crafting.buildingRemedyMax`. `ailmentContractReduction`
+   * is handed to `core/pips/ailment.ts`'s `rollContraction`
+   * (`buildingContractReduction`); `ailmentCureBonus` to `attemptCure`.
+   * Both 0 on an unbuilt Keep — the identity those call sites already
+   * default to.
+   */
+  readonly ailmentContractReduction: number;
+  readonly ailmentCureBonus: number;
+  /** ROUND 2J FIX STAGE — the `longevity` channel, summed once and clamped
+   * once at `tuning.lifecycle.lifespan.buildingBonusMax`. Handed to
+   * `core/pips/lifecycle.ts`'s `lifespanMs` (`buildingLongevity`). */
+  readonly lifespanBonusFraction: number;
+  /** ROUND 2J FIX STAGE — the `craftSpeed` channel, composed by PRODUCT
+   * (it is a rate) and clamped once at `tuning.crafting.speedMin`. Handed
+   * to `core/crafting`'s `effectiveCraftDurationMs`
+   * (`buildingCraftSpeedMultiplier`), which applies the Pip-level factor
+   * and the composite floor on top. */
+  readonly craftSpeedMultiplier: number;
   /** jobIds hosted by a CURRENTLY PLACED station — descriptive only
    * (bible §3.1: the `job` effect kind is "made explicit on the card").
    * `core/keep/jobs.ts`'s own `stationItemId` registry scan is the actual
@@ -131,6 +173,10 @@ export const IDENTITY_KEEP_EFFECTS: ResolvedKeepEffects = {
   eggChanceBonusPoints: 0,
   incubationSpeedMultiplier: 1,
   xpBonusFraction: 0,
+  ailmentContractReduction: 0,
+  ailmentCureBonus: 0,
+  lifespanBonusFraction: 0,
+  craftSpeedMultiplier: 1,
   hostedJobIds: [],
   activeSetBonuses: [],
 };
@@ -143,6 +189,10 @@ interface Accumulator {
   expeditionLootBonusChance: number;
   eggChanceBonusPoints: number;
   xpBonusFraction: number;
+  ailmentContractReduction: number;
+  ailmentCureBonus: number;
+  lifespanBonusFraction: number;
+  craftSpeedProduct: number;
   readonly jobIds: Set<string>;
 }
 
@@ -155,6 +205,10 @@ function newAccumulator(): Accumulator {
     expeditionLootBonusChance: 0,
     eggChanceBonusPoints: 0,
     xpBonusFraction: 0,
+    ailmentContractReduction: 0,
+    ailmentCureBonus: 0,
+    lifespanBonusFraction: 0,
+    craftSpeedProduct: 1,
     jobIds: new Set(),
   };
 }
@@ -193,6 +247,19 @@ function foldEffect(acc: Accumulator, effect: BuildingEffect): void {
     case "xpBonus":
       acc.xpBonusFraction += effect.fraction;
       break;
+    // ROUND 2J FIX STAGE — the three kinds round 2H/2J named and neither
+    // wired. Fractions sum (like `comfort`/`xpBonus`); the rate multiplies
+    // (like `restSpeed`/`expeditionSpeed`). Clamped once, below.
+    case "remedy":
+      acc.ailmentContractReduction += effect.contractReduction;
+      acc.ailmentCureBonus += effect.cureBonus;
+      break;
+    case "longevity":
+      acc.lifespanBonusFraction += effect.bonus;
+      break;
+    case "craftSpeed":
+      acc.craftSpeedProduct *= effect.multiplier;
+      break;
   }
 }
 
@@ -214,6 +281,7 @@ export function resolveKeepEffects(
   const tuning = content.tuning ?? contentTuning;
   const caps = tuning.progression.effectCaps;
   const setBonusCfg = tuning.progression.setBonus;
+  const remedyMax = tuning.crafting?.buildingRemedyMax ?? {};
 
   const acc = newAccumulator();
   const placedIds = new Set<string>();
@@ -264,6 +332,22 @@ export function resolveKeepEffects(
       1,
     ),
     xpBonusFraction: Math.min(Math.max(acc.xpBonusFraction, 0), caps.xpBonusMax),
+    ailmentContractReduction: Math.min(
+      Math.max(acc.ailmentContractReduction, 0),
+      remedyMax.contractReduction ?? Infinity,
+    ),
+    ailmentCureBonus: Math.min(
+      Math.max(acc.ailmentCureBonus, 0),
+      remedyMax.cureBonus ?? Infinity,
+    ),
+    lifespanBonusFraction: Math.min(
+      Math.max(acc.lifespanBonusFraction, 0),
+      tuning.lifecycle?.lifespan?.buildingBonusMax ?? Infinity,
+    ),
+    craftSpeedMultiplier: Math.min(
+      Math.max(acc.craftSpeedProduct, tuning.crafting?.speedMin ?? 0),
+      1,
+    ),
     hostedJobIds: Array.from(acc.jobIds),
     activeSetBonuses,
   };

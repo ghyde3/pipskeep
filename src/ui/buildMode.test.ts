@@ -44,15 +44,30 @@ function allEntries(model: ReturnType<typeof buildSheetModel>) {
 }
 
 describe("buildCatalog — placeables ∪ decorations (spec §9)", () => {
-  it("lists every placeable (stations first) and every decoration", () => {
+  it("lists every placeable (stations first) and every BUYABLE decoration", () => {
+    // ROUND 2J FIX STAGE — the five craft-only keepsakes are decorations in
+    // the registry but carry no price, so the buyable catalogue filters
+    // them out. Leaving them in would put five free items on the Build
+    // sheet and make every keepsake recipe pointless.
+    const buyableDecorations = decorations.filter((d) => d.craftOnly !== true);
     const catalog = buildCatalog();
-    expect(catalog.length).toBe(placeables.length + decorations.length);
+    expect(catalog.length).toBe(placeables.length + buyableDecorations.length);
     expect(catalog.slice(0, placeables.length).every((i) => i.kind === "station")).toBe(
       true,
     );
     expect(catalog.slice(placeables.length).every((i) => i.kind === "decoration")).toBe(
       true,
     );
+    expect(catalog.some((i) => i.id === "lodestone-cairn")).toBe(false);
+  });
+
+  it("a craft-only keepsake is resolvable for PLACING but never offered for SALE", () => {
+    // Both halves matter: place mode has to resolve the item (you place it
+    // off the Keepsake Shelf), and the sheet must never sell it for its
+    // empty cost bundle.
+    expect(findBuildItem("lodestone-cairn")?.kind).toBe("decoration");
+    expect(findBuildItem("lodestone-cairn")?.cost).toEqual({});
+    expect(buildCatalog().some((i) => i.id === "lodestone-cairn")).toBe(false);
   });
 
   it("findBuildItem resolves ids from both registries, null for unknowns", () => {
@@ -146,7 +161,15 @@ describe("buildSheetModel — stations (spec §6.3, bible §2.3/§4.1)", () => {
 
   it("a rich satchel affords the whole catalog", () => {
     const model = buildSheetModel(
-      stateWith({ wood: 999, fiber: 999, shell: 999, driftwood: 999, berry: 99 }),
+      // ROUND 2J FIX STAGE — the late stations now carry a lodestone rider.
+      stateWith({
+        wood: 999,
+        fiber: 999,
+        shell: 999,
+        driftwood: 999,
+        lodestone: 999,
+        berry: 99,
+      }),
     );
     expect(allEntries(model).every((e) => e.affordable)).toBe(true);
   });
@@ -221,7 +244,7 @@ describe("buildSheetModel — themed decoration sets (bible §3.5/§5.5)", () =>
       [...decorSets.map((s) => s.id)].sort(),
     );
     const totalGrouped = model.sets.reduce((n, g) => n + g.entries.length, 0);
-    expect(totalGrouped).toBe(decorations.length);
+    expect(totalGrouped).toBe(decorations.filter((d) => d.craftOnly !== true).length);
   });
 
   it("a set's placed/total counts DISTINCT member ids currently placed, not raw placements", () => {

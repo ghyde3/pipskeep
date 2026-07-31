@@ -213,6 +213,17 @@ const LADDER: readonly Rung[] = [
     peer: true,
   },
   {
+    layer: "screen",
+    file: "crafting.css",
+    selector: ".pk-craft-wrap--open",
+    z: 22,
+    why:
+      "ROUND 2J: the Craft Table's recipe book — peer of the Album/Long " +
+      "Meadow, reached the same way (the Nook menu) and made mutually " +
+      "exclusive with them by the same app/main.ts onPick routine",
+    peer: true,
+  },
+  {
     layer: "growth-sheet",
     file: "lifecycle.css",
     selector: ".pk-growth-wrap--open",

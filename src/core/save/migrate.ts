@@ -742,6 +742,25 @@ export const MIGRATIONS: Readonly<Record<number, MigrationStep>> = {
     out["state"] = { ...state, pips: migratedPips, sanctuary: migratedSanctuary };
     return out;
   },
+
+  /**
+   * v10 → v11 (round 2J — docs/economy-bible.md §3, save schema): backfill
+   * `state.crafts` to `{}`. Nobody could have queued a recipe before this
+   * round shipped (the Craft Table did not exist), so an empty book is
+   * the only honest value — this NEVER grants a resource, an item, or
+   * progress on a recipe the player never started (the same "existing
+   * saves must not gain impossible things" rule the fifth-resource
+   * widening honors for `lodestone`). The two transient echoes
+   * (`lastCraftOutcome`/`lastCraftCompletions`) are OPTIONAL and need no
+   * migration at all — absent simply stays absent.
+   */
+  10: (blob) => {
+    const out: Record<string, unknown> = { ...blob, schemaVersion: 11 };
+    const state = blob["state"];
+    if (!isPlainRecord(state)) return out;
+    out["state"] = { ...state, crafts: {} };
+    return out;
+  },
 };
 
 export type MigrateResult =

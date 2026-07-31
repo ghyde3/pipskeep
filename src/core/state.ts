@@ -197,6 +197,26 @@ import {
   unassignPipFromJob,
 } from "./keep/jobs";
 import type { JobCatchupState, JobOutcome, JobsByPip, JobTick } from "./keep/jobs";
+// ROUND 2J (docs/economy-bible.md §3) — CRAFTING. `core/crafting` owns the
+// recipe queue itself; this file composes it against the real GameState/
+// GameAction, the same division of labour as jobs/expeditions/eggs above.
+// `refundCraftsAtStation` is REMOVE_ITEM's own "a job cannot outlive its
+// station" rule, extended to the recipe queue (bible §3.4).
+import {
+  cancelCraft,
+  collectCraftCatchupEvents,
+  enqueueCraft,
+  refundCraftsAtStation,
+  settleCraftCompletions,
+  shiftCraftsPastFreeze,
+} from "./crafting";
+import type {
+  CraftCancelTarget,
+  CraftCatchupState,
+  CraftCompletion,
+  CraftOutcome,
+  CraftsByStation,
+} from "./crafting";
 import { spend } from "./economy";
 import type { ResourceBundle } from "./economy";
 // ROUND 2C — RETENTION (docs/retention-bible.md §1/§2, orchestrator
@@ -319,6 +339,19 @@ const PLACEMENT_ITEM_COSTS: Readonly<Record<string, ResourceBundle>> = (() => {
   for (const def of contentDecorations) costs[def.id] = def.cost;
   return costs;
 })();
+
+/**
+ * ROUND 2J FIX STAGE — CRAFT-ONLY items (`content/decorations.ts`'s
+ * `craftOnly`). These carry `cost: {}` because there is no price: the only
+ * way to own one is to craft it, and a crafted copy lands on the Keepsake
+ * Shelf. PLACE_ITEM must REFUSE one whose shelf count is 0 — otherwise
+ * `spend(resources, {})` succeeds trivially and an empty cost becomes a
+ * free-decoration printer, the exact exploit `Placement.granted` exists to
+ * close from the other direction.
+ */
+const CRAFT_ONLY_ITEM_IDS: ReadonlySet<string> = new Set(
+  contentDecorations.filter((def) => def.craftOnly === true).map((def) => def.id),
+);
 
 /**
  * The whole game, as one plain serializable object (spec §8).
@@ -499,6 +532,33 @@ export interface GameState {
    */
   readonly lastBreedOutcome?: BreedOutcome | null;
   /**
+   * ROUND 2J (docs/economy-bible.md §3, save schema v11) — the Craft
+   * Table's standing orders, keyed by station `PlacementId`. OPTIONAL,
+   * same precedent as `lineageEggs`/`lastLossOutcome`/`lastBreedOutcome`
+   * above (`undefined ≡ {}`) — so the thousands of hand-built `GameState`
+   * fixtures across `core/`/`ui/` that predate this round need no edits.
+   * `createNewGame` sets it explicitly to `{}` regardless. Read via the
+   * `craftsOf` helper below rather than directly, so every call site
+   * defaults consistently.
+   */
+  readonly crafts?: CraftsByStation;
+  /** Outcome of the most recent ENQUEUE_CRAFT / CANCEL_CRAFT (bible
+   * §3.4) — the UI's "refuses warmly" data source, parked like every
+   * other `last*Outcome` echo. OPTIONAL for the same reason as `crafts`
+   * above. */
+  readonly lastCraftOutcome?: CraftOutcome | null;
+  /**
+   * Craft completions produced by the MOST RECENT TICK or CATCHUP
+   * dispatch ONLY (bible §3.5: "completions are auto-collected and
+   * announced, not player-witnessed") — always overwritten (to `[]` when
+   * none) by those two arms, never inherited from an earlier dispatch, so
+   * `applyKeepXpForAction`'s craft-XP case never double-awards a stale
+   * completion. The Doorstep's "The Craft Table finished: 2 Poultices"
+   * line and the live toast both read this. OPTIONAL for the same reason
+   * as `crafts` above.
+   */
+  readonly lastCraftCompletions?: readonly CraftCompletion[];
+  /**
    * ROUND 2H (spec §16 v1.5, docs/lifecycle-bible.md §7.7) — PLAYER
    * SETTINGS. One field so far, and it is shield six of six: THE QUIET
    * KEEP.
@@ -664,6 +724,29 @@ export type GameAction =
   /** Return a working pip to Idle (spec §6.2: jobs never end on their
    * own). */
   | { readonly type: "UNASSIGN_JOB"; readonly pipId: PipId; readonly at: number }
+  /**
+   * ROUND 2J (docs/economy-bible.md §3.1–§3.4) — start (or queue behind
+   * an in-flight order) one recipe at a placed Craft Table. Inputs are
+   * spent HERE, in full, the moment the request is accepted (bible
+   * §3.4) — refused warmly (state unchanged) when the station is
+   * unstaffed, the recipe is locked, the queue is full, or the Satchel/
+   * resources come up short.
+   */
+  | {
+      readonly type: "ENQUEUE_CRAFT";
+      readonly stationPlacementId: PlacementId;
+      readonly recipeId: string;
+      readonly at: number;
+    }
+  /** Cancel the active order or one queued recipe at a station (bible
+   * §3.4): refunds that recipe's full cost. Cancelling the active order
+   * promotes the next queued recipe, if any. */
+  | {
+      readonly type: "CANCEL_CRAFT";
+      readonly stationPlacementId: PlacementId;
+      readonly target: CraftCancelTarget;
+      readonly at: number;
+    }
   /** The player taps a glowing pip (spec §4.6): apply its evolution.
    * Legal ONLY when `readyToEvolve` — this action is the sole caller of
    * applyEvolution; TICK/CATCHUP never evolve. */
@@ -1254,6 +1337,10 @@ export function createNewGame(
     lineageEggs: [],
     lastLossOutcome: null,
     lastBreedOutcome: null,
+    // ROUND 2J: a fresh Keep has no Craft Table yet and nothing has ever
+    // been made.
+    crafts: {},
+    lastCraftOutcome: null,
   };
 }
 
@@ -1303,6 +1390,40 @@ function unlockedExpeditionIdsAt(level: number): readonly string[] {
  */
 function computeKeepEffects(state: GameState): ResolvedKeepEffects {
   return resolveKeepEffects(state.keep, state.keep.level);
+}
+
+/** `state.crafts` defaults to `{}` (round 2J — the field is OPTIONAL, see
+ * its own doc comment). The one place every reducer arm below reads it,
+ * so the default is applied consistently. */
+function craftsOf(state: GameState): CraftsByStation {
+  return state.crafts ?? {};
+}
+
+/**
+ * ROUND 2J FIX STAGE — the injected `CraftingContent` every craft call
+ * site shares: the Keep's already-resolved, already-clamped `craftSpeed`
+ * multiplier. One helper rather than five inline literals, so a craft's
+ * effective duration is computed the same way whether it was enqueued,
+ * promoted after a cancel, promoted after a live settle, or promoted
+ * inside a catch-up pass — a mismatch there would be a timer that changes
+ * length depending on how it started.
+ */
+function craftingContentFor(state: GameState): { readonly buildingCraftSpeedMultiplier: number } {
+  return { buildingCraftSpeedMultiplier: computeKeepEffects(state).craftSpeedMultiplier };
+}
+
+/**
+ * `state` with `crafts` GUARANTEED present, for handing to
+ * `core/crafting`'s `CraftStateSlice`-generic functions. Returns `state`
+ * BY REFERENCE whenever `crafts` is already defined (true for every game
+ * created by `createNewGame` or migrated to v11+) — preserving every
+ * refusal's "state unchanged by reference" contract in the overwhelming
+ * common case; only allocates when a hand-built fixture omits the field
+ * entirely.
+ */
+function withCrafts<S extends GameState>(state: S): S & { crafts: CraftsByStation } {
+  if (state.crafts !== undefined) return state as S & { crafts: CraftsByStation };
+  return { ...state, crafts: {} };
 }
 
 /**
@@ -1385,6 +1506,32 @@ function awardJobTickPipXp(
     if (pip === undefined) continue;
     const awarded = awardPipXp(pip, jobTickPipXp(ticks, contentTuning), contentTuning);
     if (awarded !== pip) result = { ...result, [pipId]: awarded };
+  }
+  return result;
+}
+
+/**
+ * ROUND 2J (docs/economy-bible.md §3.7) — Pip XP for craft completions,
+ * awarded INLINE inside the TICK/CATCHUP reducer arms themselves, one
+ * completion at a time, to the exact Pip `CraftCompletion.pipId` names —
+ * the same "attribution captured at the moment it happened, not
+ * re-derived from post-reconcile bookkeeping" reasoning `awardJobTickPipXp`
+ * above already documents (a completion's Pip is captured by
+ * `core/crafting`'s own settle/catch-up pass BEFORE any pruning can touch
+ * `state.jobs`, so there is no reconcile-order hazard to route around
+ * here — this is simpler than the job-tick case, not a workaround for the
+ * same one).
+ */
+function awardCraftCompletionPipXp(
+  pips: Readonly<Record<PipId, PipState>>,
+  completions: readonly CraftCompletion[],
+): Readonly<Record<PipId, PipState>> {
+  let result = pips;
+  for (const completion of completions) {
+    const pip = result[completion.pipId];
+    if (pip === undefined) continue;
+    const awarded = awardPipXp(pip, contentTuning.crafting.pipXpPerCraft, contentTuning);
+    if (awarded !== pip) result = { ...result, [completion.pipId]: awarded };
   }
   return result;
 }
@@ -2039,7 +2186,25 @@ function applyKeepXpForAction(
         for (const n of Object.values(state.resources)) total += n;
         return total;
       };
-      const ticks = Math.max(0, countAll(next) - countAll(prev));
+      // ROUND 2J (docs/economy-bible.md §3.7) — crafting completions THIS
+      // dispatch ALSO land in `next.inventory` (an `"item"` output), which
+      // would otherwise inflate the job-tick diff below and price a
+      // completed Poultice as a handful of Gathering ticks. Subtracted
+      // here, then priced properly (`keepXpPerCraft`, plus
+      // `firstCraftKeepXp` the first time each recipe is ever finished,
+      // idempotent on `counters["crafted.<recipeId>"]` — the same pattern
+      // `built.<itemId>`/`job.<jobId>` above already use).
+      const craftCompletions = next.lastCraftCompletions ?? [];
+      let craftItemsGranted = 0;
+      for (const completion of craftCompletions) {
+        if (completion.output.kind === "item") craftItemsGranted += completion.output.count;
+        gained += contentTuning.crafting.keepXpPerCraft;
+        const key = `crafted.${completion.recipeId}`;
+        const madeBefore = counters[key] ?? 0;
+        if (madeBefore === 0) gained += contentTuning.crafting.firstCraftKeepXp;
+        counters = { ...counters, [key]: madeBefore + 1 };
+      }
+      const ticks = Math.max(0, countAll(next) - countAll(prev) - craftItemsGranted);
       gained += jobTickXp(ticks, contentTuning);
       break;
     }
@@ -2344,7 +2509,16 @@ function applyAilmentCureForAction(
   if (pip === undefined || pip.ailment == null) return next;
 
   const rng = createRngFromState(next.seed, next.rngState);
-  const result = attemptCure(pip, "poultice", rng.stream(AILMENT_STREAM), contentTuning);
+  // ROUND 2J FIX STAGE — a Poultice Shelf makes the jar likelier to work,
+  // through the SAME `cureBonusMax`-clamped modifier the Pip's own level
+  // already feeds. 2H's I4 holds: `poulticeCureChance` itself is untouched.
+  const result = attemptCure(
+    pip,
+    "poultice",
+    rng.stream(AILMENT_STREAM),
+    contentTuning,
+    computeKeepEffects(next).ailmentCureBonus,
+  );
   if (result === null) return next;
 
   let updated: GameState = {
@@ -2400,7 +2574,16 @@ function applyDevotedCareRolls(state: GameState, at: number): GameState {
   const day = streakDayIndex(at, state.dayOffsetMs, contentTuning.retention.dayMs);
   if (devotedCareEligible(state, day, contentTuning).length === 0) return state;
   const rng = createRngFromState(state.seed, state.rngState);
-  const tended = applyDevotedCare(state, at, day, rng.stream(AILMENT_STREAM), contentTuning);
+  const tended = applyDevotedCare(
+    state,
+    at,
+    day,
+    rng.stream(AILMENT_STREAM),
+    contentTuning,
+    // ROUND 2J FIX STAGE — the free daily route benefits from a Poultice
+    // Shelf exactly as much as a jar does. That is what a shelf is for.
+    computeKeepEffects(state).ailmentCureBonus,
+  );
   return { ...tended, rngState: rng.getState() };
 }
 
@@ -2441,8 +2624,24 @@ function recordCatchupGains(
     if (gain > 0) produced[resourceId] = gain;
   }
 
-  if (keepXpGained === 0 && Object.keys(produced).length === 0) return next;
-  return { ...next, lastCatchup: { ...summary, keepXpGained, produced } };
+  // ROUND 2J FIX STAGE — what the bench made while you were away. Read off
+  // `lastCraftCompletions`, which this same CATCHUP dispatch has already
+  // written, because `produced` above is a RESOURCE delta and a crafted
+  // Poultice lands in `inventory`. Without this the Doorstep had no way to
+  // mention a craft at all.
+  const crafted: Record<string, number> = {};
+  for (const completion of next.lastCraftCompletions ?? []) {
+    crafted[completion.recipeId] = (crafted[completion.recipeId] ?? 0) + 1;
+  }
+
+  if (
+    keepXpGained === 0 &&
+    Object.keys(produced).length === 0 &&
+    Object.keys(crafted).length === 0
+  ) {
+    return next;
+  }
+  return { ...next, lastCatchup: { ...summary, keepXpGained, produced, crafted } };
 }
 
 /** The `at` timestamp on actions that carry one (most do); `null` for the
@@ -2499,6 +2698,11 @@ export const STREAK_VISIT_ACTION_TYPES: ReadonlySet<GameAction["type"]> = new Se
   "PURCHASE_KEEP_LEVEL",
   "PURCHASE_ROSTER_UPGRADE",
   "BREED_PIPS",
+  // ROUND 2J: setting up (or standing down) a Craft Table is the same
+  // kind of deliberate Build-mode session PLACE_ITEM/ASSIGN_JOB already
+  // count — never TICK/CATCHUP, which settle completions automatically.
+  "ENQUEUE_CRAFT",
+  "CANCEL_CRAFT",
 ]);
 
 /**
@@ -2616,7 +2820,10 @@ function baseReducer(state: GameState, action: GameAction): GameState {
         next = updateEvolutionReadiness(next, registry);
         // ROUND 2H (docs/lifecycle-bible.md §2.5) — a FLAG only; only
         // RETIRE_PIP may ever move a Pip (promise 3/5).
-        next = updateAging(next, contentTuning);
+        // ROUND 2J FIX STAGE — `buildingLongevity` finally has a caller:
+        // the Nest Warmer / Sun Bunks / Larder `longevity` effects that
+        // docs/lifecycle-bible.md §2.2 already assumed were wired.
+        next = updateAging(next, contentTuning, keepEffects.lifespanBonusFraction);
         return next;
       });
       let ticked: GameState = {
@@ -2649,6 +2856,23 @@ function baseReducer(state: GameState, action: GameAction): GameState {
         jobs: reconcileJobs(ticked.jobs, ticked.pips, ticked.keep),
         pips: awardJobTickPipXp(ticked.pips, jobsBeforeProduction, jobsAfterProduction),
       };
+      // ROUND 2J (docs/economy-bible.md §3.4–§3.7) — crafting completions
+      // due by `action.at`: derived from timestamps exactly like job
+      // production above, but settled through `core/crafting`'s own
+      // module (a deterministic queue, not a weighted roll — no rng
+      // cursor). `lastCraftCompletions` is ALWAYS overwritten here (never
+      // inherited), so `applyKeepXpForAction`'s craft-XP case can trust it
+      // names only THIS dispatch's completions.
+      const craftSettle = settleCraftCompletions(
+        withCrafts(ticked),
+        action.at,
+        craftingContentFor(ticked),
+      );
+      ticked = {
+        ...craftSettle.state,
+        pips: awardCraftCompletionPipXp(craftSettle.state.pips, craftSettle.completions),
+        lastCraftCompletions: craftSettle.completions,
+      };
       // ROUND 2C: mastery/streak/event loot bonus AND the mastery/event
       // egg-chance bonus, both resolved per returning pip (see
       // resolveLootBonusChanceFor / resolveEggChanceFor's doc comments for
@@ -2670,7 +2894,15 @@ function baseReducer(state: GameState, action: GameAction): GameState {
         // all" — zero rolls, zero cursor movement, no contraction possible.
         ...(state.settings?.quietKeep === true
           ? {}
-          : { ailmentRegistry: contentAilments, ailmentTuning: contentTuning }),
+          : {
+              ailmentRegistry: contentAilments,
+              ailmentTuning: contentTuning,
+              // ROUND 2J FIX STAGE — the Poultice Shelf's (and the crafted
+              // Cairn's) `remedy` contract reduction, already summed and
+              // clamped by `resolveKeepEffects`. Round 2H shipped the
+              // parameter with no caller; this is the caller.
+              buildingContractReduction: keepEffects.ailmentContractReduction,
+            }),
       });
       // ROUND 2H (docs/lifecycle-bible.md §3.5) — THE FREE DAILY CURE, run
       // BEFORE the countdown is allowed to resolve below: a Pip on the
@@ -3124,12 +3356,22 @@ function baseReducer(state: GameState, action: GameAction): GameState {
       // register as {tag:"jobTick"} events CAPPED at the first 12h —
       // production is a rate (§4.5 rule 3/§6.2). Each fired jobTick
       // lands in `firedJobTicks` iff its pip was still working.
-      type CatchupAdapter = EggCatchupState & JobCatchupState;
+      // ROUND 2J — crafting completions register as {tag:"craftDone"}
+      // events, ALSO capped at the first `offlineRateCapMs` (crafting is
+      // a rate, bible §3.5) and — unlike job ticks — grant their output
+      // DIRECTLY inside `apply` (recipes are deterministic, no rng
+      // cursor to keep chronological, see `core/crafting`'s module doc),
+      // so the adapter needs `inventory`/`keepsakes` too.
+      type CatchupAdapter = EggCatchupState & JobCatchupState & CraftCatchupState;
       const adapter: CatchupAdapter = {
         pips: list,
         eggs: eggsAtStart,
         jobs: state.jobs,
         firedJobTicks: [] as readonly JobTick[],
+        crafts: craftsOf(state),
+        inventory: state.inventory,
+        keepsakes: state.keepsakes,
+        firedCraftCompletions: [] as readonly CraftCompletion[],
       };
       // ROUND 2F (progression bible §3.2) — same building-effects
       // resolution as the live TICK path, computed once against
@@ -3138,6 +3380,10 @@ function baseReducer(state: GameState, action: GameAction): GameState {
       // SAME effective rate a live tick would have.
       const keepEffects = computeKeepEffects(state);
       const keepComfort = keepComfortFrom(keepEffects);
+      // ROUND 2J FIX STAGE — the same injected `craftSpeed` multiplier the
+      // live path uses, so a queue promoted DURING an absence gets the
+      // same effective duration it would have got live.
+      const craftContent = craftingContentFor(state);
       const result = runCatchup(
         adapter,
         action.savedAt,
@@ -3146,6 +3392,7 @@ function baseReducer(state: GameState, action: GameAction): GameState {
         (s, windowStart, windowEnd) => [
           ...collectEggCatchupEvents(s, windowStart, windowEnd),
           ...collectJobCatchupEvents(s, windowStart, windowEnd),
+          ...collectCraftCatchupEvents(s, windowStart, windowEnd, contentTuning, craftContent),
         ],
         keepComfort,
       );
@@ -3155,7 +3402,8 @@ function baseReducer(state: GameState, action: GameAction): GameState {
         // evaluated once against the FINAL (already rate-capped) lifeMs
         // this pass produced. Only RETIRE_PIP may ever move a Pip
         // (promise 3/5) — this never touches `state.sanctuary`.
-        pips[pip.id] = updateAging(pip, contentTuning);
+        // ROUND 2J FIX STAGE — see the live TICK arm's note.
+        pips[pip.id] = updateAging(pip, contentTuning, keepEffects.lifespanBonusFraction);
       }
       // ROUND 2H (docs/lifecycle-bible.md §1.1 row 3) — Pip XP for job
       // ticks that actually FIRED during the pass, tallied straight from
@@ -3168,6 +3416,18 @@ function baseReducer(state: GameState, action: GameAction): GameState {
         if (pip === undefined) continue;
         pips[tick.pipId] = awardPipXp(pip, jobTickPipXp(1, contentTuning), contentTuning);
       }
+      // ROUND 2J (docs/economy-bible.md §3.7) — Pip XP for craft
+      // completions that actually fired during the pass, same "tallied
+      // straight from the fired list" reasoning as job ticks above.
+      for (const completion of result.state.firedCraftCompletions) {
+        const pip = pips[completion.pipId];
+        if (pip === undefined) continue;
+        pips[completion.pipId] = awardPipXp(
+          pip,
+          contentTuning.crafting.pipXpPerCraft,
+          contentTuning,
+        );
+      }
       // ROUND 2H (docs/lifecycle-bible.md §3.3 rule 2) — THE VIGIL FLOOR:
       // within THIS pass, no ailing pip's countdown may have been reduced
       // below `vigilFloorMs` — a returning player always finds at least a
@@ -3177,11 +3437,23 @@ function baseReducer(state: GameState, action: GameAction): GameState {
       // mutation above already applied); a no-op for every pip with no
       // ailment, which is every fixture that predates this round.
       const pipsWithVigilFloor = applyVigilFloor(state.pips, pips, contentTuning);
+      // ROUND 2J — `result.state.inventory`/`keepsakes` already include
+      // whatever crafting granted during the pass (see the adapter's own
+      // comment); `settleJobTicks` below adds job production ON TOP of
+      // that base, so nothing is lost either direction. `crafts` is
+      // slid past the rate-frozen tail exactly like jobs (bible §3.5).
       let next: GameState = {
         ...state,
         pips: pipsWithVigilFloor,
         eggs: result.state.eggs,
         jobs: result.state.jobs,
+        inventory: result.state.inventory,
+        keepsakes: result.state.keepsakes,
+        crafts: shiftCraftsPastFreeze(
+          result.state.crafts,
+          result.summary.elapsedMs - result.summary.ratedMs,
+        ),
+        lastCraftCompletions: result.state.firedCraftCompletions,
         lastTickAt: Math.max(state.lastTickAt, action.now),
         lastCatchup: result.summary,
       };
@@ -3248,7 +3520,15 @@ function baseReducer(state: GameState, action: GameAction): GameState {
             // cannot contract anything either.
             ...(state.settings?.quietKeep === true
               ? {}
-              : { ailmentRegistry: contentAilments, ailmentTuning: contentTuning }),
+              : {
+              ailmentRegistry: contentAilments,
+              ailmentTuning: contentTuning,
+              // ROUND 2J FIX STAGE — the Poultice Shelf's (and the crafted
+              // Cairn's) `remedy` contract reduction, already summed and
+              // clamped by `resolveKeepEffects`. Round 2H shipped the
+              // parameter with no caller; this is the caller.
+              buildingContractReduction: keepEffects.ailmentContractReduction,
+            }),
           });
         }
       }
@@ -3314,6 +3594,14 @@ function baseReducer(state: GameState, action: GameAction): GameState {
         };
       }
 
+      // ROUND 2J FIX STAGE — a craft-only item with an empty shelf is
+      // REFUSED here rather than bought for nothing. This is the second
+      // half of the craft-only contract (the first is `buildCatalog`
+      // filtering them out of the sheet); without it, `cost: {}` would
+      // make the five crafted keepsakes free and every keepsake recipe
+      // pointless.
+      if (CRAFT_ONLY_ITEM_IDS.has(action.itemId)) return state;
+
       // Placing a NEW item buys it (spec §6.3): all-or-nothing spend of
       // the content-defined cost. Short = refused, state unchanged (the
       // Build sheet greys unaffordable cards with the same canAfford).
@@ -3374,6 +3662,11 @@ function baseReducer(state: GameState, action: GameAction): GameState {
         const unassigned = unassignPipFromJob(next, pipId);
         next = unassigned.state;
       }
+      // ROUND 2J (docs/economy-bible.md §3.4) — "removing the station
+      // cancels and refunds everything on it": the active order AND every
+      // queued recipe, in full. Same "tuck away never destroys value"
+      // rule the placement cost refund above already honors.
+      next = refundCraftsAtStation(withCrafts(next), action.placementId);
       // Defensive sweep for entries unassign could not heal (pip gone).
       return { ...next, jobs: reconcileJobs(next.jobs, next.pips, next.keep) };
     }
@@ -3441,6 +3734,33 @@ function baseReducer(state: GameState, action: GameAction): GameState {
     case "UNASSIGN_JOB": {
       const { state: next, outcome } = unassignPipFromJob(state, action.pipId);
       return { ...next, lastJobOutcome: outcome };
+    }
+
+    case "ENQUEUE_CRAFT": {
+      const { state: next, outcome } = enqueueCraft(
+        withCrafts(state),
+        action.stationPlacementId,
+        action.recipeId,
+        action.at,
+        // ROUND 2J FIX STAGE — the `craftSpeed` channel finally has a
+        // producer (the crafted Chime Rail) AND a caller. Before this,
+        // `buildingCraftSpeedMultiplier` defaulted to 1 at every one of
+        // its five call sites, so `crafting.speedMin` was a clamp nothing
+        // could reach.
+        craftingContentFor(state),
+      );
+      return { ...next, lastCraftOutcome: outcome };
+    }
+
+    case "CANCEL_CRAFT": {
+      const { state: next, outcome } = cancelCraft(
+        withCrafts(state),
+        action.stationPlacementId,
+        action.target,
+        action.at,
+        craftingContentFor(state),
+      );
+      return { ...next, lastCraftOutcome: outcome };
     }
 
     case "EVOLVE_PIP": {

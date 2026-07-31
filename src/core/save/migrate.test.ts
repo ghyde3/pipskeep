@@ -10,6 +10,7 @@
 import { describe, expect, it } from "vitest";
 import { CURRENT_SCHEMA_VERSION, fromSaveBlob, toSaveBlob } from "./serialize";
 import { MIGRATIONS, migrate } from "./migrate";
+import { canAfford } from "../economy";
 import { HOUR_MS, tuning as tuningModule } from "../../content/tuning";
 import { MILESTONES as contentMilestones } from "../../content/milestones";
 import { pipSeason, updateAging } from "../pips/lifecycle";
@@ -454,12 +455,14 @@ describe("migrate fixtures", () => {
         .pips["pip-9"] as { readonly pip: Record<string, unknown> }
     ).pip;
     expectPipMigratedToV9(beforeResident, afterResident);
-    // The fields the three steps are ALLOWED to add, and no others.
-    // (round 2H's `lineageEggs`/`lastLossOutcome`/per-pip ailment fields
-    // are all OPTIONAL — `undefined ≡` a safe default — so this v8 → v9
-    // step adds none of them; see MIGRATIONS[8]'s own doc comment.)
+    // The fields the migration chain from v6 is ALLOWED to add, and no
+    // others. (round 2H's `lineageEggs`/`lastLossOutcome`/per-pip ailment
+    // fields are all OPTIONAL — `undefined ≡` a safe default — so the
+    // v8 → v9 step adds none of them; see MIGRATIONS[8]'s own doc
+    // comment. Round 2J's v10 → v11 step adds `crafts` — REQUIRED,
+    // backfilled to `{}`, docs/economy-bible.md §3/`MIGRATIONS[10]`.)
     const added = Object.keys(after).filter((k) => !(k in rawV6.state));
-    expect(added.sort()).toEqual(["flair", "keepXp", "lastLevelUp"]);
+    expect(added.sort()).toEqual(["crafts", "flair", "keepXp", "lastLevelUp"]);
   });
 
   /**
@@ -819,6 +822,76 @@ describe("v9 → v10 (round 2D, docs/BACKLOG.md 'Round 2D' item 1): INDIVIDUAL N
     const after = MIGRATIONS[9]!(v9)["state"] as Record<string, unknown>;
     const migrated = (after["pips"] as Record<string, Record<string, unknown>>)["pip-1"];
     expect(speciesNames.has(migrated?.["name"] as string)).toBe(false);
+  });
+});
+
+describe("ROUND 2J (docs/economy-bible.md §0.1/§6.2): the fifth resource (lodestone) forces NO schema bump", () => {
+  // `state.resources` has been `Record<string, number>` since v3, with every
+  // read defaulting via `?? 0` — these fixtures already carry resource ids
+  // (`moss`, `pebble`) that predate even the shipped four and ride along
+  // untouched. Widening `RESOURCE_IDS` to include "lodestone" is therefore
+  // NOT a shape change: an old save simply has no `lodestone` key, which
+  // reads as zero exactly like `driftwood` read as zero before the Shore
+  // shipped. These tests prove that with a real fixture per historical
+  // version, rather than asserting it from the type alone.
+
+  it("no fixture, of any historical version, migrates to a save holding lodestone — nothing is granted retroactively", () => {
+    for (let version = 1; version <= CURRENT_SCHEMA_VERSION; version++) {
+      const result = migrate(loadFixture(version));
+      expect(result.ok, `fixtures/v${version}.json failed to migrate`).toBe(true);
+      if (!result.ok) continue;
+      expect(
+        "lodestone" in result.save.state.resources,
+        `v${version} fixture gained a "lodestone" entry from nowhere`,
+      ).toBe(false);
+    }
+  });
+
+  it("every resource count already in a fixture survives migration unchanged (berry's documented v3→v4 move to inventory is the one exception)", () => {
+    for (let version = 1; version <= CURRENT_SCHEMA_VERSION; version++) {
+      const raw = loadFixture(version) as {
+        readonly state?: { readonly resources?: Readonly<Record<string, number>> };
+      };
+      const before = { ...(raw.state?.resources ?? {}) };
+      delete before["berry"]; // routed to inventory at v3→v4 — its own dedicated test above.
+      const result = migrate(loadFixture(version));
+      expect(result.ok).toBe(true);
+      if (!result.ok) continue;
+      for (const [resourceId, amount] of Object.entries(before)) {
+        expect(
+          result.save.state.resources[resourceId],
+          `v${version} fixture: resource "${resourceId}" changed or was lost in migration`,
+        ).toBe(amount);
+      }
+    }
+  });
+
+  it("an absent lodestone balance reads as exactly 0 — the `?? 0` convention every resource already relies on, not a special case", () => {
+    const result = migrate(loadFixture(CURRENT_SCHEMA_VERSION));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.save.state.resources["lodestone"]).toBeUndefined();
+    expect(result.save.state.resources["lodestone"] ?? 0).toBe(0);
+    expect(canAfford(result.save.state.resources, { lodestone: 0 })).toBe(true);
+    expect(canAfford(result.save.state.resources, { lodestone: 1 })).toBe(false);
+  });
+
+  it("a save that DOES hold lodestone (earned by real play, never by migration) round-trips through validation exactly like the shipped four", () => {
+    const result = migrate(loadFixture(CURRENT_SCHEMA_VERSION));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const withLodestone = {
+      ...result.save.state,
+      resources: { ...result.save.state.resources, lodestone: 7 },
+    };
+    const blob = toSaveBlob(withLodestone, result.save.savedAt);
+    const reread = fromSaveBlob(blob);
+    expect(reread.ok).toBe(true);
+    if (reread.ok) {
+      expect(reread.save.state.resources["lodestone"]).toBe(7);
+      // ...and nothing else about the round trip moved.
+      expect(reread.save.state.resources["wood"]).toBe(result.save.state.resources["wood"]);
+    }
   });
 });
 

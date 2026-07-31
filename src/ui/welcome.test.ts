@@ -21,6 +21,8 @@ import type { BountyInstance } from "../core/progression/bounties";
 import type { AwayPipLine } from "./awaySheet";
 import {
   DOORSTEP_PIP_CAP,
+  awayCraftLine,
+  awayProductionLine,
   cappedAwayPips,
   createDoorstep,
   deriveDoorstepModel,
@@ -959,5 +961,51 @@ describe("createDoorstep — what the card paints", () => {
     sheet.hide();
     sheet.show(model);
     expect(root.classList.contains("pk-doorstep--open")).toBe(true);
+  });
+});
+
+/**
+ * ⚠️ ROUND 2J FIX STAGE — the Doorstep half of "a craft finished".
+ * Verified in play before this existed: queue a Poultice, skip +6h, and
+ * the Doorstep read "THE KEEP — Lv 4 — 0/400 toward The Lanterngrotto.
+ * +8 Keep XP while you were away." and nothing else.
+ */
+describe("awayCraftLine — what the bench made while you were away", () => {
+  const summary = (crafted: Record<string, number>): CatchupSummary => ({
+    elapsedMs: 6 * 3_600_000,
+    ratedMs: 6 * 3_600_000,
+    cappedMs: 0,
+    events: [],
+    pips: [],
+    crafted,
+  });
+
+  it("names the recipe, counted", () => {
+    expect(awayCraftLine(summary({ poultice: 2 }))).toBe(
+      "The Craft Table finished: 2 × Poultice.",
+    );
+  });
+
+  it("lists a mixed batch as one warm sentence", () => {
+    expect(awayCraftLine(summary({ poultice: 1, "lodestone-cairn": 1 }))).toBe(
+      "The Craft Table finished: Poultice and Lodestone Cairn.",
+    );
+  });
+
+  it("is null when nothing was crafted — the section is omitted, never shown empty", () => {
+    expect(awayCraftLine(summary({}))).toBeNull();
+    expect(awayCraftLine({ ...summary({}), crafted: undefined })).toBeNull();
+  });
+
+  it("...and it could NEVER have come from `produced`, which is resources only", () => {
+    // This is the whole reason `CatchupSummary.crafted` exists: crafted
+    // outputs land in `inventory`/`keepsakes`, so the round-2F production
+    // line walks a delta they can never appear in.
+    const withResources: CatchupSummary = {
+      ...summary({}),
+      produced: { wood: 12, lodestone: 3 },
+    };
+    expect(awayProductionLine(withResources)).toMatch(/12 Wood/);
+    expect(awayCraftLine(withResources)).toBeNull();
   });
 });

@@ -14,6 +14,18 @@ Phase-gate log and decision journal, per spec §13–§15. Append entries; never
 | 5 — The Keep | **gate passed** | 2026-07-29 |
 | 6 — Polish, PWA, onboarding | **gate passed** | 2026-07-29 |
 
+### Round 2J — Economy depth: fifth resource + crafting — 2026-07-31 — GATE PASSED (two findings left open)
+**3350 tests** (was 3138). Save schema v10→v11. No new runtime dependency.
+
+- **The design pass corrected the round's own premise.** A fifth resource does NOT raise the affordability ceiling: `expectedMinutesToAfford` is a `max` over a bundle's resources, never a sum, so adding a fifth term to a `max` cannot exceed the largest term already achievable. What it actually buys is **breadth** (eleven strictly-increasing prices instead of five, because five levers have different granularities), **gating that cannot be pre-farmed** (wood/fiber drop at tier 1, so a hoarder could bank the entire old ladder; lodestone does not exist below tier 3), and one currency that never becomes free. It said so plainly rather than letting the brief produce a round that failed its own guard.
+- **Lodestone** — naturally magnetised magnetite. Chosen partly because it explains three shipped flavor texts, including the Lanterngrotto's *"the rocks are warm, nobody knows why."*
+- **The zero-dilution identity.** Adding a weighted loot entry normally dilutes every existing drop. Scaling rolls in exact proportion to the new weight sum does not: `newRolls/(oldSum+w) === oldRolls/oldSum`. Three integer solutions found, and all 23 existing per-biome item rates verified unchanged to within 1e-12 — so the shipped "33.3 minutes to level 2" on-ramp and every pinned rate survive untouched.
+- **The ladder now prices eleven tiers, up from five**, escalating 33.3 → 127.1 expected minutes, strictly increasing, with the lowest afford rate 0.9960 over 3,000 seeded sessions. Lodestone binds tiers 5–10 — six consecutive tiers gated on a material that did not exist a round ago.
+- **Crafting is a job that occupies a Pip**, cashing spec §6.2's registry promise. The Pip you give up is the rate limiter, and it inherits assignment legality, Sulking refusals and the offline story for free. Obeys §4.5's cap like every other rate.
+- **The 2H cure wound is healed properly.** The audit had found the Poultice undiscoverable; the real bug was its *shape* — the only cure in the game dropped only on the three trails that cause the illness, so the answer to "my Pip is ill" was "run the dangerous trail again and hope." It is now craftable, and the ailment card carries a **"Make one"** affordance so the cure is visible from where the fear is.
+- **A NINTH dead feature found and fixed:** craft completions were written to state and reached no player surface. Now toasted live via `collectCraftAlerts` and reported on the Doorstep ("The Craft Table finished: 2 Poultices."). The design pass also found the **Poultice Shelf has no `effects` array at all** — a tier-5 headline costing 7 wood/6 fiber that does literally nothing — plus three placeables whose documented `longevity` effects were never wired.
+- **LEFT OPEN, carried to the backlog:** (1) the round's own "cure ceiling" invariant is asserted nowhere — `crafting.balance.test.ts` was named as its guard and never created, so a decorative guard; (2) no repeatable sink exists for lodestone from tier 12 onward. The design was honest that wood/fiber will still pile up and that inventing make-work sinks is how a cosy game becomes a grind — but the late-game surplus is real and unsolved.
+
 ### Round 2I — Notifications — 2026-07-31 — GATE PASSED
 **3138 tests** (was 2920). No new runtime dependency. No save-schema bump (device-local prefs go through the existing `SaveStore` seam).
 

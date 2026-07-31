@@ -19,8 +19,20 @@
 /** Base resources (spec §6.3). Uncommon/rare items are content-defined on
  * top. Berries are deliberately NOT here: they are FOOD (the food registry
  * is the routing rule everywhere — reveals, job production, migrations),
- * so they live in the inventory, never in `state.resources`. */
-export const RESOURCE_IDS = ["fiber", "wood", "shell", "driftwood"] as const;
+ * so they live in the inventory, never in `state.resources`.
+ *
+ * ROUND 2J (docs/economy-bible.md §1) — the fifth resource, **lodestone**.
+ * Naturally magnetised magnetite: a plain physical noun in the same
+ * register as the shipped four, sourced from the LATE biomes (Snowdrift,
+ * Shore, Lanterngrotto — see `content/expeditions.ts`), so it is
+ * unobtainable before Keep tier 3 and the back half of the twelve-tier
+ * ladder can finally be priced in a material the early game cannot bank.
+ * `ResourceCounts` was already `Record<string, number>` with every read
+ * defaulting via `?? 0`, so this widening needs NO save migration: an
+ * existing save simply has no `lodestone` key, which reads as zero
+ * exactly like a save from before Driftwood shipped read Driftwood as
+ * zero. See `core/save/migrate.test.ts`'s round-2J block. */
+export const RESOURCE_IDS = ["fiber", "wood", "shell", "driftwood", "lodestone"] as const;
 export type ResourceId = (typeof RESOURCE_IDS)[number];
 
 /**

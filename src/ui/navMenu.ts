@@ -127,6 +127,17 @@ export function buildNavRows(state: GameState): readonly NavRowModel[] {
       hint: "Pair two Pips and start a clutch.",
       badge: 0,
     },
+    {
+      // ROUND 2J (docs/economy-bible.md §3–§6.3) — always listed, like the
+      // Nursery: a recipe book worth aiming at is one you can browse before
+      // you can use it (bible §6.3: "locked recipes shown greyed WITH their
+      // tier, because a recipe you can see and cannot yet make is the
+      // carrot"). No badge — nothing here is ever claimable, only makeable.
+      id: "crafting",
+      label: "The Craft Table",
+      hint: "Recipes: a cure, gifts, and things only made here.",
+      badge: 0,
+    },
     ...lineageRows,
   ];
 }

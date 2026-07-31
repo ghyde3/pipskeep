@@ -103,6 +103,13 @@ const tone = {
   linen: "#f1e7d4",
   soap: "#dbeaf5",
   stoneWarm: "#d6b39a",
+  // ROUND 2J FIX STAGE — the five craft-only keepsakes. Lodestone is
+  // slate-blue everywhere it appears (`content/palette.ts`'s `itemColors`,
+  // `ui/icons.ts`'s resource tint, the loot reveal), so its crafted things
+  // carry the same identity here.
+  lodestone: "#6b7a99",
+  lodestoneDark: "#4c586f",
+  lodestoneSheen: "#a8b6cf",
   netTwine: "#cbb98f",
 } as const;
 
@@ -1675,6 +1682,201 @@ const drawWarmStones: DrawFn = (wrap, w) => {
   wrap.addChild(g);
 };
 
+/**
+ * ROUND 2J (docs/economy-bible.md §3.1) — the Craft Table. A deliberate
+ * sibling of the Workbench (same low-table silhouette), told apart by
+ * what sits ON it: a cutting board and knife, a coil of twine, and two
+ * stoppered jars — the flavor's "twine, jars, a knife that's seen
+ * things" rather than the Workbench's tool rack.
+ */
+const drawCraftTable: DrawFn = (wrap, w, h, tileW) => {
+  ground(wrap, w * 0.9);
+  const g = new Graphics();
+  const u = w * 0.5;
+  const bh = tileW * 0.78;
+  const stroke = Math.max(1.5, tileW * 0.032);
+  // Legs.
+  for (const lx of [-u * 0.6, u * 0.6]) {
+    g.roundRect(lx - u * 0.06, -bh * 0.62, u * 0.12, bh * 0.62, u * 0.03).fill(tone.woodDark);
+  }
+  // Thick worktop.
+  g.roundRect(-u * 0.78, -bh * 0.78, u * 1.56, bh * 0.2, u * 0.04)
+    .fill(tone.woodLight)
+    .stroke({ width: stroke, color: tone.woodDark, alpha: 0.7 });
+  // A cutting board, near-center, with a small knife laid across it.
+  g.roundRect(-u * 0.24, -bh * 0.96, u * 0.48, u * 0.2, u * 0.03)
+    .fill(tone.wood)
+    .stroke({ width: stroke * 0.6, color: tone.woodDark, alpha: 0.5 });
+  g.poly([-u * 0.16, -bh * 0.9, u * 0.2, -bh * 0.86, u * 0.16, -bh * 0.82, -u * 0.16, -bh * 0.84])
+    .fill(tone.metal)
+    .stroke({ width: stroke * 0.4, color: tone.charcoal, alpha: 0.5 });
+  // Two stoppered jars off to one side.
+  for (const [jx, jr] of [[-u * 0.56, 0.16], [-u * 0.34, 0.12]] as const) {
+    g.roundRect(jx - u * jr, -bh * 1.02, u * jr * 2, u * jr * 1.9, u * jr * 0.4)
+      .fill({ color: tone.cushion, alpha: 0.55 })
+      .stroke({ width: stroke * 0.5, color: tone.woodDark, alpha: 0.6 });
+    g.roundRect(jx - u * jr * 0.6, -bh * 1.1, u * jr * 1.2, u * jr * 0.5, u * jr * 0.2).fill(
+      tone.woodDark,
+    );
+  }
+  // A coiled loop of twine.
+  g.circle(u * 0.42, -bh * 0.92, u * 0.14)
+    .stroke({ width: stroke * 0.7, color: tone.fiber, alpha: 0.85 });
+  g.circle(u * 0.42, -bh * 0.92, u * 0.08).stroke({
+    width: stroke * 0.55,
+    color: tone.fiber,
+    alpha: 0.7,
+  });
+  wrap.addChild(g);
+};
+
+/**
+ * ROUND 2J FIX STAGE — THE FIVE CRAFT-ONLY KEEPSAKES
+ * (docs/economy-bible.md §4.4). Round 2F's lesson, restated because this
+ * round could have repeated it: 21 items once shipped as brown crates and
+ * it made the whole ladder invisible. Each of these gets a real drawing,
+ * all built from the same slate-blue lodestone palette so a player can see
+ * at a glance which things in the Keep were MADE rather than bought.
+ */
+
+/** Three stones, balanced, pointing. Smallest and first. */
+const drawLodestoneCairn: DrawFn = (wrap, w) => {
+  ground(wrap, w * 0.6);
+  const g = new Graphics();
+  const u = w * 0.5;
+  const stroke = Math.max(1, u * 0.035);
+  const stones: readonly (readonly [number, number, number, number])[] = [
+    [0, -u * 0.16, u * 0.34, u * 0.17],
+    [u * 0.03, -u * 0.44, u * 0.25, u * 0.14],
+    [-u * 0.02, -u * 0.68, u * 0.16, u * 0.11],
+  ];
+  stones.forEach(([sx, sy, rx, ry]) => {
+    g.ellipse(sx, sy, rx, ry)
+      .fill(tone.lodestone)
+      .stroke({ width: stroke, color: tone.lodestoneDark, alpha: 0.6 });
+    g.ellipse(sx - rx * 0.24, sy - ry * 0.3, rx * 0.4, ry * 0.34).fill({
+      color: tone.lodestoneSheen,
+      alpha: 0.5,
+    });
+  });
+  wrap.addChild(g);
+};
+
+/** A rail of drying herbs — bundles hung from a lodestone-pinned bar. */
+const drawHerbRail: DrawFn = (wrap, w, h, tileW) => {
+  ground(wrap, w * 0.7);
+  const g = new Graphics();
+  const u = w * 0.5;
+  const bh = tileW * 0.7;
+  const stroke = Math.max(1.2, u * 0.035);
+  for (const px of [-u * 0.56, u * 0.56]) {
+    g.roundRect(px - u * 0.05, -bh * 0.9, u * 0.1, bh * 0.9, u * 0.03).fill(tone.woodDark);
+  }
+  g.roundRect(-u * 0.66, -bh * 0.92, u * 1.32, u * 0.1, u * 0.04)
+    .fill(tone.lodestone)
+    .stroke({ width: stroke * 0.7, color: tone.lodestoneDark, alpha: 0.6 });
+  for (const bx of [-u * 0.36, 0, u * 0.36]) {
+    g.roundRect(bx - u * 0.09, -bh * 0.86, u * 0.18, bh * 0.44, u * 0.08).fill(tone.moss);
+    g.roundRect(bx - u * 0.04, -bh * 0.86, u * 0.08, bh * 0.42, u * 0.04).fill({
+      color: tone.mossDark,
+      alpha: 0.6,
+    });
+  }
+  wrap.addChild(g);
+};
+
+/** A 2×1 rail of hanging lodestone chimes. */
+const drawChimeRail: DrawFn = (wrap, w, h, tileW) => {
+  ground(wrap, w * 0.8);
+  const g = new Graphics();
+  const u = w * 0.5;
+  const bh = tileW * 0.82;
+  const stroke = Math.max(1.2, u * 0.028);
+  for (const px of [-u * 0.7, u * 0.7]) {
+    g.roundRect(px - u * 0.045, -bh * 0.92, u * 0.09, bh * 0.92, u * 0.03).fill(tone.woodDark);
+  }
+  g.roundRect(-u * 0.8, -bh * 0.96, u * 1.6, u * 0.08, u * 0.03).fill(tone.wood);
+  const chimes: readonly (readonly [number, number])[] = [
+    [-u * 0.48, 0.5],
+    [-u * 0.16, 0.68],
+    [u * 0.16, 0.58],
+    [u * 0.48, 0.42],
+  ];
+  chimes.forEach(([cx, len]) => {
+    g.roundRect(cx - u * 0.05, -bh * 0.92, u * 0.1, bh * len, u * 0.05)
+      .fill(tone.lodestone)
+      .stroke({ width: stroke, color: tone.lodestoneDark, alpha: 0.55 });
+    g.roundRect(cx - u * 0.015, -bh * 0.88, u * 0.03, bh * len * 0.7, u * 0.015).fill({
+      color: tone.lodestoneSheen,
+      alpha: 0.45,
+    });
+  });
+  wrap.addChild(g);
+};
+
+/** A 2×2 rose laid flat into the ground at the gate. */
+const drawCompassRose: DrawFn = (wrap, w) => {
+  const g = new Graphics();
+  const u = w * 0.5;
+  const stroke = Math.max(1, u * 0.02);
+  g.ellipse(0, -u * 0.08, u * 0.72, u * 0.34).fill({ color: tone.pebble, alpha: 0.85 });
+  g.ellipse(0, -u * 0.08, u * 0.72, u * 0.34).stroke({
+    width: stroke * 1.6,
+    color: tone.lodestoneDark,
+    alpha: 0.5,
+  });
+  // Four long points + four short, flattened onto the ground plane.
+  const long = 0.6;
+  const short = 0.3;
+  for (const [dx, dy, len] of [
+    [0, -1, long],
+    [0, 1, long],
+    [-1, 0, long],
+    [1, 0, long],
+    [-0.7, -0.7, short],
+    [0.7, -0.7, short],
+    [-0.7, 0.7, short],
+    [0.7, 0.7, short],
+  ] as const) {
+    g.poly([
+      dx * u * len,
+      -u * 0.08 + dy * u * len * 0.46,
+      -dy * u * 0.09,
+      -u * 0.08 + dx * u * 0.045,
+      dy * u * 0.09,
+      -u * 0.08 - dx * u * 0.045,
+    ]).fill({ color: tone.lodestone, alpha: 0.9 });
+  }
+  g.ellipse(0, -u * 0.08, u * 0.1, u * 0.05).fill(tone.lodestoneSheen);
+  wrap.addChild(g);
+};
+
+/** The biggest light the Keep has — a 2×2 standing lantern. */
+const drawWayhomeLantern: DrawFn = (wrap, w, h, tileW) => {
+  ground(wrap, w * 0.75);
+  const g = new Graphics();
+  const u = w * 0.5;
+  const bh = tileW * 1.05;
+  const stroke = Math.max(1.4, u * 0.028);
+  // A wide, generous glow — this is the showstopper of the catalogue.
+  g.circle(0, -bh * 0.66, u * 0.72).fill({ color: tone.lanternGlow, alpha: 0.16 });
+  g.circle(0, -bh * 0.66, u * 0.48).fill({ color: tone.lanternGlow, alpha: 0.2 });
+  // Stone plinth.
+  g.roundRect(-u * 0.3, -bh * 0.22, u * 0.6, bh * 0.22, u * 0.05)
+    .fill(tone.lodestone)
+    .stroke({ width: stroke, color: tone.lodestoneDark, alpha: 0.6 });
+  // Post.
+  g.roundRect(-u * 0.08, -bh * 0.82, u * 0.16, bh * 0.62, u * 0.04).fill(tone.woodDark);
+  // Housing.
+  g.roundRect(-u * 0.34, -bh * 1.06, u * 0.68, bh * 0.4, u * 0.08)
+    .fill({ color: tone.lanternBody, alpha: 0.95 })
+    .stroke({ width: stroke, color: tone.woodDark, alpha: 0.7 });
+  g.roundRect(-u * 0.2, -bh * 0.99, u * 0.4, bh * 0.26, u * 0.05).fill(tone.lanternGlow);
+  // Cap.
+  g.poly([-u * 0.42, -bh * 1.06, 0, -bh * 1.26, u * 0.42, -bh * 1.06]).fill(tone.lodestoneDark);
+  wrap.addChild(g);
+};
+
 /** Unknown item id — a friendly placeholder crate, never a crash. */
 const drawFallbackCrate: DrawFn = (wrap, w, h, tileW) => {
   ground(wrap, w);
@@ -1734,6 +1936,8 @@ const RESOLVERS: Readonly<Record<string, { draw: DrawFn; flat: boolean }>> = {
   "nest-warmer": { draw: drawNestWarmer, flat: false },
   "trail-post": { draw: drawTrailPost, flat: false },
   workbench: { draw: drawWorkbench, flat: false },
+  // ROUND 2J (docs/economy-bible.md §3.1) — the eleventh station.
+  "craft-table": { draw: drawCraftTable, flat: false },
   "sun-bunks": { draw: drawSunBunks, flat: false },
   beacon: { draw: drawBeacon, flat: false },
   weathervane: { draw: drawWeathervane, flat: false },
@@ -1753,6 +1957,14 @@ const RESOLVERS: Readonly<Record<string, { draw: DrawFn; flat: boolean }>> = {
   "net-float": { draw: drawNetFloat, flat: false },
   "glow-pool": { draw: drawGlowPool, flat: true },
   "warm-stones": { draw: drawWarmStones, flat: true },
+  // ROUND 2J FIX STAGE — the five craft-only keepsakes. `compass-rose` is
+  // `flat: true` (it is laid INTO the ground at the gate; walling a Pip in
+  // with a floor inlay would be absurd), the other four stand.
+  "lodestone-cairn": { draw: drawLodestoneCairn, flat: false },
+  "herb-rail": { draw: drawHerbRail, flat: false },
+  "chime-rail": { draw: drawChimeRail, flat: false },
+  "compass-rose": { draw: drawCompassRose, flat: true },
+  "wayhome-lantern": { draw: drawWayhomeLantern, flat: false },
 };
 
 /** Every item id this module can draw for real (i.e. NOT the fallback

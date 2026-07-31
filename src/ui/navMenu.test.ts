@@ -115,13 +115,16 @@ describe("buildNavRows", () => {
   it("always offers the permanent destinations, in a stable order", () => {
     const rows = buildNavRows(makeState());
     // ROUND 2H added "nursery" (breeding is the succession mechanic now that
-    // Pips are finite, so it needs a standing door). "lineage" is NOT here:
-    // it appears only while an egg is actually waiting — see below.
+    // Pips are finite, so it needs a standing door). ROUND 2J added
+    // "crafting" (the Craft Table's recipe book — always browsable, per
+    // docs/economy-bible.md §6.3). "lineage" is NOT here: it appears only
+    // while an egg is actually waiting — see below.
     expect(rows.map((r) => r.id)).toEqual([
       "album",
       "meadow",
       "today",
       "nursery",
+      "crafting",
     ]);
     // Every row is reachable from the very first session — none of them is
     // gated behind a Keep level or an unlock, so a new player can always see

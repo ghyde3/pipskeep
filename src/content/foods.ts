@@ -209,6 +209,16 @@ export const foods: Readonly<Record<FoodId, FoodDef>> = {
     revealTier: "uncommon",
     // The one item in the game whose effect is not a stat. Without this
     // the Satchel advertised the round's only working cure as "+0 Hunger".
-    effectCopy: "Give it to an ailing Pip — a real chance to cure them",
+    //
+    // ROUND 2J (docs/economy-bible.md §4.1, round 2H's cruelty audit: "the
+    // only working cure was undiscoverable" — it dropped only from the
+    // three trails that inflict the ailments in the first place). The
+    // Poultice is now also RECIPE #1 at the Craft Table
+    // (`content/recipes.ts`'s `poultice`), so this line — read generically
+    // by `ui/itemsSheet.ts`'s `foodEffectLine` any time the Satchel holds
+    // at least one — says so, turning "I got lucky on a dangerous trail"
+    // into "I can always go make one."
+    effectCopy:
+      "Give it to an ailing Pip — a real chance to cure them. Out of jars? The Craft Table can make more.",
   },
 };

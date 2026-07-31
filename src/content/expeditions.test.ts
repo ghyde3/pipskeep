@@ -195,3 +195,80 @@ describe("the shape of the curve: quick trip vs deep trip, per tier (content bib
     expect(1 / perTripChance).toBeLessThan(4);
   });
 });
+
+describe("ROUND 2J — THE ZERO-DILUTION IDENTITY (economy bible §1.2, the round's ⚠️ fragile invariant)", () => {
+  // Loot tables are WEIGHTED, so adding lodestone as a new entry raises
+  // each table's weight sum and would normally DILUTE every other entry's
+  // share. The round avoids this by scaling `lootRolls` in EXACTLY the
+  // same ratio as the new weight sum: if
+  //   newRolls / (oldSum + lodestoneWeight) === oldRolls / oldSum
+  // then every OTHER entry's per-trip yield (`rolls × weight / sum`) is
+  // unchanged to the last bit. This test states that identity in its own
+  // terms, with the pre-round-2J values written down as literals, so a
+  // future one-character edit to any of these six numbers fails HERE
+  // instead of surfacing as a confusing minute-count regression three
+  // files away in `core/economy/reachability.test.ts`.
+  const BEFORE: Readonly<
+    Record<"snowdrift" | "shore" | "lanterngrotto", { rolls: number; sum: number }>
+  > = {
+    snowdrift: { rolls: 12, sum: 104 },
+    shore: { rolls: 6, sum: 100 },
+    lanterngrotto: { rolls: 14, sum: 98 },
+  };
+
+  it("holds for all three biomes lodestone was added to: newRolls × oldSum === oldRolls × newSum", () => {
+    for (const [id, before] of Object.entries(BEFORE) as [
+      keyof typeof BEFORE,
+      { rolls: number; sum: number },
+    ][]) {
+      const expedition = expeditions[id];
+      const lodestoneEntry = expedition.lootTable.find((e) => e.itemId === "lodestone");
+      expect(lodestoneEntry, `${id} has no lodestone entry`).toBeDefined();
+      const newSum = expedition.lootTable.reduce((sum, e) => sum + e.weight, 0);
+      expect(newSum, `${id}: new weight sum`).toBe(before.sum + lodestoneEntry!.weight);
+      // The identity itself, in cross-multiplied (integer-exact) form.
+      expect(
+        expedition.lootRolls * before.sum,
+        `${id}: newRolls × oldSum should equal oldRolls × newSum`,
+      ).toBe(before.rolls * newSum);
+    }
+  });
+
+  it("...and therefore every OTHER entry's per-trip yield in those three tables is unchanged (not merely close)", () => {
+    for (const [id, before] of Object.entries(BEFORE) as [
+      keyof typeof BEFORE,
+      { rolls: number; sum: number },
+    ][]) {
+      const expedition = expeditions[id];
+      const newSum = expedition.lootTable.reduce((sum, e) => sum + e.weight, 0);
+      for (const entry of expedition.lootTable) {
+        if (entry.itemId === "lodestone") continue;
+        const oldPerTrip = before.rolls * (entry.weight / before.sum);
+        const newPerTrip = expedition.lootRolls * (entry.weight / newSum);
+        expect(
+          newPerTrip,
+          `${id}/${entry.itemId}: per-trip yield moved`,
+        ).toBeCloseTo(oldPerTrip, 12);
+      }
+    }
+  });
+
+  it("lodestone yields 3/3/2 per trip (Snowdrift/Shore/Lanterngrotto) and the Shore is the faucet (economy bible §1.2)", () => {
+    expect(perTrip("snowdrift", "lodestone")).toBeCloseTo(3, 5);
+    expect(perTrip("shore", "lodestone")).toBeCloseTo(3, 5);
+    expect(perTrip("lanterngrotto", "lodestone")).toBeCloseTo(2, 5);
+    expect(perMinute("shore", "lodestone")).toBeGreaterThan(perMinute("snowdrift", "lodestone"));
+    expect(perMinute("shore", "lodestone")).toBeGreaterThan(
+      perMinute("lanterngrotto", "lodestone"),
+    );
+  });
+
+  it("Bramblewick, Meadow and Forest carry no lodestone at all — it stays a late resource", () => {
+    for (const id of ["meadow", "bramblewick", "forest"] as const) {
+      expect(
+        expeditions[id].lootTable.some((e) => e.itemId === "lodestone"),
+        id,
+      ).toBe(false);
+    }
+  });
+});

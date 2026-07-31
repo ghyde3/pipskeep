@@ -30,6 +30,7 @@
 
 import type { BadgeId, IconSpec, MotifId } from "../content/icons";
 import { ICON_TINTS, STATION_ICON_TINT_KEY } from "../content/icons";
+import { itemColors } from "../content/palette";
 import type { BuildingEffect } from "../content/buildingEffects";
 import "./icons.css";
 
@@ -56,6 +57,15 @@ const BADGE_FOR_EFFECT_KIND: Readonly<Record<BuildingEffect["kind"], BadgeId>> =
   eggChancePoints: "boot",
   job: "gear",
   xpBonus: "star",
+  // ROUND 2J FIX STAGE — the three kinds widened in the same patch that
+  // wired them (`content/buildingEffects.ts`'s discharged 2H note): a
+  // remedy is care (heart), a longer life is care (heart), a faster bench
+  // is work (gear). This map is EXHAUSTIVE by type, which is exactly why
+  // widening the union is a coordinated content+ui edit rather than a
+  // content-only one.
+  remedy: "heart",
+  longevity: "heart",
+  craftSpeed: "gear",
 };
 
 /** The badge a catalog item's icon wears — derived from its FIRST effect,
@@ -128,6 +138,50 @@ const FOOD_MOTIFS: Readonly<Record<string, MotifId>> = {
  * list here) fall back to "leaf" rather than rendering nothing. */
 export function foodIconSpec(foodId: string): IconSpec {
   return { motif: FOOD_MOTIFS[foodId] ?? "leaf" };
+}
+
+// ---------------------------------------------------------------------------
+// ROUND 2J — the five BASE RESOURCES (`core/economy`'s `RESOURCE_IDS`) carry
+// no `IconSpec`/tint of their own either, for the same reason foods didn't:
+// `content/economy` predates this icon vocabulary, and giving five ids a
+// motif is a content-authoring change outside this round's core/content
+// ownership. Before this round no surface rendered a resource icon at all
+// (the Satchel showed only foods; resources had no viewing surface — see
+// docs/hud-redesign.md §2.5). Motifs picked to read as the THING, not just
+// "a swatch": wood is a post, fiber is a leaf, shell reuses the existing
+// shell glyph, driftwood is a curved arch (a piece of bleached wood), and
+// lodestone is the "stone" motif — the same one the Cairn recipe describes
+// as "three stones, balanced, pointing" (docs/economy-bible.md §1.1).
+// ---------------------------------------------------------------------------
+
+const RESOURCE_MOTIFS: Readonly<Record<string, MotifId>> = {
+  wood: "post",
+  fiber: "leaf",
+  shell: "shell",
+  driftwood: "arch",
+  lodestone: "stone",
+};
+
+/** Motif-only spec for a base resource — mirrors `foodIconSpec`. Unknown
+ * ids (a future sixth resource) fall back to "stone" rather than nothing. */
+export function resourceIconSpec(resourceId: string): IconSpec {
+  return { motif: RESOURCE_MOTIFS[resourceId] ?? "stone" };
+}
+
+/**
+ * A resource's own tint — never a decoration set's, since resources carry
+ * no `setId`. Falls back to the neutral station tint, same discipline as
+ * `tintForSetId`.
+ *
+ * ROUND 2J FIX STAGE: this READS `content/palette.ts`'s `itemColors`
+ * rather than keeping its own private table. The private table was the
+ * bug: the Satchel's Materials list rendered Lodestone in slate-blue
+ * while `ui/lootReveal.ts` — which tints from `itemColors` — rendered it
+ * as the generic tan fallback, because `itemColors` had no resource
+ * entries at all. One map, one identity per material, on every surface.
+ */
+export function resourceTint(resourceId: string): string {
+  return itemColors[resourceId] ?? DEFAULT_TINT;
 }
 
 // ---------------------------------------------------------------------------

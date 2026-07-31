@@ -72,6 +72,7 @@ import { tuning as contentTuning } from "../content/tuning";
 import type { Tuning } from "../content/tuning";
 import { EXPEDITION_IDS, expeditions as contentExpeditions } from "../content/expeditions";
 import { species as contentSpecies } from "../content/species";
+import { recipes as contentRecipes } from "../content/recipes";
 import { MILESTONES as contentMilestones } from "../content/milestones";
 // ROUND 2G (docs/hud-redesign.md §5.1 decision 3): the Keep's tier/XP
 // progress reads through the SAME pure model the Keep XP bar itself uses,
@@ -262,6 +263,44 @@ function resourceLabel(id: string): string {
   return id.charAt(0).toUpperCase() + id.slice(1);
 }
 
+/**
+ * ROUND 2J FIX STAGE — "The Craft Table finished: 2 Poultices."
+ *
+ * Verified in play before this existed: queue a Poultice, skip +6h, and
+ * the Doorstep read "THE KEEP — Lv 4 — 0/400 toward The Lanterngrotto.
+ * +8 Keep XP while you were away." and nothing else. No line, no toast, no
+ * scene change — the only trace of a finished craft was a bare XP chip,
+ * and the jar was in the Satchel if you thought to go and look.
+ *
+ * `awayProductionLine` above could never have covered it: it walks
+ * `summary.produced`, which is a RESOURCE delta, and a crafted Poultice
+ * lands in `inventory`. Hence `CatchupSummary.crafted`, stamped by the
+ * same reducer pass.
+ */
+export function awayCraftLine(summary: CatchupSummary): string | null {
+  const crafted = summary.crafted ?? {};
+  const parts = Object.entries(crafted)
+    .filter(([, count]) => count > 0)
+    .map(([recipeId, count]) => {
+      const name = craftedRecipeName(recipeId);
+      return count === 1 ? name : `${count} × ${name}`;
+    });
+  if (parts.length === 0) return null;
+  const list =
+    parts.length === 1
+      ? (parts[0] as string)
+      : `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1] as string}`;
+  return `The Craft Table finished: ${list}.`;
+}
+
+/** Recipe display name, with the crafted decoration's own name as the
+ * fallback for a keepsake recipe (both registries are content). */
+function craftedRecipeName(recipeId: string): string {
+  const recipe = (contentRecipes as Readonly<Record<string, { name: string }>>)[recipeId];
+  if (recipe !== undefined) return recipe.name;
+  return recipeId;
+}
+
 // ---------------------------------------------------------------------------
 // The Doorstep model — AwaySheetModel, extended (bible §10.4)
 // ---------------------------------------------------------------------------
@@ -411,9 +450,12 @@ export function deriveDoorstepModel(
 
   // The absence's EARNINGS, listed before its costs in the same section
   // (bible §6.3: "+1 line, not a section").
-  const keepGainLines = [awayXpLine(summary), awayProductionLine(summary)].filter(
-    (line): line is string => line !== null,
-  );
+  const keepGainLines = [
+    awayXpLine(summary),
+    awayProductionLine(summary),
+    // ROUND 2J FIX STAGE — the bench's own line, alongside the station's.
+    awayCraftLine(summary),
+  ].filter((line): line is string => line !== null);
 
   return {
     away,

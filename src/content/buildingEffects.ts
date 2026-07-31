@@ -48,27 +48,73 @@ export type BuildingEffect =
    * change whether the job actually runs. */
   | { readonly kind: "job"; readonly jobId: string }
   /** Multiplies every Keep XP grant. `fraction` must be > 0. */
-  | { readonly kind: "xpBonus"; readonly fraction: number };
+  | { readonly kind: "xpBonus"; readonly fraction: number }
+  /**
+   * ROUND 2J FIX STAGE (docs/lifecycle-bible.md §2.3/§3.5, economy-bible
+   * §3.6) — AILMENTS, on both sides. `contractReduction` lowers the odds
+   * of catching one at all (fed to `core/pips/ailment.ts`'s already-
+   * shipped `rollContraction` `buildingContractReduction` parameter);
+   * `cureBonus` raises the odds a cure attempt lands (fed to `attemptCure`
+   * through the same shipped `cureBonusMax` clamp). Either may be 0; both
+   * must be ≥ 0 — like every other kind here, this one only ever helps.
+   *
+   * A plain item's effects contribute PER PLACEMENT, so ten Poultice
+   * Shelves is ten contributions. `contractReductionMax` (0.60) is far too
+   * loose to be that clamp on its own, hence the tighter building-sourced
+   * aggregate `tuning.crafting.buildingRemedyMax` — summed once, clamped
+   * once, in `core/keep/effects.ts`.
+   */
+  | {
+      readonly kind: "remedy";
+      readonly contractReduction: number;
+      readonly cureBonus: number;
+    }
+  /**
+   * ROUND 2J FIX STAGE (docs/lifecycle-bible.md §2.2) — a longer life, as
+   * a FRACTION added (0.06 = "+6%"). Fed to `core/pips/lifecycle.ts`'s
+   * already-shipped `lifespanMs` `buildingLongevity` parameter and its
+   * already-shipped `lifecycle.lifespan.buildingBonusMax` (0.25) clamp.
+   * `bonus` must be > 0.
+   *
+   * The lifecycle bible asserted three shipped placeables already carried
+   * this (nest-warmer 0.06, sun-bunks 0.10, larder 0.05) and its "a
+   * devoted player's Pip lives 15.6 days" arithmetic depended on it — but
+   * the effect kind did not exist, so `buildingLongevity` was permanently
+   * 0 and the true maximum was 12.85 days. This is the patch that makes
+   * that bible's own number true.
+   */
+  | { readonly kind: "longevity"; readonly bonus: number }
+  /**
+   * ROUND 2J FIX STAGE (docs/economy-bible.md §3.6) — multiplies a craft's
+   * duration at every Craft Table. `multiplier` must be < 1. Composes by
+   * PRODUCT (it is a rate, like `restSpeed`/`expeditionSpeed`), clamped
+   * once at `tuning.crafting.speedMin`, then the crafting Pip's own level
+   * factor and the composite floor apply in `core/crafting`.
+   *
+   * Without this kind, `CraftingTuning.speedMin` was a clamp nothing could
+   * ever reach: `buildingCraftSpeedMultiplier` had no caller and always
+   * defaulted to 1.
+   */
+  | { readonly kind: "craftSpeed"; readonly multiplier: number };
 
 /**
- * ⚠️ ROUND 2H NOTE (docs/lifecycle-bible.md §2.3/§3.5): the bible specifies
- * two more effect kinds — `remedy` (ailment contract reduction + cure
- * bonus, for the Poultice Shelf/Wash Basin) and `longevity` (lifespan
- * bonus, for the Nest Warmer/Sun Bunks/Larder). `core/pips/ailment.ts`'s
- * `rollContraction` and `core/pips/lifecycle.ts`'s `lifespanMs` already
- * carry the exact parameters those two channels would feed
- * (`buildingContractReduction`, `buildingLongevity`) — both documented as
- * "not wired to any caller this round".
+ * ✅ ROUND 2J FIX STAGE — THE ROUND 2H NOTE THAT USED TO LIVE HERE IS
+ * DISCHARGED. It read: "`remedy` and `longevity` are DELIBERATELY NOT
+ * ADDED HERE… it belongs with whoever next wires `core/keep/effects.ts`'s
+ * `foldEffect` for these two kinds". This round is that patch, and it took
+ * `craftSpeed` with it, because all three are the same coordinated
+ * content+core+ui edit: widen the union here, fold in
+ * `core/keep/effects.ts`, add a case to `ui/icons.ts`'s exhaustive
+ * `BADGE_FOR_EFFECT_KIND`, add a generated line to `ui/buildMode.ts`'s
+ * exhaustive `describeEffect`, and read the resolved value at the one core
+ * call site that already had the parameter waiting.
  *
- * DELIBERATELY NOT ADDED HERE. `ui/icons.ts`'s `BADGE_FOR_EFFECT_KIND` is
- * an EXHAUSTIVE `Record<BuildingEffect["kind"], BadgeId>` — widening this
- * union without a matching case there is a compile break, and `ui/` is out
- * of this round's content-agent scope. Extending `BuildingEffect` is
- * therefore a coordinated content+UI change, not a content-only one; it
- * belongs with whoever next wires `core/keep/effects.ts`'s `foldEffect`
- * for these two kinds (a `ui/icons.ts` badge-map edit is a one-line part
- * of that same patch, not a separate task). The Poultice Shelf ships this
- * round as a real, buildable, reachability-safe placeable with no
- * `effects` entry — its shelf is real, its wiring is the next round's.
+ * What it fixed, concretely: the Poultice Shelf — a named tier-5 headline
+ * costing `wood 7, fiber 6` and described as "everything you'd want on a
+ * bad night" — had no `effects` array at all and did literally nothing.
+ * `lifespanMs`'s `buildingLongevity` was likewise permanently 0, so the
+ * lifecycle bible's "a devoted player's Pip lives 15.6 days" was
+ * unreachable (the true maximum was 12.85). And `CraftingTuning.speedMin`
+ * was a clamp with no channel that could reach it.
  */
 export type BuildingEffectKind = BuildingEffect["kind"];

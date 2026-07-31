@@ -293,6 +293,18 @@ function richState(seed = SEED): GameState {
     // ailment resolution, so a setting that silently failed to load would
     // be the worst possible way for this round to break its promises.
     settings: { quietKeep: true },
+    // ROUND 2J (docs/economy-bible.md §3, save schema v11) — an in-flight
+    // craft with one queued behind it, exercised with real data so the
+    // round-trip test covers the shape (deep-validated, like `keepXp`).
+    crafts: {
+      "place-1": {
+        pipId: "pip-2",
+        recipeId: "poultice",
+        startedAt: SAVED_AT - 600_000,
+        effectiveMs: 4_500_000,
+        queue: ["toastnut"],
+      },
+    },
   };
 }
 

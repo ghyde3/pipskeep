@@ -11,7 +11,14 @@ import { expeditions } from "./expeditions";
  * anywhere a registry is read, which is a property of the SOURCE, not of
  * any one export. */
 const rawSources = import.meta.glob(
-  ["./expeditions.ts", "./foods.ts", "./decorations.ts", "../core/progression/events.ts"],
+  [
+    "./expeditions.ts",
+    "./foods.ts",
+    "./decorations.ts",
+    // ROUND 2J FIX STAGE — the fifth registry with the seam.
+    "./recipes.ts",
+    "../core/progression/events.ts",
+  ],
   { query: "?raw", import: "default", eager: true },
 ) as Record<string, string>;
 
@@ -74,7 +81,13 @@ describe("no registry lookup path filters by availableWindow (the guard against 
    * straight past it (round-2C review, mutation 11). An unanchored search for
    * the field name cannot have that failure mode.
    */
-  for (const file of ["./expeditions.ts", "./foods.ts", "./decorations.ts"]) {
+  // ROUND 2J FIX STAGE — `./recipes.ts` joins the list. It declares the
+  // same seam (`content/recipes.ts`'s `availableWindow?`) and was not
+  // guarded, so a future contributor could have added seasonal recipe
+  // gating with the whole suite green. This list is the known-fragile
+  // part (it was already tightened once after round-2C mutation 11), so
+  // a new registry with the seam MUST be appended here.
+  for (const file of ["./expeditions.ts", "./foods.ts", "./decorations.ts", "./recipes.ts"]) {
     it(`content${file.slice(1)} DECLARES availableWindow and never reads it`, () => {
       const src = readSource(file);
       const mentions = src.match(/availableWindow/g) ?? [];

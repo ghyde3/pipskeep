@@ -334,7 +334,16 @@ export interface ComfortNeedRow {
 }
 
 export interface ComfortScalarRow {
-  readonly key: "rest" | "trips" | "loot" | "eggs" | "xp";
+  readonly key:
+    | "rest"
+    | "trips"
+    | "loot"
+    | "eggs"
+    | "xp"
+    // ROUND 2J FIX STAGE — the three channels this round wired.
+    | "remedy"
+    | "longevity"
+    | "crafts";
   readonly label: string;
   readonly valueLabel: string;
   readonly sources: readonly string[];
@@ -425,6 +434,10 @@ function scalarSources(
 export function buildKeepComfortModel(state: GameState): KeepComfortModel {
   const resolved = resolveKeepEffects(state.keep, state.keep.level);
   const caps = contentTuning.progression.effectCaps;
+  // ROUND 2J FIX STAGE — the two caps that live outside `effectCaps` (see
+  // `tuning.crafting`'s own siting note and `lifecycle.lifespan`).
+  const remedyMax = contentTuning.crafting.buildingRemedyMax;
+  const lifespanBonusMax = contentTuning.lifecycle.lifespan.buildingBonusMax;
   const contributions = itemEffectContributions(state);
 
   const needs: ComfortNeedRow[] = [];
@@ -500,6 +513,49 @@ export function buildKeepComfortModel(state: GameState): KeepComfortModel {
       valueLabel: `+${pctLabel(resolved.xpBonusFraction)}`,
       sources: scalarSources(contributions, resolved.activeSetBonuses, "xpBonus"),
       atCap: resolved.xpBonusFraction >= caps.xpBonusMax - 1e-9,
+    });
+  }
+
+  // ROUND 2J FIX STAGE — the three channels this round wired. Without
+  // these rows they would be "written to state, invisible in play" the day
+  // they shipped: this panel IS the "what is my Keep doing for me" surface
+  // (bible §4.3), and a Poultice Shelf that lowers illness odds by 10%
+  // with nowhere to read it is the same dead promise the shelf already
+  // was.
+  if (resolved.ailmentContractReduction > 0 || resolved.ailmentCureBonus > 0) {
+    const parts: string[] = [];
+    if (resolved.ailmentContractReduction > 0) {
+      parts.push(`−${pctLabel(resolved.ailmentContractReduction)} risk`);
+    }
+    if (resolved.ailmentCureBonus > 0) {
+      parts.push(`+${pctLabel(resolved.ailmentCureBonus)} cures`);
+    }
+    scalars.push({
+      key: "remedy",
+      label: "Illness",
+      valueLabel: parts.join(" · "),
+      sources: scalarSources(contributions, resolved.activeSetBonuses, "remedy"),
+      atCap:
+        resolved.ailmentContractReduction >= remedyMax.contractReduction - 1e-9 &&
+        resolved.ailmentCureBonus >= remedyMax.cureBonus - 1e-9,
+    });
+  }
+  if (resolved.lifespanBonusFraction > 0) {
+    scalars.push({
+      key: "longevity",
+      label: "Long lives",
+      valueLabel: `+${pctLabel(resolved.lifespanBonusFraction)}`,
+      sources: scalarSources(contributions, resolved.activeSetBonuses, "longevity"),
+      atCap: resolved.lifespanBonusFraction >= lifespanBonusMax - 1e-9,
+    });
+  }
+  if (resolved.craftSpeedMultiplier < 1) {
+    scalars.push({
+      key: "crafts",
+      label: "Crafts",
+      valueLabel: `×${trimMultiplier(resolved.craftSpeedMultiplier)}`,
+      sources: scalarSources(contributions, resolved.activeSetBonuses, "craftSpeed"),
+      atCap: resolved.craftSpeedMultiplier <= contentTuning.crafting.speedMin + 1e-9,
     });
   }
 

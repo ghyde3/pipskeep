@@ -125,6 +125,7 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
     flair: {},
     keepXp: 0,
     lastLevelUp: null,
+    crafts: {},
     ...overrides,
   };
 }
@@ -149,6 +150,8 @@ const ALL_ACTION_TYPES: readonly GameAction["type"][] = [
   "PURCHASE_ROSTER_UPGRADE",
   "ASSIGN_JOB",
   "UNASSIGN_JOB",
+  "ENQUEUE_CRAFT",
+  "CANCEL_CRAFT",
   "EVOLVE_PIP",
   "DEBUG_GRANT",
   "ONBOARDING_ADVANCE",
@@ -199,6 +202,8 @@ describe("the streak visit whitelist (bible §3.2), enumerated against GameActio
       "PURCHASE_KEEP_LEVEL",
       "PURCHASE_ROSTER_UPGRADE",
       "UNASSIGN_JOB",
+      "ENQUEUE_CRAFT",
+      "CANCEL_CRAFT",
     ] as const) {
       expect(STREAK_VISIT_ACTION_TYPES.has(type), type).toBe(true);
     }

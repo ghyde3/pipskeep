@@ -10,7 +10,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { collectAlerts, NEED_ALERT_BELOW } from "./alerts";
+import { collectCraftAlerts, craftCompletionMessage, collectAlerts, NEED_ALERT_BELOW } from "./alerts";
 import type { AlertsStateSlice } from "./alerts";
 import { LifeStage, PipActivity } from "../core/pips/types";
 import type { PipNeeds, PipState } from "../core/pips/types";
@@ -126,5 +126,63 @@ describe("need-low alerts fire on downward crossings only", () => {
     const low = pip({ needs: needs({ hunger: 5 }) });
     const alerts = collectAlerts(slice(low), slice(pip({ needs: needs({ hunger: 3 }) })));
     expect(alerts).toHaveLength(0);
+  });
+});
+
+/**
+ * ⚠️ ROUND 2J FIX STAGE — THE NINTH DEAD FEATURE.
+ * `grep -rn "CraftCompletion|lastCraftCompletions|lastCraftOutcome" src/ui
+ * src/app` returned ZERO hits when round 2J shipped: the reducer wrote
+ * craft completions in three places and no player-facing surface read
+ * them. A player who queued a Poultice and came back 75 minutes later was
+ * told nothing — the jar was in the Satchel if they went and looked.
+ */
+describe("a craft finished — the toast half (round 2J fix stage)", () => {
+  const noCrafts = { lastCraftCompletions: [], lastCatchup: null };
+
+  it("says what the bench made, by recipe name", () => {
+    const done = { lastCraftCompletions: [{ recipeId: "poultice" }], lastCatchup: null };
+    const alerts = collectCraftAlerts(noCrafts, done);
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]?.message).toBe("The Craft Table finished: Poultice.");
+  });
+
+  it("counts repeats and lists a mixed queue as one sentence, never three toasts", () => {
+    const done = {
+      lastCraftCompletions: [
+        { recipeId: "poultice" },
+        { recipeId: "poultice" },
+        { recipeId: "lodestone-cairn" },
+      ],
+      lastCatchup: null,
+    };
+    expect(collectCraftAlerts(noCrafts, done)[0]?.message).toBe(
+      "The Craft Table finished: 2 × Poultice and Lodestone Cairn.",
+    );
+  });
+
+  it("stays silent when nothing finished", () => {
+    expect(collectCraftAlerts(noCrafts, noCrafts)).toEqual([]);
+  });
+
+  it("stays silent when the same completions are merely carried forward", () => {
+    const completions = [{ recipeId: "poultice" }];
+    const a = { lastCraftCompletions: completions, lastCatchup: null };
+    const b = { lastCraftCompletions: completions, lastCatchup: null };
+    expect(collectCraftAlerts(a, b)).toEqual([]);
+  });
+
+  it("⚠️ stays silent on a CATCH-UP transition — the Doorstep owns that one", () => {
+    // The two surfaces must never both fire for the same completions.
+    const done = {
+      lastCraftCompletions: [{ recipeId: "poultice" }],
+      lastCatchup: { elapsedMs: 1 },
+    };
+    expect(collectCraftAlerts(noCrafts, done)).toEqual([]);
+  });
+
+  it("an unknown recipe id degrades to the id rather than throwing", () => {
+    expect(craftCompletionMessage([{ recipeId: "no-such-recipe" }])).toContain("no-such-recipe");
+    expect(craftCompletionMessage([])).toBeNull();
   });
 });

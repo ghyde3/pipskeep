@@ -636,6 +636,10 @@ describe("the xpBonus building channel scales every XP grant (bible §3.1)", () 
       fiber: 999,
       shell: 999,
       driftwood: 999,
+      // ROUND 2J FIX STAGE — the Weathervane (and the other late stations)
+      // now carry a lodestone rider, so "rich enough to build anything"
+      // means all five resources.
+      lodestone: 999,
     });
     return { ...base, keep: { ...base.keep, level: 12 } };
   }

@@ -242,6 +242,21 @@ export interface ExpeditionContent {
    * `ailmentRegistry` is provided but this is not. */
   readonly ailmentTuning?: AilmentTuning;
   /**
+   * ROUND 2J FIX STAGE — the Keep's already-resolved, already-clamped
+   * `remedy` contract reduction (`core/keep/effects.ts`'s
+   * `resolveKeepEffects().ailmentContractReduction`), passed straight
+   * through to `rollContraction`'s long-shipped-but-never-supplied
+   * `buildingContractReduction` parameter. Round 2H added that parameter
+   * and documented it as "a seam for a future `remedy` BuildingEffect
+   * channel, not wired to any caller this round"; this is the caller.
+   *
+   * Omitted (`undefined` → 0) is exactly an unbuilt Keep's true value, so
+   * every existing caller and fixture is byte-identical — and it never
+   * changes the NUMBER of rolls, only the probability, so the `ailment`
+   * cursor's contract (spec §2 rule 3) is untouched.
+   */
+  readonly buildingContractReduction?: number;
+  /**
    * ROUND 2H (docs/lifecycle-bible.md §5.2) — tuning `attemptLineageFind`
    * reads (find odds, level share, shiny-inherit chance). Defaults to
    * `content/tuning.ts` inside `attemptLineageFind` itself; only ever
@@ -753,6 +768,7 @@ export function settleExpeditionReturn<S extends ExpeditionStateSlice>(
       content.ailmentRegistry,
       completedAt,
       content.ailmentTuning ?? contentTuning,
+      content.buildingContractReduction ?? 0,
     );
     if (contracted !== null) {
       contractedPip = { ...pip, ailment: contracted };

@@ -162,13 +162,26 @@ export const placeables: readonly PlaceableDef[] = [
     spriteRef: "placeable/poultice-shelf",
     flavor:
       "Jars of leaves, wraps and something sharp-smelling, always within reach. Everything you'd want on a bad night.",
-    // No `effects` entry: the bible's `remedy` BuildingEffect kind (ailment
-    // contract reduction + cure bonus) is a coordinated content+UI change
-    // (see `content/buildingEffects.ts`'s round 2H note — `ui/icons.ts`'s
-    // exhaustive badge map would need a matching case, and `ui/` is out of
-    // this round's content-agent scope). The shelf is real, buildable and
-    // reachability-safe today; its mechanical wiring is a follow-up.
+    // ROUND 2J FIX STAGE — THE SHELF FINALLY DOES SOMETHING. This entry
+    // shipped with NO `effects` array at all: a named tier-5 headline
+    // costing `wood 7, fiber 6`, described as "everything you'd want on a
+    // bad night", whose every mechanical parameter (`rollContraction`'s
+    // `buildingContractReduction`, `attemptCure`'s building bonus) was
+    // permanently 0. A dead placeable and a dead promise, both shipped.
     //
+    // The `remedy` kind now exists (`content/buildingEffects.ts`), is
+    // folded by `core/keep/effects.ts` and clamped once at
+    // `tuning.crafting.buildingRemedyMax` — so ten shelves cannot become a
+    // 0.60 immunity. The numbers are docs/economy-bible.md §3.6's own
+    // recommendation verbatim (0.10 / 0.05), which leaves real headroom
+    // under the 0.15/0.06 aggregate for the crafted Cairn and Herb Rail to
+    // add to without either becoming redundant.
+    //
+    // ⚠️ It may never make ailments a formality — 2H's I4 stands: the cure
+    // CHANCES (`poulticeCureChance` 0.55, `cureBonusMax` 0.45) are
+    // untouched, and this feeds the same already-clamped channel a Pip's
+    // own level does.
+    effects: [{ kind: "remedy", contractReduction: 0.1, cureBonus: 0.05 }],
     // Tier 5 (bible §3.5) — lands alongside Lanterngrotto, the riskiest
     // trail, so the answer to "what if" is on the Build sheet the same
     // tier the question first gets sharp. Payable at level 5 with plain
@@ -202,7 +215,19 @@ export const placeables: readonly PlaceableDef[] = [
     // 6's headline unlock alongside the Nest Warmer, and comfort can only ever
     // widen `balance.test.ts`'s leave-safe margin (bible §3.6 claim 4), so
     // there is no way for this number to hurt the player.
-    effects: [{ kind: "comfort", need: "hunger", decayReduction: 0.13 }],
+    //
+    // ROUND 2J FIX STAGE adds the `longevity` half docs/lifecycle-bible.md
+    // §2.2 already ASSUMED was here ("three already-shipped placeables
+    // carry it — nest-warmer 0.06, sun-bunks 0.10, larder 0.05 = 0.21").
+    // They did not; the effect kind did not exist, `lifespanMs`'s
+    // `buildingLongevity` was permanently 0, and that bible's "a devoted
+    // player's Pip lives 15.6 days" was unreachable (true max 12.85).
+    // These three entries make its own arithmetic true, under the shipped
+    // `lifecycle.lifespan.buildingBonusMax` (0.25) clamp.
+    effects: [
+      { kind: "comfort", need: "hunger", decayReduction: 0.13 },
+      { kind: "longevity", bonus: 0.05 },
+    ],
     unlockKeepLevel: 6,
     icon: { motif: "basket" },
   },
@@ -214,7 +239,12 @@ export const placeables: readonly PlaceableDef[] = [
     spriteRef: "placeable/nest-warmer",
     flavor:
       "A gentle warmth under the egg, day and night, so nothing has to wait quite so long.",
-    effects: [{ kind: "incubationSpeed", multiplier: 0.85 }],
+    // ROUND 2J FIX STAGE — the `longevity` half lifecycle-bible §2.2
+    // already assumed was here (see the Larder's own note).
+    effects: [
+      { kind: "incubationSpeed", multiplier: 0.85 },
+      { kind: "longevity", bonus: 0.06 },
+    ],
     unlockKeepLevel: 6,
     icon: { motif: "nest" },
   },
@@ -251,6 +281,8 @@ export const placeables: readonly PlaceableDef[] = [
     effects: [
       { kind: "restSpeed", multiplier: 1.2 },
       { kind: "comfort", need: "energy", decayReduction: 0.05 },
+      // ROUND 2J FIX STAGE — see the Larder's `longevity` note.
+      { kind: "longevity", bonus: 0.1 },
     ],
     unlockKeepLevel: 8,
     icon: { motif: "nest" },
@@ -280,5 +312,37 @@ export const placeables: readonly PlaceableDef[] = [
     ],
     unlockKeepLevel: 12,
     icon: { motif: "spark" },
+  },
+  /**
+   * ROUND 2J (docs/economy-bible.md §3.1) — the Craft Table: Crafting's
+   * station, hosting the `"crafting"`-kind job (`content/jobs.ts`). A
+   * deliberate sibling of the Workbench, not a replacement — Mending
+   * makes more of what you already have (a weighted wood/fiber faucet);
+   * Crafting makes a specific thing you asked for (a deterministic
+   * recipe). Tier 4: the tier that unlocks the Shore (this round's fifth
+   * resource in volume) and ONE TIER BEFORE the Lanterngrotto, so the
+   * answer to "my Pip came home ill" exists on the Build sheet before the
+   * riskiest trail in the game opens. Cost is wood/fiber only (payable at
+   * tier 4 with enormous margin) — inlined here rather than routed
+   * through `tuning.placeableCosts` (this round's design pass already
+   * edited `tuning.ts` once for the `crafting` block; a second edit for
+   * one cost bundle was not worth reopening that file for).
+   *
+   * Carries no `effects` beyond hosting the job — docs/economy-bible.md
+   * §3.6's `craftSpeed` channel is this round's named, explicitly-cut
+   * seam (the effect union + `foldEffect` + the badge map are a
+   * coordinated content+core+ui patch for a future round to accept).
+   */
+  {
+    id: "craft-table",
+    name: "Craft Table",
+    cost: { wood: 8, fiber: 6 },
+    footprint: { w: 2, h: 2 },
+    spriteRef: "placeable/craft-table",
+    flavor:
+      "Twine, jars, a knife that's seen things, and a half-finished something nobody will admit to starting.",
+    effects: [{ kind: "job", jobId: "crafting" }],
+    unlockKeepLevel: 4,
+    icon: { motif: "bench" },
   },
 ];

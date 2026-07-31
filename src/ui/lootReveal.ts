@@ -35,8 +35,14 @@ import { revealXp } from "../core/progression/xp";
 import { expeditions as contentExpeditions } from "../content/expeditions";
 import { foods as contentFoods } from "../content/foods";
 import { itemColors, itemFallbackColor } from "../content/palette";
+import { RESOURCE_IDS } from "../core/economy";
+import { foodIconSpec, renderIcon, resourceIconSpec } from "./icons";
 import { createRng } from "../core/rng";
 import { sound } from "../app/sound";
+
+/** Resource ids, as a set — the reveal picks a resource motif or a food
+ * motif per tile (round 2J fix stage). */
+const RESOURCE_ID_SET: ReadonlySet<string> = new Set<string>(RESOURCE_IDS);
 
 // ---------------------------------------------------------------------------
 // Pure: reveal script
@@ -56,9 +62,16 @@ export type RevealTier = "common" | "uncommon" | "rare";
  * keeps only the RESOURCE ids with no `FoodDef` of their own; Driftwood
  * is the Shore's semi-precious find. `resolveItemRevealTiers` merges the
  * two into the one lookup `buildRevealScript` reads.
+ *
+ * ROUND 2J (docs/economy-bible.md §6.3's visibility table): Lodestone gets
+ * the same ceremony Driftwood does — it is a late, scarce resource (§1.4)
+ * and the first time it flips past as a bare common would be exactly the
+ * "written to state, invisible in play" gap the round's own standing rule
+ * exists to catch.
  */
 export const ITEM_REVEAL_TIERS: Readonly<Record<string, RevealTier>> = {
   driftwood: "uncommon",
+  lodestone: "uncommon",
 };
 
 /** Merge a food registry's `revealTier` fields on top of the resource-only
@@ -624,6 +637,26 @@ export function createLootRevealModal(deps: LootRevealModalDeps): LootRevealModa
       swatch.className = "pk-reveal-swatch";
       swatch.style.background =
         itemColors[step.itemId ?? ""] ?? itemFallbackColor;
+      // ROUND 2J FIX STAGE — the reveal used to be a row of identically
+      // SHAPED dots that differed only in hue, which on a Shore trip
+      // (nine tiles, three of them the round's new Lodestone) read as a
+      // wall. The same procedural glyph the Satchel and the Build sheet
+      // use goes inside the swatch, so a material is recognisable by
+      // silhouette before the label is read. Resources take a resource
+      // motif, everything else a food motif (both fall back safely for an
+      // unknown id — `resourceIconSpec`/`foodIconSpec`'s own contract).
+      const revealItemId = step.itemId ?? "";
+      if (revealItemId !== "") {
+        swatch.appendChild(
+          renderIcon(
+            RESOURCE_ID_SET.has(revealItemId)
+              ? resourceIconSpec(revealItemId)
+              : foodIconSpec(revealItemId),
+            "#ffffff",
+            "sm",
+          ),
+        );
+      }
       const name = document.createElement("span");
       name.className = "pk-reveal-name";
       name.textContent = step.label;

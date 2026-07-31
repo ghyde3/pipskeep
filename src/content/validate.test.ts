@@ -771,6 +771,264 @@ describe("ailments (round 2H): the anti-brutality promises are caught as data er
   });
 });
 
+describe("recipes (round 2J, docs/economy-bible.md §3–§4): the crafting book is checked like every other registry", () => {
+  it("the shipped recipe book has zero errors", () => {
+    expect(collectContentIssues(defaultContentBundle).errors).toEqual([]);
+  });
+
+  it("flags a recipe with an unknown resource input", () => {
+    const bundle: ContentBundle = {
+      ...defaultContentBundle,
+      recipes: {
+        ...defaultContentBundle.recipes,
+        feastpot: {
+          ...defaultContentBundle.recipes.feastpot,
+          resources: { ...defaultContentBundle.recipes.feastpot.resources, moonstone: 3 },
+        },
+      },
+    };
+    const { errors } = collectContentIssues(bundle);
+    expect(errors).toContain('recipe "feastpot" resources: unknown resource "moonstone" in cost');
+  });
+
+  it("flags a recipe with an unknown Satchel input", () => {
+    const bundle: ContentBundle = {
+      ...defaultContentBundle,
+      recipes: {
+        ...defaultContentBundle.recipes,
+        feastpot: {
+          ...defaultContentBundle.recipes.feastpot,
+          items: { ...defaultContentBundle.recipes.feastpot.items, "not-a-real-food": 2 },
+        },
+      },
+    };
+    const { errors } = collectContentIssues(bundle);
+    expect(errors).toContain('recipe "feastpot": Satchel input "not-a-real-food" does not exist');
+  });
+
+  it("flags a recipe with an unknown item output", () => {
+    const bundle: ContentBundle = {
+      ...defaultContentBundle,
+      recipes: {
+        ...defaultContentBundle.recipes,
+        feastpot: {
+          ...defaultContentBundle.recipes.feastpot,
+          output: { kind: "item", itemId: "not-a-real-food", count: 1 },
+        },
+      },
+    };
+    const { errors } = collectContentIssues(bundle);
+    expect(errors).toContain('recipe "feastpot": output item "not-a-real-food" does not exist');
+  });
+
+  it("flags a recipe with an unknown keepsake output", () => {
+    const bundle: ContentBundle = {
+      ...defaultContentBundle,
+      recipes: {
+        ...defaultContentBundle.recipes,
+        feastpot: {
+          ...defaultContentBundle.recipes.feastpot,
+          output: { kind: "keepsake", itemId: "not-a-placement-item", count: 1 },
+        },
+      },
+    };
+    const { errors } = collectContentIssues(bundle);
+    expect(errors).toContain(
+      'recipe "feastpot": keepsake output "not-a-placement-item" is not a placement item',
+    );
+  });
+
+  /**
+   * THE CRAFTING DEADLOCK (economy bible §6.4) — the same class of bug as
+   * the two shipped economy deadlocks `core/economy/reachability.test.ts`
+   * caught (level 2's wood, level 3's shell/driftwood), now for recipes: a
+   * recipe priced in a resource that only unlocks LATER than the recipe
+   * itself is craftable on paper and unmakeable in play.
+   */
+  it("flags a recipe priced in a resource not yet obtainable at its own unlock tier (a crafting deadlock)", () => {
+    const bundle: ContentBundle = {
+      ...defaultContentBundle,
+      recipes: {
+        ...defaultContentBundle.recipes,
+        // Toastnut unlocks at tier 4; lodestone does not exist before tier
+        // 3, so tier 4 is fine. Move the recipe down to tier 1 (where
+        // lodestone is not yet obtainable) AND reprice it to need lodestone,
+        // so the deadlock is real rather than merely possible.
+        feastpot: {
+          ...defaultContentBundle.recipes.feastpot,
+          unlockKeepLevel: 1,
+          resources: { ...defaultContentBundle.recipes.feastpot.resources, lodestone: 1 },
+        },
+      },
+    };
+    const { errors } = collectContentIssues(bundle);
+    expect(errors).toContain(
+      'recipe "feastpot": resource "lodestone" is not obtainable from any expedition by Keep tier 1 — a crafting deadlock',
+    );
+  });
+
+  it("flags a recipe whose Satchel input is not yet obtainable at its own unlock tier (a crafting deadlock)", () => {
+    const bundle: ContentBundle = {
+      ...defaultContentBundle,
+      recipes: {
+        ...defaultContentBundle.recipes,
+        // Feastpot (tier 6) needs glowcap/emberloaf/tideroll, all Grotto/
+        // Shore loot (tier 4-5). Moved to tier 1, none of that is reachable.
+        feastpot: { ...defaultContentBundle.recipes.feastpot, unlockKeepLevel: 1 },
+      },
+    };
+    const { errors } = collectContentIssues(bundle);
+    expect(
+      errors.some((e) =>
+        e.startsWith(
+          'recipe "feastpot": Satchel input "glowcap" is not obtainable from any expedition by Keep tier 1',
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it("the shipped book has no crafting deadlocks — every recipe's inputs are obtainable by its own tier", () => {
+    const { errors } = collectContentIssues(defaultContentBundle);
+    expect(errors.some((e) => e.includes("crafting deadlock"))).toBe(false);
+  });
+
+  it("flags a station that hosts a crafting job but has an empty recipe book", () => {
+    const bundle: ContentBundle = {
+      ...defaultContentBundle,
+      recipes: {} as ContentBundle["recipes"],
+    };
+    const { errors } = collectContentIssues(bundle);
+    expect(
+      errors.some(
+        (e) => e.startsWith("recipes:") && e.includes('"craft-table"') && e.includes("empty"),
+      ),
+    ).toBe(true);
+  });
+
+  it("flags recipes defined with no station hosting a crafting job (the inverse)", () => {
+    const bundle: ContentBundle = {
+      ...defaultContentBundle,
+      jobs: Object.fromEntries(
+        Object.entries(defaultContentBundle.jobs).filter(([id]) => id !== "crafting"),
+      ),
+    };
+    const { errors } = collectContentIssues(bundle);
+    expect(
+      errors.some((e) => e.startsWith("recipes:") && e.includes("no job hosts")),
+    ).toBe(true);
+  });
+
+  /**
+   * "AN OUTPUT NOTHING CAN USE" — the ninth-dead-feature shape (spec §16
+   * v1.3's standing rule), specialised to crafting: an item output with no
+   * restore value, that isn't the cure item, and isn't an evolution gift
+   * key would be craftable and permanently useless.
+   */
+  it("flags a recipe whose item output has no use anywhere", () => {
+    const bundle: ContentBundle = {
+      ...defaultContentBundle,
+      foods: {
+        ...defaultContentBundle.foods,
+        // A food with zero restore, zero side effects, and (per the shipped
+        // species registry) no gift-variant key anywhere — genuinely inert.
+        trinket: {
+          id: "trinket" as never,
+          name: "Trinket",
+          hungerRestore: 0,
+          cost: {},
+          flavor: "A little nothing.",
+        },
+      },
+      recipes: {
+        ...defaultContentBundle.recipes,
+        feastpot: {
+          ...defaultContentBundle.recipes.feastpot,
+          output: { kind: "item", itemId: "trinket", count: 1 },
+        },
+      },
+    };
+    const { errors } = collectContentIssues(bundle);
+    expect(errors).toContain(
+      'recipe "feastpot": output "trinket" has no use anywhere — no restore value, not the ailment cure item, and not an evolution gift key',
+    );
+  });
+
+  it("accepts an item output with zero restore value when it is the ailment cure item (the positive case)", () => {
+    const bundle: ContentBundle = {
+      ...defaultContentBundle,
+      recipes: {
+        ...defaultContentBundle.recipes,
+        feastpot: {
+          ...defaultContentBundle.recipes.feastpot,
+          output: { kind: "item", itemId: "poultice", count: 1 },
+        },
+      },
+    };
+    const { errors } = collectContentIssues(bundle);
+    expect(errors.some((e) => e.includes('output "poultice" has no use'))).toBe(false);
+  });
+
+  it("accepts an item output with zero restore value when it is an evolution gift-variant key (the positive case)", () => {
+    // Honeydrop restores hunger AND is a gift-variant key in the shipped
+    // registry, so borrow its id but zero its restore to isolate the claim.
+    const bundle: ContentBundle = {
+      ...defaultContentBundle,
+      foods: {
+        ...defaultContentBundle.foods,
+        honeydrop: { ...defaultContentBundle.foods.honeydrop, hungerRestore: 0, sideEffects: undefined },
+      } as ContentBundle["foods"],
+      recipes: {
+        ...defaultContentBundle.recipes,
+        feastpot: {
+          ...defaultContentBundle.recipes.feastpot,
+          output: { kind: "item", itemId: "honeydrop", count: 1 },
+        },
+      },
+    };
+    const { errors } = collectContentIssues(bundle);
+    expect(errors.some((e) => e.includes('output "honeydrop" has no use'))).toBe(false);
+  });
+
+  it("flags a recipe unlockKeepLevel naming no defined Keep tier", () => {
+    const bundle: ContentBundle = {
+      ...defaultContentBundle,
+      recipes: {
+        ...defaultContentBundle.recipes,
+        feastpot: { ...defaultContentBundle.recipes.feastpot, unlockKeepLevel: 99 as never },
+      },
+    };
+    const { errors } = collectContentIssues(bundle);
+    expect(errors).toContain('recipe "feastpot": unlockKeepLevel 99 is not a defined Keep level');
+  });
+
+  it("flags a recipe duration outside tuning.crafting's bounds", () => {
+    const bundle: ContentBundle = {
+      ...defaultContentBundle,
+      recipes: {
+        ...defaultContentBundle.recipes,
+        feastpot: { ...defaultContentBundle.recipes.feastpot, durationMs: 1_000 },
+      },
+    };
+    const { errors } = collectContentIssues(bundle);
+    expect(
+      errors.some((e) => e.startsWith('recipe "feastpot": durationMs 1000 is outside')),
+    ).toBe(true);
+  });
+
+  it("flags a recipe missing effectCopy or flavor", () => {
+    const bundle: ContentBundle = {
+      ...defaultContentBundle,
+      recipes: {
+        ...defaultContentBundle.recipes,
+        feastpot: { ...defaultContentBundle.recipes.feastpot, effectCopy: "  ", flavor: " " },
+      },
+    };
+    const { errors } = collectContentIssues(bundle);
+    expect(errors).toContain('recipe "feastpot": missing effectCopy');
+    expect(errors).toContain('recipe "feastpot": missing flavor');
+  });
+});
+
 describe("validateContent logging", () => {
   it("logs errors via console.error (loud, per spec §3)", () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});

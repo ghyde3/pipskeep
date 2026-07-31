@@ -321,6 +321,19 @@ export function attemptCure(
   route: CureRoute,
   stream: RngStream,
   tuning: AilmentTuning = contentTuning,
+  /**
+   * ROUND 2J FIX STAGE — the Keep's already-resolved, already-clamped
+   * `remedy` cure bonus (`core/keep/effects.ts`'s
+   * `resolveKeepEffects().ailmentCureBonus`). It enters the SAME summed,
+   * `cureBonusMax`-clamped modifier the escalation and the Pip's own level
+   * already share — never a second channel, so the shipped ceiling
+   * (`cureBonusMax` 0.45) still binds and 2H's I4 holds: the Poultice's
+   * base chance is untouched at 0.55.
+   *
+   * Omitted (`0`) is exactly an unbuilt Keep's true value, which is what
+   * keeps every pre-2J fixture and every direct unit call byte-identical.
+   */
+  buildingCureBonus = 0,
 ): CureAttemptResult | null {
   const ailment = pip.ailment;
   if (ailment == null) return null;
@@ -329,7 +342,10 @@ export function attemptCure(
   const base = route === "poultice" ? cfg.poulticeCureChance : cfg.devotedCareCureChance;
   const escalation = cfg.cureEscalationPerAttempt * ailment.cureAttempts;
   const levelBonus = cureBonusFor(pip, tuning);
-  const modifier = Math.min(escalation + levelBonus, cfg.cureBonusMax);
+  const modifier = Math.min(
+    escalation + levelBonus + Math.max(0, buildingCureBonus),
+    cfg.cureBonusMax,
+  );
   const chance = Math.min(1, Math.max(0, base + modifier));
 
   if (!stream.chance(chance)) {
@@ -411,13 +427,17 @@ export function applyDevotedCare<S extends AilmentHostState>(
   dayIndex: number,
   stream: RngStream,
   tuning: AilmentTuning = contentTuning,
+  /** ROUND 2J FIX STAGE — passed straight through to `attemptCure`; see
+   * its own doc. The free daily route benefits from a Poultice Shelf
+   * exactly as much as a jar does, which is the point of a shelf. */
+  buildingCureBonus = 0,
 ): S {
   let current: S = state;
   for (const pipId of devotedCareEligible(state, dayIndex, tuning)) {
     const pip = current.pips[pipId];
     if (pip === undefined || pip.ailment == null) continue;
     const ailmentId = pip.ailment.id;
-    const result = attemptCure(pip, "devotedCare", stream, tuning);
+    const result = attemptCure(pip, "devotedCare", stream, tuning, buildingCureBonus);
     if (result === null) continue;
     // Stamp the day on whatever ailment survived the attempt (a cure
     // clears it outright, so there is nothing left to stamp).

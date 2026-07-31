@@ -182,6 +182,17 @@
   height: 30px;
   border-radius: 50% 45% 55% 50%;
   box-shadow: inset 0 -5px 0 rgba(0, 0, 0, 0.12);
+  /* ROUND 2J FIX STAGE — the swatch now carries the item's own procedural
+     glyph (white, so it reads on every tint), so a reveal row is legible
+     by SHAPE and not only by hue. Five resources that all fell back to
+     one beige was the finding. */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pk-reveal-swatch .pk-icon {
+  opacity: 0.85;
 }
 
 .pk-reveal-name {

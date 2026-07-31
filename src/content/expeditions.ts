@@ -211,6 +211,13 @@ export const expeditions: Readonly<Record<ExpeditionId, ExpeditionDef>> = {
     unlockKeepLevel: tuning.expeditions.snowdrift.unlockKeepLevel,
     durationMs: tuning.expeditions.snowdrift.durationMs,
     // ROUND 2H: `poultice` added, same reasoning as Bramblewick's.
+    // ROUND 2J (docs/economy-bible.md §1.2) — `lodestone` added at weight
+    // 26 (weight sum 104 → 130), paired with `tuning.ts`'s 12 → 15
+    // `lootRolls` bump: THE ZERO-DILUTION IDENTITY, `15 × 104 === 12 ×
+    // 130`, leaves every OTHER entry's per-trip yield in this table
+    // unchanged to the last bit (`content/expeditions.test.ts`). This is
+    // the "reveal" tier — the first Keep level a Pip can come home with
+    // lodestone, one tier before the Shore turns it into a real faucet.
     lootTable: [
       { itemId: "frostberry", weight: 30 },
       { itemId: "fiber", weight: 25 },
@@ -218,6 +225,7 @@ export const expeditions: Readonly<Record<ExpeditionId, ExpeditionDef>> = {
       { itemId: "wood", weight: 15 },
       { itemId: "stew", weight: 10 },
       { itemId: "poultice", weight: 4 },
+      { itemId: "lodestone", weight: 26 },
     ],
     lootRolls: tuning.expeditions.snowdrift.lootRolls,
     eggChance: tuning.expeditions.snowdrift.eggChance,
@@ -238,11 +246,18 @@ export const expeditions: Readonly<Record<ExpeditionId, ExpeditionDef>> = {
     // UNCHANGED at 0.090; driftwood/minute falls 0.070 → 0.060; the
     // roster upgrade still clears its 3h affordability check with a 4×
     // margin (bible §3.2). Guarded by `core/economy/reachability.test.ts`.
+    // ROUND 2J (docs/economy-bible.md §1.2) — `lodestone` added at weight
+    // 50 (weight sum 100 → 150), paired with `tuning.ts`'s 6 → 9
+    // `lootRolls` bump: THE ZERO-DILUTION IDENTITY, `9 × 100 === 6 × 150`,
+    // so `shell/min` stays 0.09000 and `driftwood/min` stays 0.06000 to
+    // 5dp — pinned in `content/expeditions.test.ts`. The Shore is the
+    // lodestone FAUCET (0.10/min, the highest rate in the game).
     lootTable: [
       { itemId: "shell", weight: 45 },
       { itemId: "driftwood", weight: 30 },
       { itemId: "tideroll", weight: 15 },
       { itemId: "stew", weight: 10 },
+      { itemId: "lodestone", weight: 50 },
     ],
     lootRolls: tuning.expeditions.shore.lootRolls,
     eggChance: tuning.expeditions.shore.eggChance,
@@ -266,6 +281,12 @@ export const expeditions: Readonly<Record<ExpeditionId, ExpeditionDef>> = {
     // ROUND 2H: `poultice` added, same reasoning as the other two deep
     // trails. Verified against `expeditions.test.ts`'s Feastpot cadence
     // pin (still lands inside its 3–4-trip band after the dilution).
+    // ROUND 2J (docs/economy-bible.md §1.2) — `lodestone` added at weight
+    // 14 (weight sum 98 → 112), paired with `tuning.ts`'s 14 → 16
+    // `lootRolls` bump: THE ZERO-DILUTION IDENTITY, `16 × 98 === 14 ×
+    // 112`, so the Feastpot's per-trip chance is unchanged to the last
+    // bit — still 1-per-3.5-trips, pinned in `content/expeditions.test.ts`.
+    // "The rocks are warm. Nobody knows why." Now they do.
     lootTable: [
       { itemId: "shell", weight: 25 },
       { itemId: "driftwood", weight: 20 },
@@ -274,6 +295,7 @@ export const expeditions: Readonly<Record<ExpeditionId, ExpeditionDef>> = {
       { itemId: "wood", weight: 12 },
       { itemId: "feastpot", weight: 2 },
       { itemId: "poultice", weight: 4 },
+      { itemId: "lodestone", weight: 14 },
     ],
     lootRolls: tuning.expeditions.lanterngrotto.lootRolls,
     eggChance: tuning.expeditions.lanterngrotto.eggChance,

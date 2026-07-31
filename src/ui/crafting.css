@@ -1,0 +1,325 @@
+/**
+ * The Craft Table screen (docs/economy-bible.md §3–§4). Reached from the
+ * Nook menu, same weight as the Album/Long Meadow — a bottom sheet (not a
+ * centered card like the lifecycle screens) because the content here is a
+ * browsable catalogue, the same shape buildSheet.css already solved for at
+ * 375px (its own "13 screens" regrouping lesson is why the recipe book
+ * below is split into "Ready to craft" + a collapsed "Coming as the Keep
+ * grows", same convention).
+ *
+ * Z-INDEX: src/ui/layers.test.ts is the source of truth. `.pk-craft-wrap--
+ * open` sits at 22 — a peer of `.pk-pipdex-wrap--open`/`.pk-sanctuary-
+ * wrap--open`, since all three are Nook destinations `app/main.ts`'s
+ * `onPick` makes mutually exclusive by construction.
+ */
+
+.pk-craft-wrap {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.pk-craft-wrap--open {
+  visibility: visible;
+  z-index: 22;
+}
+
+.pk-craft-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(61, 74, 61, 0.25);
+  opacity: 0;
+  transition: opacity 220ms ease;
+}
+
+.pk-craft-wrap--open .pk-craft-backdrop {
+  pointer-events: auto;
+  opacity: 1;
+}
+
+.pk-craft-sheet {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  box-sizing: border-box;
+  max-width: 100%;
+  max-height: 76vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  background: #fffdf6;
+  border-radius: 22px 22px 0 0;
+  box-shadow: 0 -6px 24px rgba(61, 74, 61, 0.18);
+  padding: 8px 14px calc(env(safe-area-inset-bottom, 0px) + 16px);
+  transform: translateY(105%);
+  transition: transform 280ms cubic-bezier(0.22, 1, 0.36, 1);
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, sans-serif;
+  color: #3d4a3d;
+}
+
+.pk-craft-wrap--open .pk-craft-sheet {
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.pk-craft-handle {
+  width: 40px;
+  height: 4.5px;
+  border-radius: 3px;
+  background: rgba(95, 138, 94, 0.3);
+  margin: 4px auto 8px;
+}
+
+.pk-craft-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.pk-craft-title {
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.pk-craft-close {
+  appearance: none;
+  border: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: rgba(95, 138, 94, 0.12);
+  color: #3d4a3d;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: transform 90ms ease;
+}
+
+.pk-craft-close:active {
+  transform: scale(0.9);
+}
+
+/* ---------- Station status cards ---------- */
+
+.pk-craft-stations {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.pk-craft-station {
+  background: #ffffff;
+  border: 1.5px solid rgba(95, 138, 94, 0.18);
+  border-radius: 14px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pk-craft-station-label {
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.pk-craft-station-worker {
+  font-size: 12px;
+  opacity: 0.75;
+}
+
+.pk-craft-order {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(95, 138, 94, 0.12);
+}
+
+.pk-craft-order-name {
+  flex: 1;
+  font-weight: 700;
+}
+
+.pk-craft-order--queued .pk-craft-order-name {
+  font-weight: 600;
+  opacity: 0.75;
+}
+
+.pk-craft-order-remaining {
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
+
+.pk-craft-cancel {
+  appearance: none;
+  border: none;
+  border-radius: 10px;
+  padding: 5px 9px;
+  background: rgba(217, 106, 106, 0.14);
+  color: #a94c4c;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 90ms ease;
+}
+
+.pk-craft-cancel:active {
+  transform: scale(0.94);
+}
+
+/* ---------- The book-level note ("no station staffed", etc.) ---------- */
+
+.pk-craft-note {
+  font-size: 12.5px;
+  text-align: center;
+  opacity: 0.7;
+  padding: 8px 6px;
+}
+
+/* ---------- Recipe groups + cards ---------- */
+
+.pk-craft-group-title {
+  font-size: 13px;
+  font-weight: 800;
+  margin: 6px 0 8px;
+  opacity: 0.85;
+}
+
+.pk-craft-group-toggle {
+  appearance: none;
+  border: none;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  padding: 4px 0;
+  text-align: left;
+  width: 100%;
+}
+
+.pk-craft-group {
+  margin-top: 4px;
+}
+
+.pk-craft-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.pk-craft-card {
+  text-align: left;
+  appearance: none;
+  border: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  transition: transform 90ms ease;
+}
+
+.pk-craft-card:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.pk-craft-card:disabled {
+  cursor: default;
+  opacity: 0.68;
+}
+
+.pk-craft-card--locked {
+  opacity: 0.62;
+}
+
+.pk-craft-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pk-craft-card-name-wrap {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.pk-craft-output {
+  font-size: 10.5px;
+  opacity: 0.65;
+}
+
+.pk-craft-effect {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #3d6b44;
+  line-height: 1.35;
+}
+
+.pk-craft-inputs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.pk-craft-input {
+  font-size: 10.5px;
+  font-weight: 700;
+  background: rgba(95, 138, 94, 0.12);
+  border-radius: 8px;
+  padding: 2px 6px;
+  opacity: 0.85;
+}
+
+.pk-craft-input--short {
+  background: rgba(232, 147, 90, 0.18);
+  color: #a9612b;
+}
+
+.pk-craft-flavor {
+  font-size: 10.5px;
+  font-style: italic;
+  opacity: 0.65;
+  line-height: 1.3;
+}
+
+.pk-craft-lock {
+  font-size: 10.5px;
+  font-weight: 700;
+  opacity: 0.6;
+}
+
+.pk-craft-missing {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #a9612b;
+}
+
+@media (max-width: 400px) {
+  .pk-craft-grid {
+    grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  }
+}
+
+/* ROUND 2J FIX STAGE — the enqueue/cancel echo. `role="status"`, so a
+   screen reader hears "Poultice is on the bench now" without the sheet
+   stealing focus. */
+.pk-craft-outcome {
+  margin: 0 14px 8px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: rgba(107, 122, 153, 0.12);
+  color: #40506e;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.35;
+}

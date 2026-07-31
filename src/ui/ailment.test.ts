@@ -147,15 +147,39 @@ describe("mostUrgentAilingPipId — closest to grave wins", () => {
   });
 });
 
+/**
+ * ROUND 2J FIX STAGE — the card now reads the Keep as well as the Satchel
+ * (the "Make one" affordance has to know whether a Craft Table exists and
+ * whether the materials are there), so the model's state slice grew. This
+ * helper keeps every existing case reading the way it did.
+ */
+function cardState(
+  over: {
+    pips: Record<string, PipState>;
+    inventory?: Record<string, number>;
+    resources?: Record<string, number>;
+    keep?: GameState["keep"];
+    jobs?: GameState["jobs"];
+  },
+): Pick<GameState, "pips" | "inventory" | "keep" | "resources" | "jobs"> {
+  return {
+    pips: over.pips,
+    inventory: over.inventory ?? {},
+    resources: over.resources ?? {},
+    keep: over.keep ?? { level: 1, placements: {} },
+    jobs: over.jobs ?? {},
+  };
+}
+
 describe("buildAilmentCardModel", () => {
   it("null when the Pip is not ailing (defensive)", () => {
-    expect(buildAilmentCardModel({ pips: { p: makePip() }, inventory: {} }, "p")).toBeNull();
+    expect(buildAilmentCardModel(cardState({ pips: { p: makePip() } }), "p")).toBeNull();
   });
 
   it("carries the poultice count from inventory and the ailment's own copy", () => {
     const pip = makePip({ ailment: ailmentOf("lanternfever", 20 * HOUR_MS) });
     const model = buildAilmentCardModel(
-      { pips: { [pip.id]: pip }, inventory: { [POULTICE_ITEM_ID]: 2 } },
+      cardState({ pips: { [pip.id]: pip }, inventory: { [POULTICE_ITEM_ID]: 2 } }),
       pip.id,
     );
     expect(model?.ailmentName).toBe(contentAilments.lanternfever.name);
@@ -173,8 +197,8 @@ describe("buildAilmentCardModel", () => {
       ailment: ailmentOf("brambleburr", 40 * HOUR_MS),
       needs: { hunger: floor - 1, cleanliness: floor, happiness: floor, energy: floor },
     });
-    expect(buildAilmentCardModel({ pips: { [high.id]: high }, inventory: {} }, high.id)?.needsAllHighForFreeChance).toBe(true);
-    expect(buildAilmentCardModel({ pips: { [low.id]: low }, inventory: {} }, low.id)?.needsAllHighForFreeChance).toBe(false);
+    expect(buildAilmentCardModel(cardState({ pips: { [high.id]: high } }), high.id)?.needsAllHighForFreeChance).toBe(true);
+    expect(buildAilmentCardModel(cardState({ pips: { [low.id]: low } }), low.id)?.needsAllHighForFreeChance).toBe(false);
   });
 });
 
@@ -401,17 +425,106 @@ describe("the free-chance hint is TRUE, and actionable when it isn't yet earned"
 describe("the Poultice is discoverable (the only working cure was undiscoverable)", () => {
   it("the card points at where poultices come from when the satchel has none", () => {
     const pip = makePip({ ailment: ailmentOf("brambleburr", 20 * HOUR_MS) });
-    const model = buildAilmentCardModel({ pips: { [pip.id]: pip }, inventory: {} }, pip.id);
+    const model = buildAilmentCardModel(cardState({ pips: { [pip.id]: pip } }), pip.id);
     expect(model?.poulticeSourceHint).toBe(POULTICE_SOURCE_HINT);
   });
 
   it("...and says nothing about sourcing when one is already in hand", () => {
     const pip = makePip({ ailment: ailmentOf("brambleburr", 20 * HOUR_MS) });
     const model = buildAilmentCardModel(
-      { pips: { [pip.id]: pip }, inventory: { [POULTICE_ITEM_ID]: 2 } },
+      cardState({ pips: { [pip.id]: pip }, inventory: { [POULTICE_ITEM_ID]: 2 } }),
       pip.id,
     );
     expect(model?.poulticeSourceHint).toBeNull();
+  });
+
+  /**
+   * ⚠️ ROUND 2J FIX STAGE — THE LOAD-BEARING ONE (economy-bible §6.3).
+   * Round 2J made the cure craftable and then left this card pointing the
+   * player back down the trail that made the Pip ill. These four cases are
+   * the fix, at each stage of the player's actual Keep.
+   */
+  describe("the 'Make one' affordance — the crafted cure, offered where the fright is", () => {
+    const ailing = (): PipState => makePip({ ailment: ailmentOf("brambleburr", 20 * HOUR_MS) });
+
+    it("below the Craft Table's tier: still offered, and it names the tier rather than lying", () => {
+      const pip = ailing();
+      const model = buildAilmentCardModel(
+        cardState({ pips: { [pip.id]: pip }, keep: { level: 1, placements: {} } }),
+        pip.id,
+      );
+      expect(model?.makeOne?.unlocked).toBe(false);
+      expect(model?.makeOne?.blockedLine).toMatch(/Keep level \d/);
+      expect(model?.makeOne?.costLine).toMatch(/Fiber/);
+    });
+
+    it("at tier but with no bench: says to build one", () => {
+      const pip = ailing();
+      const model = buildAilmentCardModel(
+        cardState({ pips: { [pip.id]: pip }, keep: { level: 4, placements: {} } }),
+        pip.id,
+      );
+      expect(model?.makeOne?.unlocked).toBe(true);
+      expect(model?.makeOne?.blockedLine).toMatch(/build a craft table/i);
+    });
+
+    it("bench built but unstaffed: says who is missing, not what is missing", () => {
+      const pip = ailing();
+      const model = buildAilmentCardModel(
+        cardState({
+          pips: { [pip.id]: pip },
+          keep: { level: 4, placements: { "p1": { itemId: "craft-table", x: 0, y: 0 } } },
+          resources: { fiber: 99, lodestone: 99 },
+        }),
+        pip.id,
+      );
+      expect(model?.makeOne?.blockedLine).toMatch(/nobody's working/i);
+    });
+
+    it("bench staffed but short: names the exact shortfall, warmly", () => {
+      const pip = ailing();
+      const model = buildAilmentCardModel(
+        cardState({
+          pips: { [pip.id]: pip },
+          keep: { level: 4, placements: { "p1": { itemId: "craft-table", x: 0, y: 0 } } },
+          jobs: {
+            other: { jobId: "crafting", stationPlacementId: "p1", assignedAt: 0, lastProducedAt: 0 },
+          },
+          resources: { fiber: 99 },
+        }),
+        pip.id,
+      );
+      expect(model?.makeOne?.blockedLine).toMatch(/more Lodestone/i);
+    });
+
+    it("everything ready: nothing stands in the way, and the button is plain", () => {
+      const pip = ailing();
+      const model = buildAilmentCardModel(
+        cardState({
+          pips: { [pip.id]: pip },
+          keep: { level: 4, placements: { "p1": { itemId: "craft-table", x: 0, y: 0 } } },
+          jobs: {
+            other: { jobId: "crafting", stationPlacementId: "p1", assignedAt: 0, lastProducedAt: 0 },
+          },
+          resources: { fiber: 99, lodestone: 99 },
+        }),
+        pip.id,
+      );
+      expect(model?.makeOne).toMatchObject({ label: "Make one", blockedLine: null, unlocked: true });
+    });
+
+    it("vanishes the moment a Poultice is in hand — the button above is the answer then", () => {
+      const pip = ailing();
+      const model = buildAilmentCardModel(
+        cardState({ pips: { [pip.id]: pip }, inventory: { [POULTICE_ITEM_ID]: 1 } }),
+        pip.id,
+      );
+      expect(model?.makeOne).toBeNull();
+    });
+
+    it("the source hint names the bench as well as the trails", () => {
+      expect(POULTICE_SOURCE_HINT).toMatch(/craft table/i);
+    });
   });
 
   it("the hint names every deep trail that actually drops them", () => {
@@ -428,7 +541,7 @@ describe("the Poultice is discoverable (the only working cure was undiscoverable
 
   it("the card offers the Long Meadow pause — the only escape hatch a frightened player has", () => {
     const pip = makePip({ ailment: ailmentOf("brambleburr", 20 * HOUR_MS) });
-    const model = buildAilmentCardModel({ pips: { [pip.id]: pip }, inventory: {} }, pip.id);
+    const model = buildAilmentCardModel(cardState({ pips: { [pip.id]: pip } }), pip.id);
     expect(model?.pauseHint).toMatch(/long meadow/i);
     expect(model?.pauseHint).toMatch(/nothing gets worse/i);
   });

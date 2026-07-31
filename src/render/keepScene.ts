@@ -67,6 +67,8 @@ import {
 } from "../content/palette";
 import { sound } from "../app/sound";
 import { emitEggTap } from "./eggTap";
+import { emitCraftTableTap } from "./craftTap";
+import { jobs as contentJobs } from "../content/jobs";
 import { emitPipTap } from "./pipTap";
 import {
   resolvePipSprite,
@@ -482,10 +484,63 @@ export function createKeepScene(width: number, height: number): KeepScene {
     x: number;
     y: number;
     dropTween: TweenHandle | null;
+    /**
+     * ROUND 2J FIX STAGE — the craft-in-flight ring, created lazily for a
+     * crafting station and nothing else. Economy-bible §6.3 assigns "a
+     * progress ring on the station in the Keep scene", and §6.5 risk 6
+     * names "the Craft Table is never opened" as the failure that
+     * evaporates every claim in §5 — with no ambient signal, the bench is
+     * a thing you have to remember to go and check.
+     */
+    craftRing: Graphics | null;
   }
 
   const placeableVisuals = new Map<string, PlaceableVisual>();
   let placeablesInit = false;
+
+  /** Placed item ids that host a `"crafting"`-kind job — the same registry
+   * scan `core/crafting` and `ui/crafting.ts` each do. A second crafting
+   * station is content, never a render change. */
+  const CRAFTING_STATION_ITEM_IDS: ReadonlySet<string> = new Set(
+    Object.values(contentJobs)
+      .filter((job) => job.kind === "crafting")
+      .map((job) => job.stationItemId),
+  );
+
+  /**
+   * Draw (or clear) one station's progress ring. A thin amber arc riding
+   * just above the bench, filling from 0 to 1 across the craft — legible
+   * at a glance from across the Keep, and gone the moment nothing is in
+   * flight.
+   */
+  function syncCraftRing(v: PlaceableVisual, fraction: number | null): void {
+    if (fraction === null) {
+      if (v.craftRing !== null) {
+        v.craftRing.destroy();
+        v.craftRing = null;
+      }
+      return;
+    }
+    let ring = v.craftRing;
+    if (ring === null) {
+      ring = new Graphics();
+      v.sprite.wrap.addChild(ring);
+      v.craftRing = ring;
+    }
+    const r = layout.tileW * 0.34;
+    const cy = -layout.tileH * 1.35;
+    const t = Math.max(0, Math.min(1, fraction));
+    ring.clear();
+    ring
+      .circle(0, cy, r)
+      .fill({ color: 0x2f2a22, alpha: 0.28 })
+      .stroke({ width: Math.max(2, r * 0.16), color: 0xf6ead8, alpha: 0.35 });
+    if (t > 0.001) {
+      ring
+        .arc(0, cy, r, -Math.PI / 2, -Math.PI / 2 + t * Math.PI * 2)
+        .stroke({ width: Math.max(2, r * 0.16), color: 0xf6b73c, alpha: 0.95 });
+    }
+  }
 
   function placeableDepth(v: PlaceableVisual, anchorY: number): number {
     // Flat decals live under every standing thing; standing items sort
@@ -564,6 +619,7 @@ export function createKeepScene(width: number, height: number): KeepScene {
           x: placement.x,
           y: placement.y,
           dropTween: null,
+          craftRing: null,
         };
         placeableVisuals.set(pid, v);
         world.addChild(sprite.view);
@@ -577,6 +633,21 @@ export function createKeepScene(width: number, height: number): KeepScene {
         positionPlaceable(existing);
         playMoveHop(existing);
       }
+    }
+
+    // ROUND 2J FIX STAGE — the craft-in-flight ring, refreshed from state
+    // on every sync (TICK dispatches drive this, the same cadence the egg
+    // timers already ride).
+    const crafts = state.crafts ?? {};
+    for (const [pid, v] of placeableVisuals) {
+      if (!CRAFTING_STATION_ITEM_IDS.has(v.itemId)) continue;
+      const order = crafts[pid];
+      if (order === undefined || order.effectiveMs <= 0) {
+        syncCraftRing(v, null);
+        continue;
+      }
+      const elapsed = state.lastTickAt - order.startedAt;
+      syncCraftRing(v, elapsed / order.effectiveMs);
     }
 
     for (const [pid, v] of placeableVisuals) {
@@ -2242,6 +2313,24 @@ export function createKeepScene(width: number, height: number): KeepScene {
       return;
     }
 
+    // ROUND 2J FIX STAGE — a placed Craft Table opens the recipe book.
+    // Checked BEFORE eggs and pips because a bench is a big, deliberate
+    // target and the two never overlap in practice (a station blocks its
+    // own tiles, so nothing else stands there). Manual hit-testing against
+    // the sprite's own anchor, the same technique the egg loop below uses.
+    for (const [pid, v] of placeableVisuals) {
+      if (!CRAFTING_STATION_ITEM_IDS.has(v.itemId)) continue;
+      const fp = footprintOf(v.itemId);
+      const halfW = (layout.tileW * fp.w) / 2;
+      const dx = g.x - v.sprite.view.position.x;
+      const dy = g.y - v.sprite.view.position.y;
+      if (dx >= -halfW && dx <= halfW && dy >= -layout.tileH * 1.4 && dy <= layout.tileH * 0.25) {
+        sound("ui.tap");
+        emitCraftTableTap(pid);
+        return;
+      }
+    }
+
     // Eggs first (small targets under big pips). Manual hit-testing
     // against known root positions — see Phase 4 note on Pixi v8 lazy
     // world transforms.
@@ -2320,6 +2409,9 @@ export function createKeepScene(width: number, height: number): KeepScene {
         x: wasAt.x,
         y: wasAt.y,
         dropTween: null,
+        // The ring belonged to the destroyed sprite; the next `sync`
+        // redraws it from state on the new one.
+        craftRing: null,
       });
       world.addChild(next.view);
       const rebuilt = placeableVisuals.get(pid);

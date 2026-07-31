@@ -319,23 +319,38 @@ export const tuning = {
      * expected minutes (up from 61.1) — it STRENGTHENS the escalation
      * chain rather than threatening it (guarded by
      * `core/economy/reachability.test.ts`).
+     *
+     * ROUND 2J (docs/economy-bible.md §1.2) — 12 → 15 rolls, paired with
+     * lodestone's weight-26 entry on `content/expeditions.ts`'s table
+     * (weight sum 104 → 130). THE ZERO-DILUTION IDENTITY: this is the
+     * exact scaling that leaves every pre-existing per-trip yield in this
+     * table UNCHANGED (`15 × 104 === 12 × 130`) — see
+     * `content/expeditions.test.ts`'s identity test. Do not touch this
+     * number without recomputing that identity for all three biomes.
      */
     snowdrift: {
       durationMs: 60 * MINUTE_MS,
       eggChance: 0.35,
       unlockKeepLevel: 3,
-      lootRolls: 12,
+      lootRolls: 15,
     },
     /**
      * ROUND 2F — unlock 3 → 4. Shell/Driftwood now arrive at tier 4, which
      * is why Cozy Bunks' `prerequisiteLevel` (content/keep.ts) moves 3 → 4
      * to match: the tier that supplies its cost.
+     *
+     * ROUND 2J (docs/economy-bible.md §1.2) — 6 → 9 rolls, paired with
+     * lodestone's weight-50 entry (weight sum 100 → 150). THE ZERO-
+     * DILUTION IDENTITY: `9 × 100 === 6 × 150`, so `shell/min` stays
+     * 0.09000 and `driftwood/min` stays 0.06000 to 5dp — pinned in
+     * `content/expeditions.test.ts`. Do not touch this number in
+     * isolation; see the Snowdrift comment above.
      */
     shore: {
       durationMs: 30 * MINUTE_MS,
       eggChance: 0.18,
       unlockKeepLevel: 4,
-      lootRolls: 6,
+      lootRolls: 9,
     },
     /**
      * ROUND 2B — the level-3 DEEP trip, and the top of the ladder. 90
@@ -349,12 +364,18 @@ export const tuning = {
      * now starts on engaged day 2 / casual day 6 rather than hour 2 —
      * later, but not so late the Album becomes unfinishable (progression
      * bible §2.1).
+     *
+     * ROUND 2J (docs/economy-bible.md §1.2) — 14 → 16 rolls, paired with
+     * lodestone's weight-14 entry (weight sum 98 → 112). THE ZERO-
+     * DILUTION IDENTITY: `16 × 98 === 14 × 112`, so the Feastpot's
+     * per-trip chance (still 1-per-3.5-trips) is unchanged to the last
+     * bit — pinned in `content/expeditions.test.ts`.
      */
     lanterngrotto: {
       durationMs: 90 * MINUTE_MS,
       eggChance: 0.5,
       unlockKeepLevel: 5,
-      lootRolls: 14,
+      lootRolls: 16,
     },
   } satisfies Record<
     string,
@@ -587,10 +608,30 @@ export const tuning = {
     larder: { wood: 8, fiber: 5 },
     "nest-warmer": { wood: 5, fiber: 4 },
     "trail-post": { wood: 6, shell: 2 },
+    /**
+     * ROUND 2J FIX STAGE — the four LATE stations gain a lodestone rider.
+     *
+     * The economy audit measured the whole build catalogue at `wood 175,
+     * fiber 135, shell 44, driftwood 35, lodestone 0`: the round's headline
+     * resource paid for Keep tiers and nothing else, so from the moment the
+     * ladder ended it was pure surplus. These four are the right carriers —
+     * every one unlocks at tier 8 or later, well past lodestone's tier-3
+     * arrival, so `reachability.test.ts`'s structural layer is satisfied by
+     * construction and its rate layer has enormous margin (lodestone's
+     * expected 3-hour yield at tier 8+ is ~31 against a top price of 6).
+     *
+     * Deliberately NOT retrofitted onto the early stations: the Gathering
+     * Station on-ramp and the tier-1-payable rule are shipped promises, and
+     * lodestone does not exist below tier 3. The WORKBENCH is excluded for
+     * the same reason even though it unlocks at 8 — it hosts the Mending
+     * job, and `reachability.test.ts`'s "a station's own cost is payable at
+     * level 1, so the job economy is not circular" rule applies to every
+     * job-hosting station regardless of tier.
+     */
     workbench: { wood: 6, fiber: 5 },
-    "sun-bunks": { wood: 10, fiber: 8 },
-    beacon: { wood: 12, shell: 5, driftwood: 3 },
-    weathervane: { wood: 10, shell: 4, driftwood: 4 },
+    "sun-bunks": { wood: 10, fiber: 8, lodestone: 3 },
+    beacon: { wood: 12, shell: 5, driftwood: 3, lodestone: 5 },
+    weathervane: { wood: 10, shell: 4, driftwood: 4, lodestone: 6 },
   } satisfies Readonly<Record<string, ResourceBundle>>,
 
   /**
@@ -1282,28 +1323,63 @@ export const tuning = {
      * round 2B documented before it could open. `content/keep.test.ts`
      * pins tiers 2/3 byte-identical to the values that shipped.
      *
-     * ONLY FIVE OF THE ELEVEN TIERS ARE PRICED, and that is arithmetic, not
-     * taste. `core/economy/reachability.test.ts` requires every priced tier
-     * to be affordable from 3h of already-unlocked expeditions at ≥ 0.95
-     * over 200 seeds, which caps the top bundle near
-     * `wood 45 / fiber 45 / shell 12 / driftwood 8` — about 3.5× level 2's
-     * 33.3 expected minutes. A twelve-tier ladder priced ONLY in resources
-     * is therefore impossible with four resources and six expeditions. XP
-     * paces the ladder; resources keep the economy load-bearing. The six
-     * unpriced tiers carry `cost: {}` and drop out of that suite's
-     * `pricedKeepLevels` filter entirely.
+     * ROUND 2J — ALL ELEVEN NON-STARTING TIERS ARE NOW PRICED
+     * (docs/economy-bible.md §2). The paragraph this replaces explained why
+     * only five of eleven could be: with four resources and six
+     * expeditions, `core/economy/reachability.test.ts`'s 3h/≥0.95-over-200-
+     * seeds bar caps the top bundle near `wood 45 / fiber 45 / shell 12 /
+     * driftwood 8` — about 3.5× level 2's 33.3 expected minutes — so a
+     * twelve-tier ladder priced only in those four resources was
+     * arithmetically impossible. Rounds 2B, 2C and 2F each asked for a
+     * fifth resource for exactly this reason. Round 2J adds **lodestone**
+     * (`core/economy`'s `RESOURCE_IDS`, sourced from Snowdrift/Shore/
+     * Lanterngrotto — `content/expeditions.ts`), which raises the ceiling
+     * to `wood ≤52 / fiber ≤54 / shell ≤13.9 / driftwood ≤8.0 /
+     * lodestone ≤20` at z = 2.33 (≈137 expected minutes, 4.1× level 2's) —
+     * enough for eleven strictly-increasing prices, not because any one
+     * bundle got so much bigger, but because five independent levers at
+     * different granularities (1 wood ≈ 2.65 min, 1 lodestone ≈ 5.8 min,
+     * 1 driftwood ≈ 10.9 min) let eleven tiers separate cleanly where five
+     * resources' worth of levers could not (bible §0.1).
      *
-     * The escalation chain these five produce, in the units the suite
-     * measures (`expectedMinutesToAfford(tier − 1, cost)`):
-     *   tier 2  33.3  →  3  66.7  →  5  75.0  →  7  79.0  →  9  89.6
-     * Strictly increasing, every row at z ≥ 2.4 on every resource.
+     * TIERS 2 AND 3 ARE BYTE-IDENTICAL to what shipped — the on-ramp
+     * arithmetic (`content/keep.test.ts`'s pins, the Gathering-Station
+     * ratio) is untouched by construction. TIER 4 IS DELIBERATELY
+     * LODESTONE-FREE even though it could legally be priced in it: tier 4
+     * is the tier that UNLOCKS the Shore (lodestone's own faucet), and
+     * pricing a tier in the resource its own unlock supplies is the exact
+     * deadlock shape `reachability.test.ts`'s fourth regression pin exists
+     * to catch — staying a tier clear of it is free defensiveness (bible
+     * §2.1). TIERS 5–10 bind on lodestone — the moment the Shore opens,
+     * the resource you are waiting for changes, which is the most legible
+     * progression signal this economy has produced. TIERS 11–12 bind on
+     * wood again: lodestone's per-tier price stops climbing at 19 (z = 2.5;
+     * at 20 it drops to 2.35, and a marginal margin compounded across five
+     * resources is how a 200-seed suite goes flaky), so the last two tiers
+     * escalate in the oldest resource in the game instead.
+     *
+     * Every column is non-decreasing tier-over-tier (a player comparing two
+     * upgrade cards should never see a later tier ask for LESS of
+     * something), and the escalation chain, in the units the suite measures
+     * (`expectedMinutesToAfford(tier − 1, cost)`), is strictly increasing
+     * end to end:
+     *   tier 2  33.3 → 3  66.7 → 4  69.7 → 5  80.0 → 6  87.2 → 7  93.0 →
+     *   8  98.8 → 9  104.7 → 10  110.5 → 11  116.5 → 12  127.1
+     * Lowest afford rate anywhere: 0.9960 (tier 12), clearing the suite's
+     * 0.95 bar by ≥ 4.6 percentage points on every row (economy bible §2.3).
      */
     levelCosts: {
       2: { wood: 5, fiber: 6 },
       3: { wood: 22, fiber: 14 },
-      5: { wood: 27, fiber: 20 },
-      7: { wood: 30, fiber: 22, shell: 6 },
-      9: { wood: 34, fiber: 26, shell: 7, driftwood: 4 },
+      4: { wood: 25, fiber: 18 },
+      5: { wood: 27, fiber: 20, lodestone: 12 },
+      6: { wood: 28, fiber: 22, shell: 5, lodestone: 15 },
+      7: { wood: 30, fiber: 24, shell: 6, driftwood: 2, lodestone: 16 },
+      8: { wood: 32, fiber: 26, shell: 7, driftwood: 3, lodestone: 17 },
+      9: { wood: 34, fiber: 28, shell: 8, driftwood: 4, lodestone: 18 },
+      10: { wood: 38, fiber: 30, shell: 9, driftwood: 5, lodestone: 19 },
+      11: { wood: 44, fiber: 32, shell: 10, driftwood: 6, lodestone: 19 },
+      12: { wood: 48, fiber: 34, shell: 11, driftwood: 7, lodestone: 19 },
     } as Readonly<Record<number, ResourceBundle>>,
 
     /**
@@ -1803,6 +1879,199 @@ export const tuning = {
     // `timerSlopMs`/`maxClausesPerNotification`. This one is read on every
     // recompute (core/notifications/index.ts).
     staleAfterMs: 24 * HOUR_MS,
+  },
+
+  /**
+   * ROUND 2J — CRAFTING (docs/economy-bible.md §3). ⚠️ DESIGN PASS ONLY:
+   * NOTHING READS THIS BLOCK YET. It is written now, next to the economy
+   * numbers it has to be read against, so the build round argues with a
+   * committed set of numbers instead of inventing its own.
+   *
+   * The companion half of this round — the fifth resource (`lodestone`) and
+   * the eleven re-priced Keep tiers — is deliberately NOT here: those are
+   * edits to `expeditions.lootRolls` and `progression.levelCosts`, i.e. to
+   * EXISTING values, and this design pass may not move an existing value.
+   * They are specified in economy-bible §1.2 and §2.2 with their arithmetic.
+   *
+   * ⚠️ THE FRAGILE INVARIANT OF THIS ROUND (the equivalent of round 2B's
+   * level-1 wood ceiling, 2C's isolation rule, 2F's `comfortReductionMax`
+   * and 2H's shared seasoning channel) lives in that other half and is
+   * restated here because this is the file it would be violated from —
+   * THE ZERO-DILUTION IDENTITY (bible §1.2):
+   *
+   *   newRolls × oldSum === oldRolls × (oldSum + lodestoneWeight)
+   *
+   * for all three biomes that gain lodestone (Snowdrift 12→15 rolls / +26,
+   * Shore 6→9 / +50, Lanterngrotto 14→16 / +14). Scaling the rolls in exact
+   * proportion to the new weight sum is what leaves EVERY existing per-trip
+   * and per-minute yield in the game byte-identical. Change one of those six
+   * numbers and six pinned claims across three files break at once — the
+   * Shore's 0.09000 shell/min, its 0.06000 driftwood/min, the Feastpot's
+   * 1-per-3.5-trips cadence, both quick-beats-deep items/min pairs, and the
+   * whole tier-5→12 escalation chain — and it will present as a confusing
+   * minute-count failure in `reachability.test.ts`, not as "someone edited a
+   * weight". Start at economy-bible §1.2.
+   *
+   * THREE RULES THIS BLOCK ENCODES (bible §0.2), stated so a future number
+   * cannot quietly break one:
+   *
+   * 1. NOTHING CRAFTED TOUCHES NEED DECAY. Round 2H's arithmetic leaves
+   *    1.557 percentage points of decay-reduction headroom in the entire
+   *    game and building comfort has spent 0.25 of the 0.26557 available.
+   *    So there is no `comfort` number in this block and no crafted item may
+   *    ever carry one. `craftSpeed` and `pipLevelSpeed` are disjoint from
+   *    `needDecayPerHour`, `care.*`, `foods.*` and `offlineRateCapMs`, which
+   *    is why `core/pips/balance.test.ts`, `core/keep/effects.balance.test.ts`
+   *    and `core/pips/level.balance.test.ts` all stay green byte-identical.
+   * 2. NO RECIPE OUTPUTS A BASE RESOURCE. `reachability.test.ts` models
+   *    expeditions as the only faucet; a recipe that produced wood — or
+   *    lodestone — would be invisible to `resourcesObtainableAt` and could
+   *    break the gating claim silently. Crafting consumes; it never mints.
+   * 3. THE CURE CEILING DOES NOT MOVE. `lifecycle.ailments`' cure numbers
+   *    are untouched: the Poultice becomes MAKEABLE, not stronger, and
+   *    there is exactly one cure item in PipsKeep before and after.
+   */
+  crafting: {
+    /** Keep tier the Craft Table appears on the Build sheet (bible §3.1).
+     * One tier BEFORE the Lanterngrotto, so the answer to "my Pip came home
+     * ill" exists before the riskiest trail in the game opens. */
+    unlockKeepLevel: 4,
+
+    /**
+     * Craft durations are per-recipe content (`content/recipes.ts`); these
+     * are the BOUNDS, so a future recipe cannot be authored as instant.
+     * 30 minutes is the Simmering cadence — the slowest tick a player
+     * already waits for comfortably; 90 is the Lanterngrotto, the longest
+     * wait in the game. Nothing crafts faster than the game's own slowest
+     * existing rhythm, which is what makes crafting a thing you set up and
+     * come back to rather than a menu.
+     */
+    minDurationMs: 30 * MINUTE_MS,
+    maxDurationMs: 90 * MINUTE_MS,
+
+    /**
+     * Orders waiting behind the one in flight. Sized against
+     * `offlineRateCapMs`: three of the LONGEST recipe is 4.5h, comfortably
+     * inside one capped absence, so a player who fills the queue and leaves
+     * always comes back to all three done and never to a half-eaten queue.
+     *
+     * Crafting is a RATE and obeys §4.5's cap exactly like job production
+     * (bible §3.5) — but because `maxDurationMs` is 1/10.7 of the cap, the
+     * cap cannot bite until the queue has been empty for eleven hours. It
+     * can never cost the player a craft they started; it only stops a bench
+     * running for a week.
+     */
+    queueMax: 3,
+
+    /**
+     * SPEED. Multiply-then-clamp for the building channel (a multiplier IS a
+     * "how many times", the same treatment `restSpeed`/`expeditionSpeed` get
+     * in `core/keep/effects.ts`), then the Pip's own factor, then one
+     * composite floor — stated separately for exactly the reason
+     * `progression.effectCaps.expeditionSpeedFloorWithQuirk` is.
+     *
+     *   effective = base
+     *             × clamp(∏ building craftSpeed, speedMin, 1)
+     *             × pipLevelSpeed[level − 1]
+     *             , floored at base × speedFloorWithLevel
+     */
+    speedMin: 0.9,
+    speedFloorWithLevel: 0.82,
+
+    /**
+     * Per-Pip craft speed by level − 1 (round 2H's ladder, bible §3.7). A
+     * SEVENTH channel, deliberately disjoint from `lifecycle.level`'s six —
+     * and specifically NOT a decay channel, so 2H's fragile invariant (a
+     * Pip's seasoning and the Keep's comfort are ONE clamped channel with
+     * 1.557pp of headroom) is untouched. Exactly 1.0 at level 1, so every
+     * existing fixture gets the identity.
+     *
+     * It also gives a workhorse Pip a second thing to be good at, which is
+     * the first mechanic in the game where being a workhorse makes you
+     * better at being a workhorse.
+     */
+    pipLevelSpeed: [
+      1, 0.99, 0.98, 0.97, 0.96, 0.95, 0.94, 0.93, 0.92, 0.9,
+    ] as readonly number[],
+
+    /**
+     * ⚠️ THE CURE CEILING (bible §4.1) — the number that keeps a craftable
+     * Poultice from making ailments a formality.
+     *
+     * The honest arithmetic, because it is not the one people expect:
+     * survival for a DETERMINED player is already ≈ 1 today (deep trails
+     * drop poultices at 27%/37%/44% per trip and cure attempts are
+     * uncapped). 2H's 83.9% floor is the UNLUCKY player's number, not the
+     * ceiling. So crafting must raise the FLOOR — from "hope for a drop" to
+     * "you can always make one, at a price" — without raising the RATE at
+     * which anyone can attempt cures.
+     *
+     * Hence the guard is a CADENCE, not a chance: at the best equipment in
+     * the entire game (`speedFloorWithLevel` 0.82 against the Poultice's
+     * 75-minute recipe = 61.5 min) the best-equipped Keep produces 0.976
+     * poultices per RATED hour — and countdowns are measured in rated time.
+     *
+     * ⚠️ ROUND 2J FIX STAGE: this number had ZERO consumers when the round
+     * shipped — the file that two separate comments named as its guard,
+     * `crafting.balance.test.ts`, did not exist. The invariant HELD, with
+     * 1.5 minutes of margin, and nothing would have noticed it breaking:
+     * dropping `speedFloorWithLevel` to 0.2 and the last `pipLevelSpeed`
+     * entry to 0.2 produced a 15-minute Poultice with a fully green suite.
+     * It is now asserted, against the REAL shipped tuning (not a fixture),
+     * in `src/core/crafting/balance.test.ts`.
+     */
+    poulticeMinMinutesPerCraft: 60,
+
+    /**
+     * ⚠️ THE REMEDY AGGREGATE — read by `core/keep/effects.ts`, which sums
+     * every placed item's `remedy` effect ONCE and clamps it here.
+     *
+     * Why it exists as a SEPARATE, tighter clamp than
+     * `lifecycle.ailments.contractReductionMax` (0.60): a plain item's
+     * `effects` contribute PER PLACEMENT. Set bonuses count distinct ids,
+     * but ten Lodestone Cairns is ten contributions — already true of
+     * `comfort` today. 0.60 is far too loose to be the ceiling on a
+     * spammable crafted decoration, and a player who papers the Keep in
+     * Cairns must not become immune. At this cap the whole game's
+     * building-sourced remedy is: Poultice Shelf 0.10/0.05 + any number of
+     * Cairns (0.04 each) and Herb Rails (0.03 each) → 0.15 contract
+     * reduction and 0.06 cure bonus, and no further.
+     *
+     * ⚠️ SITING NOTE (unchanged, and still true): these two belong under
+     * `lifecycle.ailments`, next to `contractReductionMax`/`cureBonusMax`.
+     * They stay here because moving a live number a shipped test reads is
+     * a separate, mechanical change and this round has moved enough.
+     *
+     * (Round 2J's design pass also parked `waybreadBonusRollChance` and
+     * `trailKitContractReduction` in this block for the two PROVISION
+     * recipes of bible §4.3. Those recipes were cut and the fix stage
+     * REMOVED the numbers with them — a live tuning value with no consumer
+     * is a number that drifts out of calibration unread, and "cut it
+     * cleanly" is what §3.6 asks for. They are re-derivable from the bible
+     * if a provisions round ever happens.)
+     */
+    buildingRemedyMax: { contractReduction: 0.15, cureBonus: 0.06 },
+
+    /**
+     * KEEP XP + PIP XP for the new moments, sized against
+     * `progression.xp`'s own 4-XP care atom (these belong conceptually in
+     * that block; same siting note as above).
+     *
+     * `firstCraft` mirrors `progression.xp.firstBuild` exactly — first time
+     * each RECIPE is made, idempotent on `counters["crafted.<recipeId>"]`.
+     * It is the "reason to try every recipe" lever, the same way firstBuild
+     * is the "reason to build" lever, and it is why the book is worth
+     * eleven entries instead of three.
+     *
+     * Adding XP sources only ever makes the bar move MORE, which is the
+     * safe direction for `core/progression/levelCurve.test.ts`'s floors, and
+     * the whole channel is rate-capped by station throughput (one craft at a
+     * time, ≥ 30 minutes each): ~16 crafts/day/station is ~128 Keep XP
+     * against an engaged 600–750/day.
+     */
+    keepXpPerCraft: 8,
+    firstCraftKeepXp: 25,
+    pipXpPerCraft: 5,
   },
 
   /** New saves are seeded with 3 Berries so the guided first Feed works

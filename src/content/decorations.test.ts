@@ -16,13 +16,37 @@ import { placeables } from "./placeables";
 import { keepLevels } from "./keep";
 import { tuning } from "./tuning";
 
+import { recipes } from "./recipes";
+
 const RESOURCE_SET = new Set<string>(RESOURCE_IDS);
 const MAX_LEVEL = Math.max(...keepLevels.map((l) => l.level));
 
 describe("decoration registry shape (content bible §5.1, progression bible §5.2)", () => {
-  it("ships thirty-two decorations, all with unique ids", () => {
-    expect(decorations).toHaveLength(32);
-    expect(new Set(decorations.map((d) => d.id)).size).toBe(32);
+  it("ships thirty-seven decorations — 32 buyable, plus round 2J's five craft-only keepsakes — all with unique ids", () => {
+    expect(decorations).toHaveLength(37);
+    expect(new Set(decorations.map((d) => d.id)).size).toBe(37);
+    expect(decorations.filter((d) => d.craftOnly === true)).toHaveLength(5);
+    expect(decorations.filter((d) => d.craftOnly !== true)).toHaveLength(32);
+  });
+
+  /**
+   * ROUND 2J FIX STAGE — the craft-only contract, stated where a content
+   * author will read it. An empty `cost` is only safe BECAUSE both doors
+   * are shut: `ui/buildMode.ts`'s catalogue filters these out, and
+   * `core/state.ts`'s PLACE_ITEM refuses one with an empty Keepsake Shelf.
+   * A craft-only item that leaked into the catalogue would be a free
+   * decoration printer.
+   */
+  it("every craft-only keepsake is the output of a real recipe, and nothing else is", () => {
+    const craftedIds = new Set(
+      Object.values(recipes)
+        .filter((r) => r.output.kind === "keepsake")
+        .map((r) => r.output.itemId),
+    );
+    const craftOnlyIds = new Set(
+      decorations.filter((d) => d.craftOnly === true).map((d) => d.id),
+    );
+    expect([...craftOnlyIds].sort()).toEqual([...craftedIds].sort());
   });
 
   it("every decoration's cost bundle uses only real resources", () => {
@@ -60,7 +84,7 @@ describe("decoration registry shape (content bible §5.1, progression bible §5.
 });
 
 describe("placeable registry shape, plus the Stockpot's pricing relationship", () => {
-  it("ships fourteen registry ids: the original four, nine round-2F stations, and round 2H's Poultice Shelf", () => {
+  it("ships fifteen registry ids: the original four, nine round-2F stations, round 2H's Poultice Shelf, and round 2J's Craft Table", () => {
     expect(placeables.map((p) => p.id).sort()).toEqual(
       [
         "food-bowl",
@@ -77,6 +101,7 @@ describe("placeable registry shape, plus the Stockpot's pricing relationship", (
         "beacon",
         "weathervane",
         "poultice-shelf",
+        "craft-table",
       ].sort(),
     );
   });
@@ -94,6 +119,9 @@ describe("placeable registry shape, plus the Stockpot's pricing relationship", (
       fiber: 1,
       shell: 4,
       driftwood: 4,
+      // ROUND 2J — the Snowdrift (tier 3) is lodestone's first source; the
+      // Shore (tier 4) is where it arrives in volume.
+      lodestone: 3,
     };
     for (const p of placeables) {
       for (const resourceId of Object.keys(p.cost)) {

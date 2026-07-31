@@ -40,6 +40,8 @@ import { BOUNTY_TEMPLATES as defaultBountyTemplates } from "./bountyTemplates";
 import type { AilmentDef, AilmentId } from "./ailments";
 import { ailments as defaultAilments, POULTICE_ITEM_ID } from "./ailments";
 import { SAFE_TRAIL_COPY, RISKY_TRAIL_COPY } from "./expeditions";
+import type { RecipeDef, RecipeId } from "./recipes";
+import { recipes as defaultRecipes } from "./recipes";
 
 export interface ContentBundle {
   species: Readonly<Record<SpeciesId, SpeciesDef>>;
@@ -70,6 +72,10 @@ export interface ContentBundle {
    * ROUND 2H checks below cross-reference it against `expeditions` (every
    * biome's danger flag) and `foods` (the cure item must be real). */
   ailments: Readonly<Record<AilmentId, AilmentDef>>;
+  /** ROUND 2J (docs/economy-bible.md §3–§4) — the Craft Table's book.
+   * Checked below for real inputs/outputs, a real unlock tier, and a
+   * duration inside `tuning.crafting`'s bounds. */
+  recipes: Readonly<Record<RecipeId, RecipeDef>>;
   /** The tuning slice the tier-gate check reads (progression bible §2.4's
    * "unlock currency" table), PLUS (round 2H) the slice the ailment checks
    * below need. Injected like every other registry so a test can hand in
@@ -92,6 +98,13 @@ export interface ContentBundle {
         readonly devotedCareCureChance: number;
       };
     };
+    /** ROUND 2J — the recipe-duration bounds every recipe must sit inside
+     * (docs/economy-bible.md §3.4: "nothing crafts faster than the game's
+     * own slowest existing rhythm"). */
+    readonly crafting: {
+      readonly minDurationMs: number;
+      readonly maxDurationMs: number;
+    };
   };
 }
 
@@ -112,6 +125,7 @@ export const defaultContentBundle: ContentBundle = {
   rarityWeights: defaultTuning.eggs.rarityWeights,
   bountyTemplates: defaultBountyTemplates,
   ailments: defaultAilments,
+  recipes: defaultRecipes,
   tuning: defaultTuning,
 };
 
@@ -223,6 +237,59 @@ function checkEveryTierGatesSomething(
       );
     }
   }
+}
+
+/**
+ * ROUND 2J (docs/economy-bible.md §6.4) — the recipe-side twin of
+ * `core/economy/reachability.test.ts`'s deadlock guard, reimplemented here
+ * because that suite lives in `core/` and this round's content agent may
+ * not edit it. Same shape as the shipped guard, restated for recipes: a
+ * recipe is priced like a placeable, not like a Keep level — it is
+ * PAYABLE AT the tier it appears on (a player standing at that tier may
+ * already have banked resources from it), not the tier before. Jobs are
+ * deliberately excluded, exactly as the core suite excludes them, so a
+ * station's own cost can never bootstrap itself into "reachable".
+ */
+function itemsObtainableFromExpeditionsAt(
+  content: ContentBundle,
+  level: number,
+): ReadonlySet<string> {
+  const ids = new Set<string>();
+  for (const expedition of Object.values(content.expeditions)) {
+    if (expedition.unlockKeepLevel > level) continue;
+    for (const entry of expedition.lootTable) {
+      if (entry.weight > 0) ids.add(entry.itemId);
+    }
+  }
+  return ids;
+}
+
+/**
+ * ROUND 2J — "an output nothing can use" (the ninth-dead-feature shape,
+ * specialised to crafting): a recipe's `"item"` output must be something a
+ * player can actually DO something with. Three ways an item earns that:
+ * it restores something on Feed/Give Item (a real food), it IS the
+ * ailment cure item (`POULTICE_ITEM_ID` — zero food value by design, but a
+ * real mechanical use), or it is an evolution gift-variant KEY on some
+ * species (`SpeciesDef.evolution.giftVariants`). An item satisfying none
+ * of the three would be craftable, land in the Satchel, and do precisely
+ * nothing forever — "written to state" with no "visible to the player"
+ * half (spec §16 v1.3's standing rule, extended to crafted goods).
+ */
+function isCraftedItemUseful(content: ContentBundle, itemId: string): boolean {
+  const food = content.foods[itemId];
+  if (food === undefined) return false; // unknown output — reported separately
+  if (food.hungerRestore > 0) return true;
+  if (food.sideEffects) {
+    for (const amount of Object.values(food.sideEffects)) {
+      if (amount !== undefined && amount > 0) return true;
+    }
+  }
+  if (itemId === POULTICE_ITEM_ID) return true;
+  for (const s of Object.values(content.species)) {
+    if (s.evolution && itemId in s.evolution.giftVariants) return true;
+  }
+  return false;
 }
 
 function checkIcon(label: string, icon: IconSpec, errors: string[]): void {
@@ -624,6 +691,13 @@ export function collectContentIssues(
 
   // --- Jobs (spec §6.2 registry): station must be a placeable, table
   // items must exist, positive weights, positive interval, real copy ---
+  //
+  // ROUND 2J (docs/economy-bible.md §3.2): `kind === "crafting"` jobs are
+  // a QUEUE of recipes (`core/crafting`), not a weighted table on a fixed
+  // interval — `intervalMs`/`table` are deliberately `0`/`[]` for them
+  // (the job registry's OWN `content/jobs.ts` doc comment explains why
+  // that is enough to make `core/keep/jobs.ts` skip them with no edit),
+  // so those two checks are the ONLY ones this branches on.
   const placeableIds = new Set(content.placeables.map((pl) => pl.id));
   for (const job of Object.values(content.jobs)) {
     if (!placeableIds.has(job.stationItemId)) {
@@ -631,11 +705,13 @@ export function collectContentIssues(
         `job "${job.id}": station item "${job.stationItemId}" is not a placeable`,
       );
     }
-    if (job.intervalMs <= 0) {
-      errors.push(`job "${job.id}": intervalMs must be > 0`);
-    }
-    if (job.table.length === 0) {
-      errors.push(`job "${job.id}": empty production table`);
+    if (job.kind !== "crafting") {
+      if (job.intervalMs <= 0) {
+        errors.push(`job "${job.id}": intervalMs must be > 0`);
+      }
+      if (job.table.length === 0) {
+        errors.push(`job "${job.id}": empty production table`);
+      }
     }
     for (const entry of job.table) {
       if (!knownItemIds.has(entry.itemId)) {
@@ -739,6 +815,110 @@ export function collectContentIssues(
       errors.push(
         `bounty "${t.id}": minKeepLevel ${min} disagrees with placeable "${station.id}", which unlocks at Keep level ${station.unlockKeepLevel}`,
       );
+    }
+  }
+
+  // --- Recipes (docs/economy-bible.md §3–§4, round 2J): station must
+  // exist and actually host a "crafting" job, every resource/item input
+  // must be real, the output item must be real (for `"item"` outputs —
+  // `"keepsake"` outputs reference a placement item instead), the tier
+  // must be defined, and duration must sit inside `tuning.crafting`'s
+  // bounds (§3.4: "nothing crafts faster than the game's own slowest
+  // existing rhythm"). ---
+  const craftingStationIds = new Set(
+    Object.values(content.jobs)
+      .filter((job) => job.kind === "crafting")
+      .map((job) => job.stationItemId),
+  );
+  if (craftingStationIds.size === 0 && Object.keys(content.recipes).length > 0) {
+    errors.push(
+      `recipes: ${Object.keys(content.recipes).length} recipe(s) defined but no job hosts a "crafting" station`,
+    );
+  }
+  // ROUND 2J — THE INVERSE: a station with no recipes. A crafting station
+  // is only ever worth building because of what it can make; a Craft Table
+  // on the Build sheet with an empty recipe book is a placeable a player
+  // can spend Wood/Fiber on and get literally nothing usable for it.
+  if (craftingStationIds.size > 0 && Object.keys(content.recipes).length === 0) {
+    errors.push(
+      `recipes: station(s) ${[...craftingStationIds].map((id) => `"${id}"`).join(", ")} host a "crafting" job, but the recipe book is empty — nothing could ever be crafted there`,
+    );
+  }
+  for (const recipe of Object.values(content.recipes)) {
+    if (!knownKeepLevels.has(recipe.unlockKeepLevel)) {
+      errors.push(
+        `recipe "${recipe.id}": unlockKeepLevel ${recipe.unlockKeepLevel} is not a defined Keep level`,
+      );
+    }
+    checkCostBundle(`recipe "${recipe.id}" resources`, recipe.resources, errors);
+
+    // ROUND 2J — THE CRAFTING DEADLOCK (economy bible §6.4, the same class
+    // as the two economy deadlocks `core/economy/reachability.test.ts`
+    // already caught): every resource AND every Satchel item this recipe
+    // consumes must be obtainable from an expedition unlocked at or before
+    // the tier the recipe itself appears on. A recipe priced in something
+    // that only unlocks LATER is craftable-on-paper and unmakeable in play.
+    const obtainableAtRecipeTier = itemsObtainableFromExpeditionsAt(
+      content,
+      recipe.unlockKeepLevel,
+    );
+    for (const [resourceId, amount] of Object.entries(recipe.resources)) {
+      if (amount === undefined || amount <= 0) continue;
+      if (!obtainableAtRecipeTier.has(resourceId)) {
+        errors.push(
+          `recipe "${recipe.id}": resource "${resourceId}" is not obtainable from any expedition by Keep tier ${recipe.unlockKeepLevel} — a crafting deadlock`,
+        );
+      }
+    }
+    for (const [itemId, amount] of Object.entries(recipe.items ?? {})) {
+      if (!knownItemIds.has(itemId)) {
+        errors.push(`recipe "${recipe.id}": Satchel input "${itemId}" does not exist`);
+      }
+      if (amount <= 0) {
+        errors.push(`recipe "${recipe.id}": Satchel input "${itemId}" has non-positive amount ${amount}`);
+      } else if (!obtainableAtRecipeTier.has(itemId)) {
+        errors.push(
+          `recipe "${recipe.id}": Satchel input "${itemId}" is not obtainable from any expedition by Keep tier ${recipe.unlockKeepLevel} — a crafting deadlock`,
+        );
+      }
+    }
+    if (recipe.output.count <= 0) {
+      errors.push(`recipe "${recipe.id}": output count must be > 0`);
+    }
+    if (recipe.output.kind === "item") {
+      if (!knownItemIds.has(recipe.output.itemId)) {
+        errors.push(`recipe "${recipe.id}": output item "${recipe.output.itemId}" does not exist`);
+      } else if (!isCraftedItemUseful(content, recipe.output.itemId)) {
+        // ROUND 2J — "an output nothing can use" (spec §16 v1.3's standing
+        // rule, applied to crafting): no restore value, not the cure item,
+        // not an evolution gift key. A recipe that clears every other check
+        // but produces this would be craftable, real, land in the Satchel,
+        // and do nothing — the ninth dead feature, from a different door.
+        errors.push(
+          `recipe "${recipe.id}": output "${recipe.output.itemId}" has no use anywhere — no restore value, not the ailment cure item, and not an evolution gift key`,
+        );
+      }
+    }
+    if (
+      recipe.output.kind === "keepsake" &&
+      !placeableIds.has(recipe.output.itemId) &&
+      !content.decorations.some((d) => d.id === recipe.output.itemId)
+    ) {
+      errors.push(`recipe "${recipe.id}": keepsake output "${recipe.output.itemId}" is not a placement item`);
+    }
+    if (
+      recipe.durationMs < content.tuning.crafting.minDurationMs ||
+      recipe.durationMs > content.tuning.crafting.maxDurationMs
+    ) {
+      errors.push(
+        `recipe "${recipe.id}": durationMs ${recipe.durationMs} is outside [${content.tuning.crafting.minDurationMs}, ${content.tuning.crafting.maxDurationMs}]`,
+      );
+    }
+    if (recipe.effectCopy.trim().length === 0) {
+      errors.push(`recipe "${recipe.id}": missing effectCopy`);
+    }
+    if (recipe.flavor.trim().length === 0) {
+      errors.push(`recipe "${recipe.id}": missing flavor`);
     }
   }
 

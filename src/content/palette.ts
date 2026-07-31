@@ -729,6 +729,29 @@ export const itemColors: Readonly<Record<string, string>> = {
   tideroll: "#7ec4a8",
   emberloaf: "#d1743c",
   feastpot: "#e0563f",
+  // ROUND 2H — the cure. It sat on `itemFallbackColor` (the generic tan)
+  // alongside every resource, which is exactly the "a wall of identical
+  // dots" problem the round-2J fix stage found in the loot reveal.
+  poultice: "#9dc6a4",
+  // ROUND 2J FIX STAGE — THE FIVE RESOURCES. `ui/lootReveal.ts` tints
+  // every revealed tile with `itemColors[id] ?? itemFallbackColor`, and
+  // this map had NO entry for any resource — so Shell, Driftwood and the
+  // round's headline new material all flipped as the same beige circle on
+  // the one surface where a player first meets them. A Shore trip now
+  // reveals nine tiles of which three are Lodestone; without this the
+  // reveal is a wall of identical dots.
+  //
+  // Values are the SAME hexes `ui/icons.ts`'s `RESOURCE_TINTS` already
+  // uses for the Satchel's Materials list and the Build-sheet cost rows,
+  // deliberately duplicated rather than imported: `content/` may not
+  // import from `ui/` (spec §2), and one identity per material across
+  // every surface is the point. `ui/icons.test.ts` pins the two maps
+  // equal, so they cannot drift.
+  wood: "#b98a52",
+  fiber: "#8fae6a",
+  shell: "#7ec4a8",
+  driftwood: "#9c9186",
+  lodestone: "#6b7a99",
 };
 
 /** Fallback for items without an authored color. */

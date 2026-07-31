@@ -27,6 +27,10 @@ import { deriveMood } from "../pips/mood";
 import { runCatchup } from "../pips/catchup";
 import type { CatchupState, CatchupTuning } from "../pips/catchup";
 import type { KeepComfortEffect } from "../pips/needs";
+import { placeables as contentPlaceables } from "../../content/placeables";
+import { decorations as contentDecorations } from "../../content/decorations";
+import { decorSets as contentDecorSets } from "../../content/decorSets";
+import type { BuildingEffect } from "../../content/buildingEffects";
 
 const SAVED_AT = 1_000 * HOUR_MS;
 const HEALTHY = 90;
@@ -231,5 +235,120 @@ describe("rest speed at the cap still leaves a nap long enough to watch", () => 
       tuning.care.rest.energyPerHour * tuning.progression.effectCaps.restSpeedMax;
     const fullNapMs = (100 / cappedEnergyPerHour) * HOUR_MS;
     expect(fullNapMs).toBeGreaterThanOrEqual(5 * 60 * 1000);
+  });
+});
+
+/**
+ * ⚠️ ROUND 2J FIX STAGE — THE PRE-CLAMP COMFORT BUDGET.
+ *
+ * The mutation that exposed the gap: adding two `comfort` effects
+ * (`decayReduction: 0.09` each) to the round's new Craft Table left the
+ * whole suite green — and even added two data-driven tests that themselves
+ * passed. Nothing in the repo bounded how much comfort CONTENT may
+ * declare.
+ *
+ * Why the existing guards cannot catch it. `core/keep/effects.test.ts`'s
+ * "every need reaches comfortReductionMax on a fully-built Keep" is a
+ * LOWER bound; its companion "and none exceeds it" reads
+ * `effects.comfort[need]`, which is the value AFTER `resolveKeepEffects`
+ * has already clamped at `caps.comfortReductionMax` — true by construction,
+ * and it can never fail.
+ *
+ * Why over-declaring is harmful even though the clamp holds. The
+ * fully-built ceiling is unchanged, so the harm is not "care becomes
+ * trivial at max build" — it is that the cap is reached with FEWER and
+ * CHEAPER buildings, quietly deleting the progression pacing the
+ * 0.25-of-0.26557 budget was sized to protect. Round 2H's arithmetic
+ * leaves 1.557 percentage points of decay-reduction headroom in the whole
+ * game; this asserts how much of it content has actually spent.
+ */
+describe("⚠️ the PRE-CLAMP comfort budget: how much content may DECLARE, not what survives the clamp", () => {
+  /** Every `comfort` contribution any content entry declares, per need,
+   * summed before any clamp — items and set bonuses alike. */
+  function declaredComfort(): Record<NeedId, number> {
+    const total: Record<NeedId, number> = {
+      hunger: 0,
+      cleanliness: 0,
+      happiness: 0,
+      energy: 0,
+    };
+    const add = (effect: BuildingEffect): void => {
+      if (effect.kind !== "comfort") return;
+      if (effect.need === "all") {
+        for (const need of NEED_IDS) total[need] += effect.decayReduction;
+      } else {
+        total[effect.need] += effect.decayReduction;
+      }
+    };
+    for (const item of [...contentPlaceables, ...contentDecorations]) {
+      for (const effect of item.effects ?? []) add(effect);
+    }
+    for (const set of contentDecorSets) {
+      // The two tiers are exclusive — only the higher one is ever folded —
+      // so the honest worst case is the bigger of the two.
+      add(set.bonusAt5);
+    }
+    return total;
+  }
+
+  const CAP = tuning.progression.effectCaps.comfortReductionMax;
+
+  /**
+   * The declared budget may exceed the cap — that is what makes a
+   * fully-built Keep reach it — but only by a stated, deliberate margin.
+   * 1.6× is roughly what the shipped tree spends (hunger is the tightest
+   * at exactly 1.00× after round 2F's Larder retune; energy is the
+   * loosest). Anything past this means content is handing the cap out
+   * cheaply, which is the pacing regression this guard exists for.
+   */
+  const MAX_DECLARED_MULTIPLE = 1.6;
+
+  for (const need of NEED_IDS) {
+    it(`${need}: content declares no more than ${MAX_DECLARED_MULTIPLE}× the cap before clamping`, () => {
+      const declared = declaredComfort()[need];
+      expect(declared, `${need} declared`).toBeLessThanOrEqual(CAP * MAX_DECLARED_MULTIPLE);
+    });
+
+    it(`${need}: content declares AT LEAST the cap, so a fully-built Keep can still reach it`, () => {
+      expect(declaredComfort()[need], `${need} declared`).toBeGreaterThanOrEqual(CAP);
+    });
+  }
+
+  /**
+   * The specific shape the mutation took: a STATION that is not about
+   * comfort quietly acquiring some. Stations that exist to slow a need
+   * (Food Bowl, Bed, Larder, Sun Bunks, Wash Basin, Play Post) are the
+   * only ones that should carry it — a workshop is not a cushion.
+   */
+  it("no production or utility station carries a comfort effect", () => {
+    // (The Stockpot is deliberately absent: it IS a pantry, and round 2B
+    // gave it a Hunger comfort on purpose.)
+    const NOT_COMFORT_STATIONS = [
+      "gathering-station",
+      "workbench",
+      "craft-table",
+      "nest-warmer",
+      "trail-post",
+      "beacon",
+      "weathervane",
+      "poultice-shelf",
+    ];
+    for (const id of NOT_COMFORT_STATIONS) {
+      const item = contentPlaceables.find((p) => p.id === id);
+      expect(item, id).toBeDefined();
+      for (const effect of item?.effects ?? []) {
+        expect(effect.kind, `${id} must not slow a need`).not.toBe("comfort");
+      }
+    }
+  });
+
+  /** Nothing CRAFTED may carry comfort at all (docs/economy-bible.md's I3
+   * — the headroom is spent). */
+  it("no craft-only keepsake carries a comfort effect", () => {
+    for (const item of contentDecorations.filter((d) => d.craftOnly === true)) {
+      for (const effect of item.effects ?? []) {
+        expect(effect.kind, item.id).not.toBe("comfort");
+      }
+    }
   });
 });
