@@ -36,24 +36,14 @@ Phase-gate log and decision journal, per spec §13–§15. Append entries; never
 - **A live spec violation found and fixed (N1):** `topBar.ts` keyed sulking off `activity` and never `isSulking`, violating spec §16 v1.3's own standing rule — so a Pip with `sulking: true, activity: "idle"` and needs at 0/0/0/0 got **no badge at all** while others did. `focusView.ts` never mentioned sulking. Both fixed; the activity-only signature was deleted rather than deprecated.
 - Also fixed: celebrations now clear the chrome via a measured `--pk-hud-top` (two hardcoded `172px` literals deleted — the banner had been printing straight through the XP bar at five Pips); speech bubbles clamped to the viewport; starter-Pip camouflage (1.05:1 body-vs-ground); roster overflow at six Pips; purchase now closes the upgrade card so celebrations don't play behind it.
 
-## ⏸ PAUSED MID-ROUND — resume here (2026-07-30)
+## Next up (queued, not started)
 
-Two workflows were stopped mid-flight at the owner's request. **The tree is GREEN — 2285 tests, clean build, `tsc` clean** — so this is a safe stopping point, but two rounds are functionally complete and *unverified*.
+Both paused rounds are now complete and gated. Remaining, in recommended order:
 
-### Round 2G — HUD legibility — ✅ COMPLETE (see the gate log above)
-Resumed and gated 2026-07-30 at 2286 tests. No outstanding blockers.
-
-### Round 2H — Pip lifecycle — ✅ COMPLETE (see the gate log above)
-Resumed and gated 2026-07-30 at 2662 tests. Five promises enforced and tested.
-
-### To resume
-Both runs are resumable with their cached prefixes intact:
-- 2G: `Workflow({scriptPath: ".../round2g-legible-progression-wf_e832b17e-aca.js", resumeFromRunId: "wf_e832b17e-aca"})`
-- 2H: `Workflow({scriptPath: ".../round2h-lifecycle-lineage-risk-wf_14b65b1c-64f.js", resumeFromRunId: "wf_14b65b1c-64f"})`
-Scripts live under `~/.claude/projects/-Users-gary-dev-pipskeep/<session>/workflows/scripts/`. **Caution:** 2G and 2H were deliberately given disjoint file ownership; resume them one at a time, not concurrently, since 2H's UI phase needs seams in files 2G owns.
-
-### Queued and not started
-2D (Pip identity: individual names — every Pip is still literally named after its species — three distinct starter species, real accessories), 2I (Web Push), 2J (fifth resource + crafting), 2K (attractions + living Keep).
+- **2D — Pip identity & variety.** Individual names (every Pip is still literally named after its species), three distinct starter species, real accessories, per-individual jitter. See `docs/BACKLOG.md`.
+- **2I — Web Push.** Note: round 2H explicitly CUT loss-related push notifications as un-de-brutalizable. Do not add one.
+- **2J — Fifth resource + crafting.**
+- **2K — Attractions & the living Keep.**
 
 ## Gate log
 
