@@ -119,85 +119,42 @@
   transform: scale(0.95);
 }
 
-/* The little DOM Pip on each card (palette inked inline from TS). */
+/* The little DOM Pip on each card.
 
-.pk-onboard-blob {
-  position: relative;
-  width: 74px;
-  height: 64px;
-  border: 3px solid;
-  border-radius: 48% 52% 55% 45% / 58% 56% 44% 42%;
+   ROUND 2D FIX STAGE — this used to be a hand-rolled 74×64 rounded box
+   (`.pk-onboard-blob` + belly/eyes/blush children) with ONE fixed
+   border-radius and no per-species override. Round 2D's headline
+   decision — three DIFFERENT starter species, so the first choice a
+   player makes is a real one — therefore reached the player as three
+   colours of ONE shape, while the Album's portrait for the very same
+   species honoured the silhouette correctly. The cards now render
+   `ui/pipdex.ts`'s `buildPortraitEl` (see onboarding.ts's
+   `buildStarterPortrait`), which carries silhouette, pattern, accessory,
+   shiny and jitter for every species that will ever exist. Only the bob
+   animation is card-local. */
+
+.pk-onboard-card .pk-pipdex-portrait {
   animation: pk-onboard-bob 2400ms ease-in-out infinite;
 }
 
-/* The species' one vibrant accent: a tiny head sprout. */
-.pk-onboard-blob::before {
-  content: "";
-  position: absolute;
-  top: -12px;
-  left: 50%;
-  width: 9px;
-  height: 12px;
-  transform: translateX(-50%) rotate(8deg);
-  border-radius: 50% 50% 50% 50% / 70% 70% 30% 30%;
-  background: var(--pk-accent, #ff8a5c);
-}
-
-.pk-onboard-belly {
-  position: absolute;
-  bottom: 3px;
-  left: 50%;
-  width: 42px;
-  height: 26px;
-  transform: translateX(-50%);
-  border-radius: 50% 50% 45% 45%;
-}
-
-.pk-onboard-eyes {
-  position: absolute;
-  top: 20px;
-  left: 0;
-  right: 0;
-  display: flex;
-  justify-content: center;
-  gap: 16px;
-}
-
-.pk-onboard-eyes i {
-  width: 7px;
-  height: 9px;
-  border-radius: 50%;
-  background: #3d4a3d;
+.pk-onboard-card .pk-pipdex-eyes i {
   animation: pk-onboard-blink 4600ms ease-in-out infinite;
 }
 
-.pk-onboard-blush {
-  position: absolute;
-  top: 30px;
-  width: 10px;
-  height: 6px;
-  border-radius: 50%;
-  opacity: 0.85;
-}
 
-.pk-onboard-blush--l {
-  left: 8px;
-}
-
-.pk-onboard-blush--r {
-  right: 8px;
-}
-
+/* ROUND 2D item 1: the name leads now (species+personality drop to a
+   subtitle, same demotion everywhere in the round). */
 .pk-onboard-card-name {
   margin-top: 4px;
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 800;
 }
 
 .pk-onboard-card-kind {
-  font-size: 12px;
+  font-size: 10.5px;
   font-weight: 700;
   color: #5f8a5e;
+  opacity: 0.85;
 }
 
 .pk-onboard-card-intro {
@@ -487,11 +444,11 @@ body[data-pk-onboard="explore"] .pk-exp-send {
 /* Respect reduced-motion users: no bouncing, no infinite pulses. */
 @media (prefers-reduced-motion: reduce) {
   .pk-onboard-card,
-  .pk-onboard-blob,
+  .pk-onboard-card .pk-pipdex-portrait,
   .pk-onboard-wordmark,
   .pk-onboard-tagline,
   .pk-onboard-cue,
-  .pk-onboard-eyes i,
+  .pk-onboard-card .pk-pipdex-eyes i,
   body[data-pk-onboard="feed"] .pk-action[data-action="feed"],
   body[data-pk-onboard="explore"] .pk-identity,
   body[data-pk-onboard="explore"] .pk-exp-send {

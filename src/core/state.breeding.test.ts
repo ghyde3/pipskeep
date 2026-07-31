@@ -17,6 +17,9 @@ import type { Egg } from "./eggs";
 import type { GameAction, GameState } from "./state";
 import { createNewGame, rootReducer } from "./state";
 import { xpForLevel } from "./pips/level";
+import { NAME_POOL } from "../content/names";
+import type { SanctuaryRecord } from "./sanctuary";
+import { species as contentSpecies } from "../content/species";
 
 const T0 = 10_000_000;
 const SEED = 21;
@@ -35,7 +38,6 @@ function makePip(id: string, overrides: Partial<PipState> = {}): PipState {
       speciesId: "mosspip",
       palette: "fern",
       pattern: "plain",
-      accessorySlots: 1,
       personalityId,
       shiny: false,
     },
@@ -213,7 +215,6 @@ describe("HATCH_EGG — bred and lineage eggs bypass rollGenome, pity and biome 
         speciesId: "mosspip",
         palette: "fern",
         pattern: "plain",
-        accessorySlots: 1,
         personalityId: "hardworking",
         shiny: true,
       },
@@ -224,6 +225,65 @@ describe("HATCH_EGG — bred and lineage eggs bypass rollGenome, pity and biome 
       ...overrides,
     };
   }
+
+  it("ROUND 2D — a lineage hatchling is named as an INDIVIDUAL, never after its species", () => {
+    // ROUND 2D FIX STAGE. The lineage arm of HATCH_EGG was the one naming
+    // path with no test: mutating it back to `name = contentSpecies[…].name`
+    // — the exact pre-2D bug — left the whole suite green, while the same
+    // mutation applied to `createNewGame` or the ordinary hatch arm failed
+    // seven tests across five files. The three tests that DO exercise this
+    // branch assert genome, level, resistances, generation and pity, and
+    // never `name`.
+    //
+    // It is also the branch where the name matters most: a recovery egg
+    // from a Pip the player just lost is round 2H's whole emotional
+    // payoff, and "Mosspip hatched" is not a payoff.
+    const state = makeState({ eggs: [bredEgg()] });
+    const next = rootReducer(state, { type: "HATCH_EGG", eggId: "egg-bred", at: T0 });
+    expect(next.lastHatchOutcome?.ok).toBe(true);
+    if (next.lastHatchOutcome?.ok !== true) return;
+    const hatchling = next.pips[next.lastHatchOutcome.pipId];
+    expect(hatchling).toBeDefined();
+    expect(NAME_POOL).toContain(hatchling?.name);
+    expect(hatchling?.name).not.toBe(contentSpecies[hatchling?.speciesId as string]?.name);
+  });
+
+  it("ROUND 2D — a lineage hatchling's name dedupes against the LONG MEADOW, exactly like an ordinary hatch", () => {
+    // Two gaps in one test.
+    //
+    // (1) The lineage arm must pass `collectUsedNames(state)` to
+    //     `rollPipName`, not an empty set — otherwise a recovery egg can
+    //     hand you a second Pip with the name of the one you just lost.
+    // (2) `collectUsedNames` reads three sources (roster, Long Meadow,
+    //     Album) and only the Album branch had a live-roll test: deleting
+    //     the `state.sanctuary` line failed nothing. The Long Meadow is
+    //     also the right place to reserve names from here, because the
+    //     roster is capped and the sanctuary is not.
+    const base = makeState({ eggs: [bredEgg()] });
+    const seed = base.pips[base.rosterOrder[0] as string];
+    if (seed === undefined) throw new Error("fixture has no Pip to clone");
+    const reserved = NAME_POOL.filter((n) => n !== seed.name).slice(0, -1);
+    const openName = NAME_POOL[NAME_POOL.length - 1] as string;
+    const residents: Record<string, SanctuaryRecord> = {};
+    const order: string[] = [];
+    reserved.forEach((name, i) => {
+      const id = `ghost-${i}`;
+      residents[id] = {
+        pip: { ...seed, id: id as typeof seed.id, name },
+        retiredAt: T0,
+        retiredFromKeepLevel: 1,
+        visits: 0,
+      };
+      order.push(id);
+    });
+    const next = rootReducer(
+      { ...base, sanctuary: { pips: residents, order } },
+      { type: "HATCH_EGG", eggId: "egg-bred", at: T0 },
+    );
+    expect(next.lastHatchOutcome?.ok).toBe(true);
+    if (next.lastHatchOutcome?.ok !== true) return;
+    expect(next.pips[next.lastHatchOutcome.pipId]?.name).toBe(openName);
+  });
 
   it("hatches a bred egg with the SNAPSHOTTED genome/level/resistances/generation, no RNG roll", () => {
     const state = makeState({
@@ -268,7 +328,6 @@ describe("HATCH_EGG — bred and lineage eggs bypass rollGenome, pity and biome 
         speciesId: "mosspip",
         palette: "fern",
         pattern: "plain",
-        accessorySlots: 1,
         personalityId: "curious",
         shiny: false,
       },
@@ -324,7 +383,6 @@ describe("ACKNOWLEDGE_REVEAL — lineageEggFound Keep XP (bible §9.3)", () => {
         speciesId: "mosspip",
         palette: "fern",
         pattern: "plain",
-        accessorySlots: 1,
         personalityId: "curious",
         shiny: false,
       },

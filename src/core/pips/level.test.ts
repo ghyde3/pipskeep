@@ -41,7 +41,6 @@ function makePip(overrides: Partial<PipState> = {}): PipState {
       speciesId: "mosspip",
       palette: "fern",
       pattern: "plain",
-      accessorySlots: 1,
       personalityId: "curious",
       shiny: false,
     },

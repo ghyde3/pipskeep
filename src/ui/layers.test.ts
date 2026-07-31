@@ -257,6 +257,15 @@ const LADDER: readonly Rung[] = [
     why: "ROUND 2H: old age's own moment (bible §2.5/§4) — never a lesser death, never queued behind chores",
   },
   {
+    layer: "rename-dialog",
+    file: "ui.css",
+    selector: ".pk-rename-wrap--open",
+    z: 29,
+    why:
+      "ROUND 2D: the rename dialog — reachable ONLY from an already-open " +
+      "focus view (20), so it only needs to clear that one surface",
+  },
+  {
     layer: "coach",
     file: "onboarding.css",
     selector: ".pk-onboard-guide",

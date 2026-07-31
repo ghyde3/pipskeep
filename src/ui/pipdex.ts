@@ -50,7 +50,8 @@ import type { SpeciesDef } from "../content/species";
 // rule 1 stays intact): `Silhouette` is the render module's own vocabulary
 // for the same content-bible §1.4 axis this file draws in DOM instead of
 // Pixi, so it is reused rather than re-declared.
-import type { Silhouette } from "../render/spriteResolver";
+import type { Silhouette } from "../render/pipGeometry";
+import { SILHOUETTE_FRACTIONS, jitterStyleVars } from "../render/pipGeometry";
 import { EXPEDITION_IDS, expeditions } from "../content/expeditions";
 import type { ExpeditionId } from "../content/expeditions";
 import { foods } from "../content/foods";
@@ -62,6 +63,7 @@ import { pickSpeciesLine } from "../content/speciesLines";
 import { activePageFrame, earnedFlairOfKind } from "../content/flair";
 import type { FlairDef } from "../content/flair";
 import { sound } from "../app/sound";
+import { resolveAccessory } from "../content/accessories";
 
 // ---------------------------------------------------------------------------
 // Pure model layer
@@ -191,6 +193,31 @@ export interface PortraitVisual {
   readonly paletteId: string;
   readonly pattern: string;
   readonly shiny: boolean;
+  /**
+   * ROUND 2D item 3 — the worn accessory, resolved through the SAME
+   * `content/accessories.ts` registry `render/spriteResolver.ts` uses
+   * (`resolveAccessory` there already collapses `undefined`/`null`/the
+   * `"none"` sentinel to "bare"; `buildAccessoryEl` below does the same).
+   * Optional (`undefined` allowed, not just `null`): `ui/sanctuary.ts`'s
+   * `portraitVisualOf` predates this field and building a Long Meadow
+   * resident's accessory look is additive, not required for this field to
+   * type-check there — see that function's own comment.
+   */
+  readonly accessoryId?: string | null;
+  /**
+   * ROUND 2D item 4, FIX STAGE — a stable per-INDIVIDUAL jitter seed (a
+   * Pip id, or an Album entry's frozen `firstPortrait.pipId`). Optional:
+   * omit it and the portrait renders the exact un-jittered geometry, so
+   * every pre-existing caller is unaffected.
+   *
+   * Why it belongs here at all: the shipped pass applied jitter at ONE
+   * production call site (`render/keepScene.ts`), which is also the
+   * smallest Pip in the game — two Pips with the same genome were
+   * byte-identical on the Album, the Long Meadow, the Nursery, the focus
+   * portrait and the cast strip, i.e. on every surface where a player
+   * actually studies a face.
+   */
+  readonly jitterSeed?: string;
 }
 
 export interface PipdexCardModel {
@@ -229,6 +256,10 @@ export function buildPipdexCardModel(
             paletteId: portrait.genome.palette,
             pattern: portrait.genome.pattern,
             shiny: portrait.genome.shiny,
+            accessoryId: portrait.genome.accessoryId,
+            // The FROZEN first-catch Pip's own id — the Album page keeps
+            // the individual it met, jitter included (round 2D item 4).
+            jitterSeed: portrait.pipId,
           }
         : null,
     shinyBadge: entry?.shinyCaughtAt != null,
@@ -417,6 +448,10 @@ export function buildPipdexDetailModel(
             paletteId: portrait.genome.palette,
             pattern: portrait.genome.pattern,
             shiny: portrait.genome.shiny,
+            accessoryId: portrait.genome.accessoryId,
+            // The FROZEN first-catch Pip's own id — the Album page keeps
+            // the individual it met, jitter included (round 2D item 4).
+            jitterSeed: portrait.pipId,
           }
         : null,
     homeBiomes: homeBiomesOf(speciesId),
@@ -436,21 +471,12 @@ export function buildPipdexDetailModel(
 // DOM shell — silhouette-aware procedural portrait (bible §1.3.3/§9.19)
 // ---------------------------------------------------------------------------
 
-/** Mirrors `render/spriteResolver.ts`'s `SILHOUETTES` table (content-bible
- * §1.4) so the Album's flat DOM portraits read as the same five body
- * shapes the Pixi renderer draws in the Keep — the whole point of a
- * silhouette axis is "identifiable at a glance", which a scrapbook full of
- * identical rounded blobs would quietly defeat. Duplicated locally rather
- * than imported (same call `focusView.ts`/`topBar.ts` already make for
- * their own small local constants — a five-row content table is cheaper
- * to keep in sync by comment than to add a cross-module dependency for). */
-const SILHOUETTE_FRACTIONS: Readonly<Record<Silhouette, { w: number; h: number }>> = {
-  round: { w: 1.0, h: 1.0 },
-  chunky: { w: 1.0, h: 0.82 },
-  wide: { w: 1.0, h: 0.72 },
-  tall: { w: 0.8, h: 1.0 },
-  tiny: { w: 0.78, h: 0.76 },
-};
+/** The single silhouette table, imported from `render/spriteResolver.ts`
+ * (content-bible §1.4) so the Album's flat DOM portraits read as the same
+ * five body shapes the Pixi renderer draws in the Keep. This file used to
+ * keep a hand-copied duplicate; round 2D's fix stage needed the same
+ * table on three DOM surfaces, at which point "keep it in sync by
+ * comment" stopped being cheaper than one import. */
 
 type PatternKind =
   | "none"
@@ -511,12 +537,30 @@ function domPatternKind(patternId: string): PatternKind {
  * authored but the TS never emitted it. */
 export const albumPatternClassSuffix = domPatternKind;
 
+/**
+ * ROUND 2D item 3 — a genome's `accessoryId` → the Album's CSS class
+ * suffix, or `null` for "draw nothing" (bare — every spelling of that,
+ * `undefined`/`null`/the `"none"` sentinel/an unrecognized id, per
+ * `resolveAccessory`'s own doc). Unlike `domPatternKind` above, this is a
+ * direct 1:1 pass-through (no bucketing/aliasing — every accessory has
+ * its own dedicated CSS rule from the start), but it is still the ONE
+ * place `buildPortraitEl` decides the class, and `portraitPatterns.test.
+ * ts` calls it directly (the same "TS emits a class that EXISTS" check
+ * that file already runs for patterns) so a typo here can't silently
+ * ship a blank accessory.
+ */
+export function albumAccessoryClassSuffix(accessoryId: string | null | undefined): string | null {
+  return resolveAccessory(accessoryId)?.id ?? null;
+}
+
 /** The full procedural portrait — Portrait tier only. `size` picks the box
- * (grid thumbnail vs. the big detail-page portrait); the shape inside it
- * follows the species' silhouette exactly as the Keep does. */
+ * ("chip" for the always-on-screen cast strip, "small" for the Album grid
+ * / Long Meadow / Nursery / starter cards, "large" for the detail page);
+ * the shape inside it follows the species' silhouette exactly as the Keep
+ * does. */
 export function buildPortraitEl(
   visual: PortraitVisual,
-  size: "small" | "large",
+  size: "chip" | "small" | "large",
 ): HTMLElement {
   const def = contentSpecies[visual.speciesId] as SpeciesDef | undefined;
   const silhouette = def?.sprite.silhouette ?? "round";
@@ -527,6 +571,14 @@ export function buildPortraitEl(
   el.className = `pk-pipdex-portrait pk-pipdex-portrait--${size}`;
   el.style.setProperty("--pk-wfrac", String(fractions.w));
   el.style.setProperty("--pk-hfrac", String(fractions.h));
+  // ROUND 2D item 4 — per-individual jitter, from the SAME pure function
+  // the Pixi Keep sprite uses (render/spriteResolver.ts). Absent seed →
+  // no properties written → the CSS fallbacks (all 1) → previous look.
+  if (visual.jitterSeed !== undefined) {
+    for (const [name, value] of Object.entries(jitterStyleVars(visual.jitterSeed))) {
+      el.style.setProperty(name, value);
+    }
+  }
 
   const blob = document.createElement("div");
   blob.className = `pk-pipdex-blob pk-pipdex-blob--pattern-${domPatternKind(visual.pattern)}`;
@@ -542,16 +594,41 @@ export function buildPortraitEl(
   const eyes = document.createElement("div");
   eyes.className = "pk-pipdex-eyes";
   eyes.append(document.createElement("i"), document.createElement("i"));
+  // ROUND 2D FIX STAGE — the mouth (see pipdex.css). Parity with the Pixi
+  // resolver, which has always drawn one; without it the face has no
+  // lower landmark and every neck accessory reads as a mouth.
+  const mouth = document.createElement("span");
+  mouth.className = "pk-pipdex-mouth";
   const blushL = document.createElement("span");
   blushL.className = "pk-pipdex-blush pk-pipdex-blush--l";
   const blushR = document.createElement("span");
   blushR.className = "pk-pipdex-blush pk-pipdex-blush--r";
-  blob.append(belly, eyes, blushL, blushR);
+  blob.append(belly, eyes, mouth, blushL, blushR);
 
   if (visual.shiny) {
     const shine = document.createElement("div");
     shine.className = "pk-pipdex-shine";
     blob.appendChild(shine);
+  }
+
+  // ROUND 2D item 3 — worn accessory, visible on both the Album AND (via
+  // this same function) the Long Meadow (ui/sanctuary.ts reuses
+  // buildPortraitEl verbatim, per this file's own module doc).
+  const accessorySuffix = albumAccessoryClassSuffix(visual.accessoryId);
+  if (accessorySuffix !== null) {
+    const accessoryDef = resolveAccessory(visual.accessoryId);
+    const accessory = document.createElement("span");
+    accessory.className = `pk-pipdex-accessory pk-pipdex-accessory--${accessorySuffix}`;
+    if (accessoryDef !== null) {
+      accessory.style.setProperty("--pk-acc-primary", accessoryDef.primaryColor);
+      accessory.style.setProperty(
+        "--pk-acc-secondary",
+        accessoryDef.secondaryColor ?? accessoryDef.primaryColor,
+      );
+      accessory.setAttribute("aria-hidden", "true");
+      accessory.title = accessoryDef.name;
+    }
+    blob.appendChild(accessory);
   }
 
   el.appendChild(blob);

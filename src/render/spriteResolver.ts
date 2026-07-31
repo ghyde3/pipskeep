@@ -39,56 +39,87 @@
  * Wiring `render/keepScene.ts` to pass it (and fold it into the sprite
  * cache key) is outside this file's fence (content-bible §8.2.2); this
  * file only needs to be ready to receive it, which it now is.
+ *
+ * ROUND 2D (docs/BACKLOG.md "Round 2D" items 3 & 4) adds two more
+ * per-individual layers, both still driven entirely through this one
+ * resolver (no per-species render code, spec §3):
+ *
+ * - ACCESSORY (item 3): `genome.accessoryId` resolves through
+ *   `content/accessories.ts`'s `resolveAccessory` (which already collapses
+ *   every "bare" spelling — `undefined`/`null`/the `"none"` sentinel/an
+ *   unrecognized id — to `null`) and, when non-null, draws into the
+ *   `accessoryAnchor` this file has built and left empty since Phase 5.
+ *   Works for every species/stage/shininess automatically because it
+ *   reads only the anchor's local origin and the content def's colors —
+ *   nothing here branches on `genome.speciesId`.
+ * - JITTER (item 4): `resolvePipSprite`'s new optional `jitterSeed` param
+ *   (the caller's Pip id when one exists, e.g. `render/keepScene.ts`;
+ *   falls back to a hash of the genome's own fields so a caller with no
+ *   live Pip — a save-fixture preview, a future gift-shop swatch — still
+ *   gets a *stable*, non-uniform look) drives `computeJitter`, a pure,
+ *   deterministic hash (via `core/rng.ts`'s `fnv1a` — the SAME "render-
+ *   local fixed seed, no `Math.random()`" pattern `render/keepScene.ts`
+ *   already uses for its bed/corner assignment, and `render/particles.ts`'s
+ *   module doc names as the repo rule). No stream, no cursor, no GameState
+ *   footprint: this is cosmetic-only, exactly like the particle jitter.
+ *   Every jittered quantity is either SHRINK-ONLY (body width/height — see
+ *   `computeJitter`'s doc for why growth is unsafe) or a tiny, bounded
+ *   pixel offset (eye spacing/shape, marking position) — `spriteResolver.
+ *   test.ts` proves numerically that even the extreme of every jitter
+ *   range stays inside `PIP_BODY_WIDTH`×`PIP_BODY_HEIGHT` for every
+ *   silhouette, "tiny" (the tightest) included.
  */
 
 import { Container, Graphics } from "pixi.js";
 import { LifeStage } from "../core/pips/types";
 import type { TraitGenome } from "../core/pips/types";
 import { resolvePipPalette } from "../content/palette";
-import { species as contentSpecies } from "../content/species";
-import type { SpeciesId } from "../content/species";
+import { resolveAccessory } from "../content/accessories";
+import type { AccessoryDef } from "../content/accessories";
+import {
+  PIPLING_SCALE,
+  PIP_BODY_HEIGHT,
+  PIP_BODY_WIDTH,
+  computeJitter,
+  resolveSilhouette,
+  silhouetteMetrics,
+} from "./pipGeometry";
 
-/** Piplings render at 0.7 scale (spec task/§11 placeholder standard). */
-export const PIPLING_SCALE = 0.7;
+export {
+  PIPLING_SCALE,
+  PIP_BODY_WIDTH,
+  PIP_BODY_HEIGHT,
+  SILHOUETTE_FRACTIONS,
+  JITTER_MAX_BODY_SHRINK,
+  JITTER_MAX_EYE_SPACING_PX,
+  JITTER_MAX_EYE_RADIUS_PX,
+  JITTER_MAX_EYE_ROW_PX,
+  JITTER_MAX_MARK_PX,
+  BASE_EYE_GAP_PX,
+  BASE_EYE_RADIUS_PX,
+  computeJitter,
+  jitterStyleVars,
+  resolveSilhouette,
+} from "./pipGeometry";
+export type { Silhouette, Jitter } from "./pipGeometry";
 
-/** Body metrics (view-local px, adult scale). Exported for scene layout.
- * THE TAP-HIT / SELECTION-RING / SHADOW / PARTICLE-BOX CONTRACT — not
- * per-species. Silhouettes (below) vary the drawn shape inside this box;
- * they never exceed it (content-bible §1.4). */
-export const PIP_BODY_WIDTH = 118;
-export const PIP_BODY_HEIGHT = 98;
-
-export type Silhouette = "round" | "chunky" | "wide" | "tall" | "tiny";
-
-/** Per-silhouette body metrics (content-bible §1.4's table). `wFrac`/
- * `hFrac` are fractions of PIP_BODY_WIDTH/HEIGHT; `cornerFrac` is the
- * roundRect corner radius as a fraction of the silhouette's own width;
- * `shadowScale` and `eyeScale` are extra multipliers layered on top.
- * "round" reproduces today's drawing exactly (wFrac/hFrac/shadowScale/
- * eyeScale all 1, cornerFrac 0.46 — the pre-expansion literal). */
-const SILHOUETTES: Readonly<Record<Silhouette, {
-  readonly wFrac: number;
-  readonly hFrac: number;
-  readonly cornerFrac: number;
-  readonly shadowScale: number;
-  readonly eyeScale: number;
-}>> = {
-  round: { wFrac: 1.0, hFrac: 1.0, cornerFrac: 0.46, shadowScale: 1.0, eyeScale: 1.0 },
-  // "Reads as heavy": full width, squashed height, blockier corners, a
-  // slightly wider shadow to sell the weight.
-  chunky: { wFrac: 1.0, hFrac: 0.82, cornerFrac: 0.34, shadowScale: 1.12, eyeScale: 1.0 },
-  // "Reads as limpet": very low flattened dome, flat base.
-  wide: { wFrac: 1.0, hFrac: 0.72, cornerFrac: 0.5, shadowScale: 1.05, eyeScale: 1.0 },
-  // "Reads as wispy": narrower base, full height, narrower shadow.
-  tall: { wFrac: 0.8, hFrac: 1.0, cornerFrac: 0.5, shadowScale: 0.85, eyeScale: 1.0 },
-  // "Reads as baby-brained": small round body, deliberately oversized eyes.
-  tiny: { wFrac: 0.78, hFrac: 0.76, cornerFrac: 0.5, shadowScale: 0.8, eyeScale: 1.15 },
-};
-
-/** This species' silhouette, content-driven (absent → "round", so Mosspip/
- * Grovepip and any species that never sets the field are unaffected). */
-function resolveSilhouette(speciesId: SpeciesId): Silhouette {
-  return contentSpecies[speciesId]?.sprite.silhouette ?? "round";
+/** Fallback jitter seed when the caller has no live Pip id (see
+ * `resolvePipSprite`'s `jitterSeed` param) — every genome field folded
+ * into one string, so at least a DIFFERENT genome still jitters
+ * differently, even though (as documented on `TraitGenome.accessoryId`)
+ * two Pips that happen to roll an identical genome would then also share
+ * this fallback seed and so look pixel-identical; a live Pip id (always
+ * unique) avoids that entirely, which is why every real gameplay caller
+ * (render/keepScene.ts) passes one. */
+function genomeJitterSeed(genome: TraitGenome): string {
+  return [
+    genome.speciesId,
+    genome.palette,
+    genome.pattern,
+    genome.personalityId,
+    genome.shiny ? "1" : "0",
+    genome.accessoryId ?? "",
+  ].join("|");
 }
 
 export interface PipSprite {
@@ -96,8 +127,10 @@ export interface PipSprite {
   readonly view: Container;
   /** Animation rig — squash/stretch/rotate/offset this. Pivot at feet. */
   readonly rig: Container;
-  /** Accessory anchor point (spec §11) at the top of the head. Phase 5+
-   * accessories attach here; `genome.accessorySlots` says how many. */
+  /** Accessory anchor point (spec §11) at the top of the head. Round 2D's
+   * `drawAccessory` is what attaches to it. ONE anchor, ONE accessory:
+   * the per-genome `accessorySlots` count that used to imply otherwise
+   * was dead data and is gone (spec §16 v1.7, core/pips/types.ts). */
   readonly accessoryAnchor: Container;
   readonly genome: TraitGenome;
   readonly stage: LifeStage;
@@ -171,6 +204,312 @@ function drawBlobPath(g: Graphics, bw: number, bh: number, cornerFrac: number): 
 }
 
 /**
+ * ROUND 2D item 3 — draw one accessory into `accessoryAnchor`'s LOCAL
+ * space: origin (0, 0) is the crown (the anchor's own position IS
+ * `headTopY`, spec §11's existing point), +y toward the feet, matching
+ * every other layer's own convention. `bw`/`bh` are THIS Pip's already-
+ * jittered body dimensions, so an accessory scales sensibly with
+ * silhouette even though nothing here branches on `speciesId` — spec §3's
+ * "no per-species render code" holds exactly like it does for patterns.
+ *
+ * Twelve distinct silhouette families (cap / crown / floating / neck /
+ * shoulder / hanging) so no two are confusable even as small placeholder
+ * shapes (spec §11 "placeholder standard" — simple layered Graphics, not
+ * final art). Colors come from `content/accessories.ts`'s `AccessoryDef`
+ * (content-as-data, spec §3); a couple of small incidental tones (a
+ * lantern's hook, a berry sprig) are hardcoded here exactly the way
+ * `eyeballs`'/`mouth`'s own incidental tones already are above.
+ *
+ * Returns every Graphics node drawn, so the caller can fold them into
+ * `tintable` — an accessory greys out with the rest of the Pip while
+ * sulking, the same as every other layer.
+ */
+/** A fixed dark contour every filled accessory shape strokes with, so a
+ * pale accessory (the shell's cream, the snowcap's near-white) stays
+ * legible against ANY body palette — including a similarly pale/warm one
+ * (Hearthpip's tan, Pebblepip's stone grey) where primary/secondary alone
+ * read as camouflage. Same role `palette.outline` plays on the body blob
+ * itself (spec §11), just accessory-side and palette-independent since an
+ * accessory's wearer is not known at content-authoring time. */
+const ACCESSORY_OUTLINE = "#33302b";
+
+/**
+ * ROUND 2D FIX STAGE — the body-zone constants, in the anchor's LOCAL
+ * space (origin = crown, +y toward the feet), derived from `bh` the same
+ * way every other layer positions itself.
+ *
+ * The landmarks this has to sit between, converted into the same local
+ * space (local = rigY + bh + 2, since the anchor sits at `headTopY`):
+ *
+ *   body top    local 2          eyes    local 0.42·bh
+ *   blush       local 0.58·bh    mouth   local 0.60·bh
+ *   belly ctr   local 0.70·bh    feet    local bh
+ *
+ * The shipped values put `neckY` at 0.85·bh — BELOW the belly's centre,
+ * with the scarf's 20 px tail landing past the feet and floating on the
+ * grass — while the DOM surfaces put the same band at 62 %, which is
+ * exactly mouth height. Both are now derived from these two numbers.
+ */
+const NECK_Y_FRAC = 0.72;
+const SHOULDER_Y_FRAC = 0.68;
+/** How far a `crown` accessory drops so it OVERLAPS the head instead of
+ * hovering over it (local px — the anchor sits 2 px above the body top,
+ * so anything ≥ 3 makes contact). See the tuck at the end of
+ * `drawAccessory`. */
+const CROWN_TUCK_PX = 6;
+
+function drawAccessory(
+  anchor: Container,
+  def: AccessoryDef,
+  bw: number,
+  bh: number,
+): readonly Graphics[] {
+  const primary = def.primaryColor;
+  const secondary = def.secondaryColor ?? def.primaryColor;
+  const parts: Graphics[] = [];
+  const add = (g: Graphics): void => {
+    anchor.addChild(g);
+    parts.push(g);
+  };
+  // Just BELOW the mouth (0.60·bh) and across the top of the belly — where
+  // a scarf sits on a creature with no actual neck. See NECK_Y_FRAC.
+  const neckY = bh * NECK_Y_FRAC;
+  const shoulderY = bh * SHOULDER_Y_FRAC;
+  const sideX = bw * 0.36;
+
+  switch (def.id) {
+    case "leafcap": {
+      const leaf = new Graphics()
+        .ellipse(0, -6, 12, 6.5)
+        .fill(primary)
+        .stroke({ width: 1, color: ACCESSORY_OUTLINE, alpha: 0.4 })
+        .moveTo(-9, -6)
+        .lineTo(9, -6)
+        .stroke({ width: 1.3, color: secondary, alpha: 0.8, cap: "round" });
+      leaf.rotation = -0.3;
+      add(leaf);
+      break;
+    }
+    case "flower": {
+      const flower = new Graphics();
+      for (let i = 0; i < 5; i++) {
+        const a = (Math.PI * 2 * i) / 5 - Math.PI / 2;
+        flower.circle(Math.cos(a) * 6, -10 + Math.sin(a) * 6, 4.2);
+      }
+      flower.fill(primary).stroke({ width: 0.9, color: ACCESSORY_OUTLINE, alpha: 0.35 });
+      flower
+        .circle(0, -10, 3)
+        .fill(secondary)
+        .stroke({ width: 0.8, color: ACCESSORY_OUTLINE, alpha: 0.35 });
+      add(flower);
+      break;
+    }
+    case "scarf": {
+      // Band + KNOT + short tail. The band alone read as a bar drawn
+      // across the face; the knot and the tail are what make it a worn
+      // scarf rather than a stripe, and the tail is kept short enough to
+      // stay above the feet on the shortest silhouette ("wide", hFrac
+      // 0.72): neckY + 16 = 0.72·bh + 16 < bh for every bh the box allows.
+      const bandY = neckY - 5.5;
+      const knotX = bw * 0.17;
+      const scarf = new Graphics()
+        .roundRect(-bw * 0.3, bandY, bw * 0.6, 11, 5.5)
+        .fill(primary)
+        .stroke({ width: 1.4, color: secondary, alpha: 0.65 })
+        .moveTo(knotX - 4, neckY + 4)
+        .lineTo(knotX + 5, neckY + 4)
+        .lineTo(knotX + 3.5, neckY + 16)
+        .lineTo(knotX - 5.5, neckY + 14)
+        .closePath()
+        .fill(primary)
+        .stroke({ width: 1, color: ACCESSORY_OUTLINE, alpha: 0.3 })
+        .circle(knotX, neckY, 5)
+        .fill(secondary)
+        .stroke({ width: 1, color: ACCESSORY_OUTLINE, alpha: 0.4 });
+      add(scarf);
+      break;
+    }
+    case "shellpauldron": {
+      // Fan lines drawn AFTER (on top of) the fill, and every shape gets a
+      // dark contour stroke — a light shell on a light/tan body (Hearthpip,
+      // Pebblepip) was nearly invisible without one; the body blob itself
+      // stays legible against ANY palette the exact same way (`palette.
+      // outline` stroke below in the main body draw, spec §11).
+      // On the FLANK at shoulder height, not on the cheek: the shipped
+      // version sat at neckY − 8 with neckY at 0.85·bh, which on the DOM
+      // surfaces landed squarely on the blush. Also enlarged (7.5 → 9.5
+      // radius) because at Keep scale the old one was invisible.
+      const cx = bw * 0.38;
+      const cy = shoulderY;
+      const shell = new Graphics()
+        .circle(cx, cy, 9.5)
+        .fill(primary)
+        .stroke({ width: 1.3, color: ACCESSORY_OUTLINE, alpha: 0.55 });
+      for (let i = 0; i < 5; i++) {
+        const a = -0.9 + i * 0.42;
+        shell.moveTo(cx, cy).lineTo(cx + Math.cos(a) * 9, cy + Math.sin(a) * 9 - 2);
+      }
+      shell.stroke({ width: 1.4, color: secondary, alpha: 0.85, cap: "round" });
+      add(shell);
+      break;
+    }
+    case "lantern": {
+      // HANGS on the flank, well outside the eye row. The shipped version
+      // started its hook at −0.05·bh — ABOVE the crown — and put the
+      // lantern body straight over the right eye, with the cord running
+      // down between the eyes.
+      const x = bw * 0.4;
+      const topY = bh * 0.42;
+      const bodyY = bh * 0.68;
+      const lantern = new Graphics()
+        .moveTo(x, topY)
+        .lineTo(x, bodyY - 7)
+        .stroke({ width: 1.3, color: "#5a4a30", alpha: 0.85 })
+        .circle(x, bodyY, 10)
+        .fill({ color: secondary, alpha: 0.22 })
+        .roundRect(x - 6, bodyY - 7, 12, 13, 3)
+        .fill(primary)
+        .stroke({ width: 1.2, color: ACCESSORY_OUTLINE, alpha: 0.5 });
+      add(lantern);
+      break;
+    }
+    case "pebblecrown": {
+      const outline = { width: 0.9, color: ACCESSORY_OUTLINE, alpha: 0.4 } as const;
+      const cairn = new Graphics()
+        .ellipse(0, -3, 8, 4.5)
+        .fill(primary)
+        .stroke(outline)
+        .ellipse(1, -9, 6, 3.6)
+        .fill(secondary)
+        .stroke(outline)
+        .ellipse(-0.5, -14, 4, 2.6)
+        .fill(primary)
+        .stroke(outline);
+      add(cairn);
+      break;
+    }
+    case "berrycrown": {
+      const berries = new Graphics();
+      for (const [bx, by] of [
+        [-9, -4],
+        [0, -8],
+        [9, -4],
+      ] as const) {
+        berries.circle(bx, by, 4.2);
+      }
+      berries.fill(primary).stroke({ width: 0.9, color: ACCESSORY_OUTLINE, alpha: 0.4 });
+      berries.ellipse(0, -12, 5, 2.6).fill({ color: secondary, alpha: 0.85 });
+      add(berries);
+      break;
+    }
+    case "snowcap": {
+      // Snowcap's own colors are deliberately pale (spec bible: an icy
+      // cap) — exactly the "pale on pale" camouflage content/palette.ts's
+      // module doc warns about, since Snowpip/Frostpip's OWN body tones
+      // are just as pale. A hairline ACCESSORY_OUTLINE (in addition to the
+      // colored stroke below) keeps the silhouette readable regardless.
+      const cap = new Graphics()
+        .roundRect(-11, -12, 22, 10, 5)
+        .fill(primary)
+        .stroke({ width: 1.2, color: secondary, alpha: 0.7 })
+        .roundRect(-11, -12, 22, 10, 5)
+        .stroke({ width: 0.8, color: ACCESSORY_OUTLINE, alpha: 0.3 });
+      for (const a of [0, Math.PI / 3, (2 * Math.PI) / 3]) {
+        cap
+          .moveTo(-Math.cos(a) * 5, -16 - Math.sin(a) * 5)
+          .lineTo(Math.cos(a) * 5, -16 + Math.sin(a) * 5);
+      }
+      cap.stroke({ width: 1.1, color: secondary, alpha: 0.85, cap: "round" });
+      add(cap);
+      break;
+    }
+    case "cloudwisp": {
+      const cloud = new Graphics();
+      // Authored lower than the other crown shapes (round 2D fix stage):
+      // even with CROWN_TUCK_PX the original y's left this one hovering
+      // clear of the skull, which `spriteResolver.test.ts` now catches.
+      for (const [cx, cy, r] of [
+        [-7, -8, 6],
+        [2, -11, 7],
+        [10, -7, 5],
+      ] as const) {
+        cloud.circle(cx, cy, r);
+      }
+      cloud
+        .fill({ color: primary, alpha: 0.95 })
+        .stroke({ width: 0.9, color: ACCESSORY_OUTLINE, alpha: 0.25 });
+      add(cloud);
+      break;
+    }
+    case "emberbead": {
+      // A pendant on a SHORT cord that reads as going round the neck —
+      // the shipped version drew its cord from −0.02·bh (just under the
+      // crown) all the way down across the face to a bead on the belly.
+      const y = neckY + 3;
+      const bead = new Graphics()
+        .moveTo(-bw * 0.13, y - 11)
+        .lineTo(0, y - 3)
+        .lineTo(bw * 0.13, y - 11)
+        .stroke({ width: 1.2, color: "#6b4a30", alpha: 0.75 })
+        .circle(0, y, 8)
+        .fill({ color: secondary, alpha: 0.22 })
+        .circle(0, y, 4.8)
+        .fill(primary)
+        .stroke({ width: 0.9, color: ACCESSORY_OUTLINE, alpha: 0.45 });
+      add(bead);
+      break;
+    }
+    case "acorncap": {
+      const acorn = new Graphics()
+        .ellipse(0, -9, 10, 6.5)
+        .fill(primary)
+        .stroke({ width: 1.2, color: secondary, alpha: 0.6 })
+        .roundRect(-1.6, -17, 3.2, 6, 1.5)
+        .fill(secondary);
+      add(acorn);
+      break;
+    }
+    default: {
+      // "bowtie" (also the safe fallback for any future id this switch
+      // hasn't been taught yet — visible-but-simple, never invisible,
+      // matching `patternKind`'s own unknown-id precedent).
+      const y = neckY;
+      const bowOutline = { width: 0.9, color: ACCESSORY_OUTLINE, alpha: 0.35 } as const;
+      const bow = new Graphics()
+        .moveTo(-1, y)
+        .lineTo(-11, y - 6)
+        .lineTo(-11, y + 6)
+        .closePath()
+        .fill(primary)
+        .stroke(bowOutline)
+        .moveTo(1, y)
+        .lineTo(11, y - 6)
+        .lineTo(11, y + 6)
+        .closePath()
+        .fill(primary)
+        .stroke(bowOutline)
+        .circle(0, y, 3)
+        .fill(secondary)
+        .stroke(bowOutline);
+      add(bow);
+      break;
+    }
+  }
+  // ROUND 2D FIX STAGE — crown accessories are TUCKED DOWN onto the head.
+  // Every one of them was authored with its lowest edge at or above local
+  // y = 0, i.e. at or above `headTopY`, which is itself 2 px clear of the
+  // body — so all seven read as FLOATING, with a band of background
+  // showing between the hat and the skull. Dropping the whole family by a
+  // few px (rather than re-tuning seven shapes independently) makes them
+  // overlap the crown and sit ON the head, and shortens the family's
+  // upward overshoot past the fixed box by the same amount.
+  if (def.slot === "crown") {
+    for (const part of parts) part.y += CROWN_TUCK_PX;
+  }
+  return parts;
+}
+
+/**
  * Compose the placeholder Pip for `(genome, stage)` (spec §11).
  * Pure construction: no timers, no state reads — the scene drives blinks,
  * poses, and lifecycles.
@@ -180,16 +519,28 @@ function drawBlobPath(g: Graphics, bw: number, bh: number, cornerFrac: number): 
  * look (`content/palette.ts`'s per-species `variants` map is keyed by
  * BOTH birth palette ids and gift-variant ids, so this is the same
  * lookup, just a different key).
+ *
+ * `jitterSeed` (round 2D item 4): a stable string seed for `computeJitter`
+ * — pass the Pip's own id when one exists (unique per Pip, so even two
+ * Pips with an identical rolled genome still look distinct; `render/
+ * keepScene.ts` does this). Falls back to a hash of the genome's own
+ * fields when omitted, so every caller still gets a deterministic,
+ * non-uniform look with zero required changes (this param is optional).
  */
 export function resolvePipSprite(
   genome: TraitGenome,
   stage: LifeStage,
   variantId?: string,
+  jitterSeed?: string,
 ): PipSprite {
   const silhouette = resolveSilhouette(genome.speciesId);
-  const metrics = SILHOUETTES[silhouette];
-  const bw = PIP_BODY_WIDTH * metrics.wFrac;
-  const bh = PIP_BODY_HEIGHT * metrics.hFrac;
+  const metrics = silhouetteMetrics(silhouette);
+  const jitter = computeJitter(jitterSeed ?? genomeJitterSeed(genome));
+  // Shrink-only (Jitter's own doc): safe for every silhouette, including
+  // "round"/"chunky"/"wide" which already draw at wFrac = 1.0 (the full
+  // box width) — see JITTER_MAX_BODY_SHRINK's doc.
+  const bw = PIP_BODY_WIDTH * metrics.wFrac * (1 - jitter.bodyShrinkW);
+  const bh = PIP_BODY_HEIGHT * metrics.hFrac * (1 - jitter.bodyShrinkH);
   const paletteId = variantId ?? genome.palette;
   const palette = resolvePipPalette(genome.speciesId, paletteId);
   const view = new Container();
@@ -221,6 +572,11 @@ export function resolvePipSprite(
   const kind = patternKind(genome.pattern);
   if (kind !== "none") {
     const overlay = new Graphics();
+    // ROUND 2D item 4 — marking-placement jitter: a tiny content-only
+    // offset (the mask below stays put), small enough that every pattern's
+    // existing "kept away from the edges" margin (see each kind's own
+    // comment) absorbs it without visibly clipping.
+    overlay.position.set(jitter.markingDxPx, jitter.markingDyPx);
     if (kind === "dots") {
       for (const [x, y, r] of SPECKLES) {
         overlay.circle(x, y, r);
@@ -376,17 +732,30 @@ export function resolvePipSprite(
   // Big eyes — in their own pivoted container so blinks scale in place.
   // `eyeScale` (silhouette metric, e.g. tiny's 1.15) is a multiplier laid
   // on top of the openness scale, not a substitute for it.
+  //
+  // ROUND 2D item 4 — eye shape/spacing jitter: `eyeGapX` widens/narrows
+  // the gap symmetrically; `eyeRx`/`eyeRy` (drawn as an ellipse — a
+  // per-axis radius delta IS "eye shape" — a circle has none) vary
+  // independently, so a Pip can read as slightly wide-eyed or
+  // slightly squinty. `eyeRowYPx` nudges the whole row up/down. All
+  // three are ≤ JITTER_MAX_EYE_PX, so at their extreme the eyeballs
+  // still sit well inside even the "tiny" silhouette's body width —
+  // proven in spriteResolver.test.ts. Zero jitter reproduces the exact
+  // pre-2D geometry (circle r=9.5, gap 21, y −bh·0.58).
   const eyeScale = metrics.eyeScale;
-  const eyeY = -bh * 0.58;
+  const eyeY = -bh * 0.58 + jitter.eyeRowYPx;
   const eyes = new Container();
   eyes.position.set(0, eyeY);
   eyes.scale.set(eyeScale);
+  const eyeGapX = 21 + jitter.eyeSpacingPx;
+  const eyeRx = 9.5 + jitter.eyeRadiusXPx;
+  const eyeRy = 9.5 + jitter.eyeRadiusYPx;
   const eyeballs = new Graphics()
-    .circle(-21, 0, 9.5)
-    .circle(21, 0, 9.5)
+    .ellipse(-eyeGapX, 0, eyeRx, eyeRy)
+    .ellipse(eyeGapX, 0, eyeRx, eyeRy)
     .fill("#403a4d")
-    .circle(-24, -3, 3.2)
-    .circle(18, -3, 3.2)
+    .circle(-eyeGapX - 3, -3, 3.2)
+    .circle(eyeGapX - 3, -3, 3.2)
     .fill({ color: 0xffffff, alpha: 0.92 });
   eyes.addChild(eyeballs);
   rig.addChild(eyes);
@@ -401,6 +770,20 @@ export function resolvePipSprite(
   tintable.push(mouth);
 
   // Accent sprout — the species' one vibrant note (spec §11).
+  //
+  // ROUND 2D FIX STAGE: the sprout and every `crown` accessory occupy the
+  // same few square pixels at the top of the head, and the shipped pass
+  // let them collide — a leaf cap cut straight through an orange sprout,
+  // while a red sprout appeared to sit on top of a snow cap (not a
+  // z-order bug: the accessory is always drawn after, but the sprout's
+  // leaf simply reached HIGHER than the cap). Displacing the sprout
+  // sideways when a crown accessory is worn makes it emerge from beside
+  // the hat instead of through it, and the layering then reads
+  // consistently for all seven. Deliberately sideways-only: raising it
+  // would push the sprout — already the tallest thing on a Pip — further
+  // past the fixed box.
+  const accessoryDef = resolveAccessory(genome.accessoryId);
+  const wearsCrown = accessoryDef?.slot === "crown";
   const headTopY = -bh - 2;
   const sprout = new Graphics()
     .moveTo(0, headTopY + 4)
@@ -410,14 +793,19 @@ export function resolvePipSprite(
     .fill(palette.accent)
     .ellipse(-1, headTopY - 12, 5.5, 3.2)
     .fill({ color: palette.accent, alpha: 0.85 });
-  sprout.rotation = -0.12;
+  sprout.rotation = wearsCrown ? 0.24 : -0.12;
+  if (wearsCrown) sprout.position.set(7, 0);
   rig.addChild(sprout);
   tintable.push(sprout);
 
-  // Accessory anchor (spec §11) — empty, at the crown.
+  // Accessory anchor (spec §11) — at the crown; round 2D item 3 is the
+  // first thing that ever attaches to it (see drawAccessory's doc).
   const accessoryAnchor = new Container();
   accessoryAnchor.position.set(0, headTopY);
   rig.addChild(accessoryAnchor);
+  if (accessoryDef !== null) {
+    tintable.push(...drawAccessory(accessoryAnchor, accessoryDef, bw, bh));
+  }
 
   if (stage === LifeStage.Pipling) {
     view.scale.set(PIPLING_SCALE);

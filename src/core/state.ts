@@ -68,6 +68,16 @@ import { HOUR_MS, tuning as contentTuning } from "../content/tuning";
 import { PERSONALITY_IDS } from "../content/personalities";
 import { species as contentSpecies } from "../content/species";
 import { foods as contentFoods } from "../content/foods";
+// ROUND 2D item 3 — the accessory roll pool (content/accessories.ts's own
+// module doc has the full "why a weighted flat list" reasoning). This is
+// the one line the sibling round-2D pass on this file deliberately left
+// for "a later content/render pass" (core/pips/genome.ts's `pickAccessory`
+// doc comment): `rollGenome`'s accessory roll already always fires and
+// resolves to `null` on an empty pool, so handing it a real, weighted pool
+// here is the ENTIRE change needed to make accessories roll for real —
+// zero changes to genome.ts, and the roll count stays fixed at 6 either
+// way (core/rng.ts's `pick`/`next` both consume exactly one draw).
+import { ACCESSORY_IDS, ACCESSORY_ROLL_POOL } from "../content/accessories";
 import { ROSTER_FULL_MESSAGE, rosterFullMaxMessage } from "../content/eggs";
 import { keepLevels as contentKeepLevels, keepUpgrades, ROSTER_UPGRADE_ID } from "../content/keep";
 import { placeables as contentPlaceables } from "../content/placeables";
@@ -136,7 +146,8 @@ import type { BreedRefusalReason } from "./pips/breeding";
 import { performCare } from "./pips/care";
 import type { CareAction, CareOutcome, CooldownsByPip } from "./pips/care";
 import type { LastLineIndexByPip } from "./pips/dialogue";
-import { createPipFromGenome, rollGenome } from "./pips/genome";
+import { NAME_STREAM, createPipFromGenome, rollGenome, rollPipName } from "./pips/genome";
+import { NAME_POOL } from "../content/names";
 import type { GenomeSpeciesEntry, GenomeSpeciesRegistry } from "./pips/genome";
 // ROUND 2B (content bible §3.6, orchestrator ruling #1 — biome-themed egg
 // pools): a value import of content/expeditions, same established pattern
@@ -753,7 +764,18 @@ export type GameAction =
    * see, and a setting that only helps the NEXT Pip would be a cruel joke.
    * Turning it off again simply lets the world resume; nothing is owed and
    * nothing is punished. Idempotent at the same value. */
-  | { readonly type: "SET_QUIET_KEEP"; readonly on: boolean; readonly at: number };
+  | { readonly type: "SET_QUIET_KEEP"; readonly on: boolean; readonly at: number }
+  /**
+   * ROUND 2D (docs/BACKLOG.md "Round 2D" item 1) — the player types a
+   * new name for a roster Pip (focus view, not prominent — "the Pip *is*
+   * Pipsqueak, you didn't author it"). Validated by `validatePipName`
+   * (trim, reject empty, length-capped); an unknown `pipId` or an invalid
+   * `name` is a silent no-op, same contract as `SET_ACTIVE_PIP` — the UI
+   * pre-validates with the same pure function before ever dispatching.
+   * Pure: no time, no rng, and (deliberately) no `at` — a display-name
+   * edit is not a timed or randomized event.
+   */
+  | { readonly type: "RENAME_PIP"; readonly pipId: PipId; readonly name: string };
 
 /**
  * Starter hunger (spec §10.1: "Hunger bar is visibly at ~60" so the
@@ -762,6 +784,34 @@ export type GameAction =
  * work, which is why it lives here and not in content/tuning.ts.
  */
 export const STARTER_HUNGER = 60;
+
+/**
+ * ROUND 2D — player-typed Pip name bounds (RENAME_PIP). A structural UI
+ * limit, not a balancing tunable — same reasoning as `STARTER_HUNGER`
+ * above for why it lives here rather than in content/tuning.ts. 24 chars
+ * comfortably covers every rolled `NAME_POOL` entry (longest: 12) with
+ * room to spare for a player's own choice.
+ */
+export const PIP_NAME_MAX_LENGTH = 24;
+
+export type PipNameValidation =
+  | { readonly ok: true; readonly name: string }
+  | { readonly ok: false; readonly reason: "empty" | "tooLong" };
+
+/**
+ * Trim, then reject empty or over-length (spec item 5: "validate length,
+ * trim, reject empty"). Exported so the UI can pre-validate with the
+ * exact same pure function RENAME_PIP's reducer arm uses internally
+ * (the working agreement's "UI pre-validates with the same pure
+ * function" precedent) — inline errors never drift from what the
+ * reducer will actually accept.
+ */
+export function validatePipName(raw: string): PipNameValidation {
+  const name = raw.trim();
+  if (name.length === 0) return { ok: false, reason: "empty" };
+  if (name.length > PIP_NAME_MAX_LENGTH) return { ok: false, reason: "tooLong" };
+  return { ok: true, name };
+}
 
 /**
  * Onboarding progress (spec §10/§10.1): the guided first-90-seconds
@@ -781,35 +831,101 @@ export interface OnboardingState {
   readonly step: OnboardingStep;
 }
 
+/** One starter candidate's species-derived fields (round 2D). */
+export interface StarterCandidateSpecies {
+  readonly speciesId: string;
+  readonly palettes: readonly string[];
+  readonly patterns: readonly string[];
+}
+
 /** Everything createNewGame reads from content, injectable for tests.
- * Defaults: the mosspip species entry + the five personalities. */
+ * Defaults: three distinct species (round 2D) + the five personalities.
+ *
+ * `speciesId`/`palettes`/`patterns` are the PRE-2D shape,
+ * kept (not removed) so existing test content that pins a single species
+ * across the whole trio — `app/appClock.test.ts` / `ui/debugMenu.test.ts`'s
+ * `CURIOUS_ONLY` fixture — still compiles and behaves identically: with
+ * `candidateSpecies` absent, every candidate falls back to these four
+ * fields (see `candidateSpeciesFor`). `defaultStarterContent()` always
+ * supplies `candidateSpecies` with three DISTINCT entries. */
 export interface StarterContent {
   readonly speciesId: string;
   readonly palettes: readonly string[];
   readonly patterns: readonly string[];
-  readonly accessorySlots: number;
   readonly personalityIds: readonly string[];
   readonly startingInventory: Readonly<Record<string, number>>;
+  /**
+   * ROUND 2D (docs/BACKLOG.md "Round 2D" item 2, spec §7.1 amended:
+   * "same species, three distinct palettes" — written when Mosspip was
+   * the only species — retired in favor of three DIFFERENT species, each
+   * with its own silhouette/palette family/personality, so the first
+   * decision a player makes is a real one). Index-aligned with the
+   * candidate slot; absent for a given index (or entirely) falls back to
+   * `speciesId`/`palettes`/`patterns` above.
+   */
+  readonly candidateSpecies?: readonly StarterCandidateSpecies[];
 }
 
-/** Starter species (spec §10.1 — the onboarding starter is a Mosspip). */
-const STARTER_SPECIES_ID = "mosspip";
+/**
+ * ROUND 2D — the starter trio's three species (spec §7.1 amended).
+ * Mosspip stays candidate 0 for continuity: every pre-2D fixture/test
+ * that defaults `starterChoice` to 0 (createNewGame's own default) still
+ * gets a Mosspip starter. Pebblepip (chunky, rock) and Tidepip (wide,
+ * water) are the other two common-rarity base species — deliberately
+ * common-tier, like Mosspip: a starter is a free pick outside the rarity
+ * economy, and handing out an uncommon/rare species for free would be
+ * inconsistent with what an egg of that rarity is worth everywhere else.
+ * Three silhouettes (round/chunky/wide), three palette families, three
+ * biome affinities — maximally distinct on every axis content/species.ts
+ * documents (content-bible §1.1).
+ */
+const STARTER_SPECIES_IDS: readonly [string, string, string] = [
+  "mosspip",
+  "pebblepip",
+  "tidepip",
+];
 
-function defaultStarterContent(): StarterContent {
-  const starter = contentSpecies[STARTER_SPECIES_ID];
-  if (starter === undefined) {
+function starterCandidateSpeciesFrom(speciesId: string): StarterCandidateSpecies {
+  const entry = contentSpecies[speciesId];
+  if (entry === undefined) {
     throw new Error(
-      `createNewGame: starter species "${STARTER_SPECIES_ID}" missing from the species registry`,
+      `createNewGame: starter species "${speciesId}" missing from the species registry`,
     );
   }
   return {
-    speciesId: starter.id,
-    palettes: starter.sprite.palettes,
-    patterns: starter.sprite.patterns,
-    accessorySlots: starter.sprite.accessorySlots,
+    speciesId: entry.id,
+    palettes: entry.sprite.palettes,
+    patterns: entry.sprite.patterns,
+  };
+}
+
+function defaultStarterContent(): StarterContent {
+  const candidateSpecies = STARTER_SPECIES_IDS.map(starterCandidateSpeciesFrom);
+  const first = candidateSpecies[0] as StarterCandidateSpecies;
+  return {
+    speciesId: first.speciesId,
+    palettes: first.palettes,
+    patterns: first.patterns,
     personalityIds: PERSONALITY_IDS,
     startingInventory: contentTuning.startingInventory,
+    candidateSpecies,
   };
+}
+
+/** Resolve candidate `index`'s species fields: `content.candidateSpecies`
+ * when present, else the pre-2D single-species fallback (see
+ * `StarterContent`'s doc comment). */
+function candidateSpeciesFor(
+  content: StarterContent,
+  index: number,
+): StarterCandidateSpecies {
+  return (
+    content.candidateSpecies?.[index] ?? {
+      speciesId: content.speciesId,
+      palettes: content.palettes,
+      patterns: content.patterns,
+    }
+  );
 }
 
 /** How many starter Pips the onboarding offers (spec §7.1: three). */
@@ -871,42 +987,130 @@ function takeDistinct(
   return pool.splice(stream.int(pool.length), 1)[0] as string;
 }
 
-/** The shared genesis-roll body: exactly 3 rolls per candidate
- * (personality, palette, pattern — in that order), 9 total, regardless
- * of content or outcomes (cursor determinism, spec §2 rule 3). */
+/**
+ * The shared genesis-roll body: exactly 4 rolls per candidate
+ * (personality, palette, pattern, accessory — in that order), 12 total,
+ * regardless of content or outcomes (cursor determinism, spec §2 rule 3).
+ *
+ * ROUND 2D: palette/pattern now draw from CANDIDATE i's OWN species
+ * (`candidateSpeciesFor`), not a single shared species-wide pool —
+ * "distinct across the trio" stopped being the right invariant for
+ * palette the moment the three candidates became three different
+ * species (their palette id lists don't even overlap in the real
+ * registry). Personality stays a global `takeDistinct` pool exactly as
+ * before, so the trio's three personalities are still guaranteed
+ * distinct. The roll COUNT and ORDER are unchanged (still personality,
+ * palette, pattern, one roll each — `takeDistinct`'s and `pick`'s single
+ * `int()` call are cursor-identical for a content list of length 1, so
+ * every pre-2D fixture that pins a single-value `palettes`/`patterns`
+ * list — `CURIOUS_ONLY` in app/appClock.test.ts and ui/debugMenu.test.ts —
+ * still lands on the exact same cursor sequence and the exact same
+ * forced values).
+ */
 function rollCandidatesFromStream(
   genesis: RngStream,
   content: StarterContent,
 ): TraitGenome[] {
   const personalityPool = [...content.personalityIds];
-  const palettePool = [...content.palettes];
+  const accessoryPool = [...ACCESSORY_IDS];
   const candidates: TraitGenome[] = [];
   for (let i = 0; i < STARTER_CANDIDATE_COUNT; i++) {
+    const candidateSpecies = candidateSpeciesFor(content, i);
     const personalityId = takeDistinct(
       genesis,
       personalityPool,
       content.personalityIds,
     );
-    const palette = takeDistinct(genesis, palettePool, content.palettes);
-    const pattern = genesis.pick(content.patterns);
+    const palette = genesis.pick(candidateSpecies.palettes);
+    const pattern = genesis.pick(candidateSpecies.patterns);
+    // ROUND 2D FIX STAGE — every starter wears an accessory, and all
+    // three wear DIFFERENT ones.
+    //
+    // The first pass built candidate genomes with no `accessoryId` at
+    // all, so the starter — the Pip a player keeps longest and cares
+    // about most — was permanently bare, and the pick screen taught
+    // nothing about the axis. `takeDistinct` (the same helper the trio's
+    // personalities already use) costs exactly one roll like any other
+    // pick, so the per-candidate roll count stays fixed; drawing from
+    // `ACCESSORY_IDS` rather than `ACCESSORY_ROLL_POOL` deliberately
+    // omits the "none" sentinel, because "one of these three is wearing
+    // a leaf cap" is the clearest possible statement that Pips are
+    // individuals, and the first screen of the game is where it matters.
+    const accessoryId = takeDistinct(genesis, accessoryPool, ACCESSORY_IDS);
     candidates.push({
-      speciesId: content.speciesId,
+      speciesId: candidateSpecies.speciesId,
       palette,
       pattern,
-      accessorySlots: content.accessorySlots,
       personalityId,
-      // Starters are never shiny (and cost zero extra rolls — the 3-roll
+      // Starters are never shiny (and cost zero extra rolls — the 4-roll
       // per-candidate genesis contract stays exact): the rare variant is
       // a hatch-day surprise, not an onboarding option.
       shiny: false,
+      accessoryId,
     });
   }
   return candidates;
 }
 
 /**
- * The onboarding starter trio (spec §7.1/§10.1.1): three candidates of
- * the SAME species with three DISTINCT palettes and DISTINCT
+ * ROUND 2D item 1, FIX STAGE — one individual name per starter candidate,
+ * all three DISTINCT.
+ *
+ * The first pass rolled ONE name and put it on all three cards, on the
+ * reasoning that "whichever Pip you pick, this is who they become". What
+ * that actually rendered was the round's own bug report, verbatim: four
+ * cold boots produced "Bracken / Bracken / Bracken", "Sorrel / Sorrel /
+ * Sorrel"… — the "Mosspip / Mosspip / Mosspip" complaint with a different
+ * word. The pick screen is the FIRST screen of the game; three copies of
+ * one name there teaches the player that Pips are interchangeable before
+ * they have met a single one.
+ *
+ * CURSOR CONTRACT (spec §2 rule 3, the property `rollCandidatesFromStream`
+ * documents and this must not break): exactly `STARTER_CANDIDATE_COUNT`
+ * draws from `NAME_STREAM`, ALWAYS, in a fixed order, BEFORE anything
+ * knows which candidate won. `createNewGame` then indexes the finished
+ * array — it never branches the rolling — so the cursor advances
+ * identically whichever Pip the player picks, exactly as it does for the
+ * genesis stream. (Each draw is one `stream.pick`; `usedNames` only
+ * narrows WHICH array is drawn from, never how many draws happen — see
+ * `rollPipName`'s own doc.)
+ */
+function rollStarterNamesFromStream(
+  stream: RngStream,
+  pool: readonly string[] = NAME_POOL,
+): readonly string[] {
+  const used = new Set<string>();
+  const names: string[] = [];
+  for (let i = 0; i < STARTER_CANDIDATE_COUNT; i++) {
+    const name = rollPipName(stream, used, pool);
+    // Fed back before the next draw so the trio never shows one name
+    // twice (the same "narrow the pool" trick `takeDistinct` uses for
+    // personalities). A pool smaller than the trio would repeat — pool
+    // size is content-validated well above 100 (content/names.test.ts).
+    used.add(name);
+    names.push(name);
+  }
+  return names;
+}
+
+/**
+ * The three names the starter trio will answer to, index-aligned with
+ * `rollStarterCandidates(seed)` — the literal draws `createNewGame` makes,
+ * so the pick screen shows the real name, never a guess (see
+ * `rollStarterNamesFromStream`'s cursor contract). Pure: same seed, same
+ * three names, forever.
+ */
+export function rollStarterNames(
+  seed: number,
+  pool: readonly string[] = NAME_POOL,
+): readonly string[] {
+  return rollStarterNamesFromStream(createRng(seed).stream(NAME_STREAM), pool);
+}
+
+/**
+ * The onboarding starter trio (spec §7.1/§10.1.1, amended round 2D):
+ * three candidates of three DISTINCT species (`STARTER_SPECIES_IDS`),
+ * each with its own silhouette/palette family, plus DISTINCT
  * personalities, rolled deterministically from the seed's genesis
  * stream — the same rolls createNewGame makes, so the trio the player
  * saw is exactly the trio the save was born from. Pure: same seed, same
@@ -923,14 +1127,25 @@ export function rollStarterCandidates(
 }
 
 /**
- * A brand-new save (spec §10.1, §6.3): the starter mosspip the player
- * picked from the trio, plus 3 Berries for the guided first Feed.
+ * A brand-new save (spec §10.1, §6.3): the starter Pip the player picked
+ * from the trio, plus 3 Berries for the guided first Feed.
  *
  * Genesis rolls, in fixed order (cursor determinism — same seed, same
  * trio): the full three-candidate roll of rollStarterCandidates, whose
  * advanced cursor is captured in `rngState` — the cursor is identical
  * whichever candidate wins, so the pick itself never perturbs any
  * future roll. `starterChoice` indexes the trio (clamped, default 0).
+ *
+ * ROUND 2D: THREE individual names are then rolled from `NAME_STREAM` —
+ * one per candidate, all distinct — and the winner's is taken by index.
+ * The rolling happens BEFORE and INDEPENDENT of `index` (it never
+ * branches on which candidate won), so it costs exactly
+ * `STARTER_CANDIDATE_COUNT` more rolls, unconditionally, and the
+ * "identical cursor whichever candidate wins" property above extends to
+ * it for free. `ui/onboarding.ts` shows the same three names on the pick
+ * cards via `rollStarterNames(seed)`, which is this same draw. A fresh
+ * game has no roster/Long Meadow/Album yet, so there is nothing else to
+ * dedupe against.
  *
  * The starter is an ADULT: spec §10.1 sends it on the guided first
  * expedition within the first 90 seconds, and Piplings refuse
@@ -951,6 +1166,9 @@ export function createNewGame(
     candidates.length - 1,
   );
   const genome = candidates[index] as TraitGenome;
+  const name = rollStarterNamesFromStream(rng.stream(NAME_STREAM))[
+    index
+  ] as string;
 
   const needs: PipNeeds = {
     hunger: STARTER_HUNGER,
@@ -964,7 +1182,7 @@ export function createNewGame(
   // differs only in its Adult stage and onboarding hunger.
   const starter = createPipFromGenome(genome, {
     id: starterId,
-    name: "Mosspip",
+    name,
     hatchedAt: now,
     lifeStage: LifeStage.Adult,
     needs,
@@ -1270,6 +1488,24 @@ function pitySpeciesPoolFor(expeditionId: string): readonly PitySpeciesEntry[] {
   return ids
     .map((id) => PITY_SPECIES_VIEW[id])
     .filter((entry): entry is PitySpeciesEntry => entry !== undefined);
+}
+
+/**
+ * ROUND 2D (docs/BACKLOG.md "Round 2D" item 3) — every name currently
+ * visible to the player: the active roster, the Long Meadow, and the
+ * Album's frozen first-catch portraits ("avoid duplicate names against
+ * the roster + Long Meadow + Album at roll time"). Read-only, structural
+ * — the caller hands the result to `rollPipName`'s `usedNames` parameter.
+ */
+function collectUsedNames(state: GameState): Set<string> {
+  const used = new Set<string>();
+  for (const p of Object.values(state.pips)) used.add(p.name);
+  for (const record of Object.values(state.sanctuary.pips)) used.add(record.pip.name);
+  for (const entry of Object.values(state.pipdex.entries)) {
+    const portraitName = entry.firstPortrait?.name;
+    if (portraitName !== undefined) used.add(portraitName);
+  }
+  return used;
 }
 
 /** Everything a bounty needs to know about the player's CURRENT
@@ -2638,18 +2874,23 @@ function baseReducer(state: GameState, action: GameAction): GameState {
       // §5.4/§6.1/§6.3/§9.1) — a LINEAGE or BRED egg's genome/level/
       // resistances were already fully resolved at find/breed time
       // (`core/pips/breeding.ts`'s module doc: never re-derived at
-      // hatch). NO RNG roll, NO pity ladder, NO biome pool — "lineage/bred
-      // eggs bypass both channels entirely" (bible §6.3/§9.1): this branch
-      // never touches `rngState` or `eggPity`, which is what makes that
-      // true by construction rather than by convention.
+      // hatch). NO GENOME roll, NO pity ladder, NO biome pool —
+      // "lineage/bred eggs bypass both channels entirely" (bible
+      // §6.3/§9.1). ROUND 2D adds exactly ONE roll this branch DOES now
+      // make: the hatchling's individual name (`NAME_STREAM`, disjoint
+      // from `EGG_STREAM`/`GENESIS_STREAM` by construction — see
+      // `rollPipName`'s doc comment) — so this branch now touches
+      // `rngState` for that one roll, but still never touches `eggPity`.
       if (egg.lineageGenome !== undefined) {
         const genome = egg.lineageGenome;
         const level = egg.lineageLevel ?? 1;
         const lineagePipId: PipId = `pip-${state.nextPipNumber}`;
+        const rng = createRngFromState(state.seed, state.rngState);
+        const name = rollPipName(rng.stream(NAME_STREAM), collectUsedNames(state));
         const hatchling: PipState = {
           ...createPipFromGenome(genome, {
             id: lineagePipId,
-            name: contentSpecies[genome.speciesId]?.name ?? genome.speciesId,
+            name,
             hatchedAt: action.at,
             lifeStage: LifeStage.Pipling,
           }),
@@ -2677,6 +2918,7 @@ function baseReducer(state: GameState, action: GameAction): GameState {
           rosterOrder: [...state.rosterOrder, lineagePipId],
           eggs: state.eggs.filter((e) => e.id !== egg.id),
           nextPipNumber: state.nextPipNumber + 1,
+          rngState: rng.getState(),
           lastHatchOutcome: { ok: true, eggId: egg.id, pipId: lineagePipId, at: action.at },
           pipdex: lineagePipdex,
         };
@@ -2687,7 +2929,7 @@ function baseReducer(state: GameState, action: GameAction): GameState {
       // threshold, THIS hatch is guaranteed that tier — the species
       // registry handed to rollGenome narrows further (to the rarest-tier
       // subset, kindness-tiebreaking toward not-yet-caught), which costs
-      // ZERO extra rolls (rollGenome always consumes exactly 5 — see
+      // ZERO extra rolls (rollGenome always consumes exactly 6 — see
       // progression/pity.ts's module doc) so the cursor contract holds
       // exactly like the biome-pool patch above.
       const pityBiomeId = egg.sourceExpeditionId;
@@ -2731,14 +2973,26 @@ function baseReducer(state: GameState, action: GameAction): GameState {
           speciesPool = guaranteedRegistry;
         }
       }
-      const genome = rollGenome(
-        rng.stream(EGG_STREAM),
-        speciesPool !== undefined ? { species: speciesPool } : {},
-      );
+      const genome = rollGenome(rng.stream(EGG_STREAM), {
+        ...(speciesPool !== undefined ? { species: speciesPool } : {}),
+        // ROUND 2D item 3 — see the import comment above: this is the
+        // whole seam. Cursor advance is unaffected either way (pickAccessory
+        // consumes exactly one `stream.next()`-equivalent draw whether the
+        // pool is empty or not), so this changes ONLY what accessory a
+        // hatchling ends up wearing, never any RNG cursor guarantee this
+        // function already pins (biome pool / pity parity, tested above).
+        accessoryIds: ACCESSORY_ROLL_POOL,
+      });
+      // ROUND 2D — an individual name (docs/BACKLOG.md "Round 2D" item
+      // 1), rolled from the SAME `rng` (so `rngState: rng.getState()`
+      // below captures it too) but a DISJOINT stream from `EGG_STREAM` —
+      // this roll never perturbs the egg-genome cursor, so the pity/
+      // biome-pool cursor-parity guarantees above are untouched.
+      const name = rollPipName(rng.stream(NAME_STREAM), collectUsedNames(state));
       const pipId: PipId = `pip-${state.nextPipNumber}`;
       const pipling = createPipFromGenome(genome, {
         id: pipId,
-        name: contentSpecies[genome.speciesId]?.name ?? genome.speciesId,
+        name,
         hatchedAt: action.at,
         lifeStage: LifeStage.Pipling,
       });
@@ -3380,6 +3634,22 @@ function baseReducer(state: GameState, action: GameAction): GameState {
         pips = { ...pips, [id]: { ...pip, ailment: null } };
       }
       return pips === state.pips ? { ...state, settings } : { ...state, pips, settings };
+    }
+
+    case "RENAME_PIP": {
+      // ROUND 2D (docs/BACKLOG.md "Round 2D" item 5) — player data, not a
+      // roll: validate, then a plain field replace. Unknown pipId, an
+      // invalid name, or renaming to the name it already has are all
+      // silent no-ops, returned BY REFERENCE (same "no news" contract
+      // SET_ACTIVE_PIP and SET_QUIET_KEEP already use).
+      const validated = validatePipName(action.name);
+      if (!validated.ok) return state;
+      const target = state.pips[action.pipId];
+      if (target === undefined || target.name === validated.name) return state;
+      return {
+        ...state,
+        pips: { ...state.pips, [action.pipId]: { ...target, name: validated.name } },
+      };
     }
 
     case "SET_DAY_OFFSET": {

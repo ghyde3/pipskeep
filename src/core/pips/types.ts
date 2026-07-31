@@ -55,10 +55,22 @@ export const PipActivity = {
 export type PipActivity = (typeof PipActivity)[keyof typeof PipActivity];
 
 /**
- * Trait genome (spec §7.3): `{ species, palette, pattern, accessorySlots,
- * personality }`. Field names carry an `Id` suffix where they reference a
- * content registry. Built now so breeding (`combineGenomes(a, b, rng)`,
- * spec §12 seam) is a UI feature later, not a data migration.
+ * Trait genome (spec §7.3): `{ species, palette, pattern, personality }`,
+ * plus the round-2D `shiny` and `accessoryId`. Field names carry an `Id`
+ * suffix where they reference a content registry.
+ *
+ * ROUND 2D FIX STAGE — `accessorySlots` is GONE from here (spec §16 v1.7).
+ * Spec §7.3 listed it, and it was written into every genome, serialized,
+ * schema-validated and migrated since Phase 1 — and no surface ever
+ * rendered it. It was not even per-individual: it was copied verbatim
+ * from the species registry, which is the dead-trait shape round 2D
+ * exists to fix. Worse, it was not a constant: evolved forms carried 2
+ * while base forms carried 1, so the data promised a second accessory
+ * that could never appear. One accessory per Pip is the design; the rig
+ * has one anchor (`PipSprite.accessoryAnchor`) and all three render
+ * surfaces draw one. A number in the save file that contradicts that is
+ * the §16 v1.3 standing rule ("written to state" and "visible to the
+ * player" are separate acceptance criteria) failing in its purest form.
  */
 export interface TraitGenome {
   /** Spec §7.3 `species` — id into the species registry. */
@@ -67,8 +79,6 @@ export interface TraitGenome {
   palette: string;
   /** Pattern variant id from the species' sprite params. */
   pattern: string;
-  /** Number of accessory anchor points (spec §11). */
-  accessorySlots: number;
   /** Spec §7.3 `personality` — id into the personality registry. */
   personalityId: string;
   /**
@@ -78,6 +88,18 @@ export interface TraitGenome {
    * and (for now) bred children are never shiny; only hatched eggs roll.
    */
   shiny: boolean;
+  /**
+   * ROUND 2D (docs/BACKLOG.md "Round 2D" item 3) — the accessory worn at
+   * birth, rolled PER-INDIVIDUAL by `rollGenome`. `null` = rolled and
+   * came up bare; `undefined` = never rolled (every pre-2D genome) —
+   * same `undefined ≡` precedent as `PipState.ailment`/`mastery`. A
+   * `combineGenomes` child DOES get one: it inherits a parent's, 50/50
+   * (that function's own doc explains why).
+   * Content-as-data (spec §3): resolved against whatever accessory
+   * registry the render pass authors — core treats the id as an opaque
+   * string, same as `speciesId`.
+   */
+  accessoryId?: string | null;
 }
 
 /**

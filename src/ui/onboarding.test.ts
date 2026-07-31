@@ -40,9 +40,12 @@ import {
   buildStarterCards,
   deriveOnboardingProgress,
   onboardingCue,
+  previewStarterNames,
   skipOnboarding,
   starterGreeting,
 } from "./onboarding";
+import { NAME_POOL } from "../content/names";
+import { ACCESSORY_IDS } from "../content/accessories";
 import { PERSONALITY_BLURBS } from "./focusView";
 import { migrate } from "../core/save/migrate";
 import v3Fixture from "../core/save/fixtures/v3.json";
@@ -86,13 +89,15 @@ function okSend(state: GameState, at = NOW + 2): AssignExpeditionOutcome {
 // ---------------------------------------------------------------------------
 
 describe("rollStarterCandidates — the deterministic trio", () => {
-  it("rolls exactly three candidates, all the same species", () => {
+  // ROUND 2D (docs/BACKLOG.md "Round 2D" item 2, spec §7.1 amended): the
+  // trio is now three DIFFERENT species, not three palettes of one.
+  const STARTER_SPECIES_IDS = ["mosspip", "pebblepip", "tidepip"];
+
+  it("rolls exactly three candidates, three DIFFERENT species", () => {
     const trio = rollStarterCandidates(42);
     expect(trio).toHaveLength(STARTER_CANDIDATE_COUNT);
     expect(STARTER_CANDIDATE_COUNT).toBe(3);
-    for (const genome of trio) {
-      expect(genome.speciesId).toBe("mosspip");
-    }
+    expect(trio.map((genome) => genome.speciesId)).toEqual(STARTER_SPECIES_IDS);
   });
 
   it("is deterministic: same seed, same three Pips, forever", () => {
@@ -103,16 +108,16 @@ describe("rollStarterCandidates — the deterministic trio", () => {
     }
   });
 
-  it("palettes and personalities are DISTINCT within the trio, and valid", () => {
-    const mosspipPalettes = species["mosspip"]?.sprite.palettes ?? [];
+  it("each candidate's palette/pattern come from ITS OWN species, and personalities are DISTINCT within the trio", () => {
     for (let seed = 0; seed < 50; seed++) {
       const trio = rollStarterCandidates(seed);
-      const palettes = new Set(trio.map((g) => g.palette));
       const personalities = new Set(trio.map((g) => g.personalityId));
-      expect(palettes.size).toBe(3);
       expect(personalities.size).toBe(3);
       for (const genome of trio) {
-        expect(mosspipPalettes).toContain(genome.palette);
+        const entry = species[genome.speciesId];
+        expect(entry).toBeDefined();
+        expect(entry?.sprite.palettes).toContain(genome.palette);
+        expect(entry?.sprite.patterns).toContain(genome.pattern);
         expect(PERSONALITY_IDS).toContain(genome.personalityId);
       }
     }
@@ -155,16 +160,118 @@ describe("rollStarterCandidates — the deterministic trio", () => {
   });
 });
 
+describe("previewStarterNames — the three names the trio actually gets", () => {
+  it("is deterministic: same seed, same three names, forever", () => {
+    for (const seed of [0, 1, 42, 0xdeadbeef]) {
+      expect(previewStarterNames(seed)).toEqual(previewStarterNames(seed));
+    }
+  });
+
+  it("offers THREE DISTINCT names — the whole point of the fix stage", () => {
+    // The shipped pass rolled one name and put it on all three cards, so
+    // four cold boots rendered "Bracken / Bracken / Bracken", "Sorrel /
+    // Sorrel / Sorrel" — the round's own "Mosspip / Mosspip / Mosspip"
+    // complaint, on the first screen of the game.
+    for (let seed = 0; seed < 60; seed++) {
+      const names = previewStarterNames(seed);
+      expect(names).toHaveLength(STARTER_CANDIDATE_COUNT);
+      expect(new Set(names).size).toBe(STARTER_CANDIDATE_COUNT);
+    }
+  });
+
+  it("IS the literal roll createNewGame makes, index-aligned with the candidates", () => {
+    // core/state.ts's own doc on createNewGame: the trio's names are
+    // rolled BEFORE and INDEPENDENT of starterChoice, so a preview
+    // computed before the pick is not a guess — card N's name is
+    // byte-for-byte what the Pip gets when card N is tapped.
+    for (const seed of [3, 1337, 99]) {
+      const preview = previewStarterNames(seed);
+      for (let choice = 0; choice < STARTER_CANDIDATE_COUNT; choice++) {
+        const state = createNewGame(seed, NOW, undefined, choice);
+        expect(state.pips[state.activePipId]?.name).toBe(preview[choice]);
+      }
+    }
+  });
+
+  it("advances the name stream IDENTICALLY whichever candidate is picked (cursor contract)", () => {
+    // The property `rollCandidatesFromStream` documents for the genesis
+    // stream, extended to NAME_STREAM: three rolls always happen, before
+    // anything knows the winner, so the pick never perturbs a future roll.
+    const seed = 4242;
+    const cursors = new Set<string>();
+    for (let choice = 0; choice < STARTER_CANDIDATE_COUNT; choice++) {
+      const state = createNewGame(seed, NOW, undefined, choice);
+      cursors.add(JSON.stringify(state.rngState));
+    }
+    expect(cursors.size).toBe(1);
+  });
+
+  it("draws from the real name pool", () => {
+    for (let seed = 0; seed < 20; seed++) {
+      for (const name of previewStarterNames(seed)) {
+        expect(NAME_POOL).toContain(name);
+      }
+    }
+  });
+
+  it("varies across seeds (not one hardcoded trio)", () => {
+    const seen = new Set<string>();
+    for (let seed = 0; seed < 30; seed++) {
+      seen.add(previewStarterNames(seed).join("/"));
+    }
+    expect(seen.size).toBeGreaterThan(1);
+  });
+});
+
 describe("buildStarterCards — the pick screen's view models", () => {
   it("carries a one-line personality intro drawn from the blurbs", () => {
     const cards = buildStarterCards(rollStarterCandidates(11));
     expect(cards).toHaveLength(3);
     cards.forEach((card, i) => {
       expect(card.index).toBe(i);
-      expect(card.speciesName).toBe("Mosspip");
+      // ROUND 2D: each candidate is its own species now — check against
+      // the registry generically rather than a hardcoded species name.
+      expect(card.speciesName).toBe(species[card.genome.speciesId]?.name);
       expect(card.intro).toBe(PERSONALITY_BLURBS[card.genome.personalityId]);
       expect(card.intro.length).toBeGreaterThan(0);
     });
+  });
+
+  it("ROUND 2D item 1 — each card carries its OWN name, index-aligned", () => {
+    const trio = rollStarterCandidates(23);
+    const cards = buildStarterCards(trio, ["Thimble", "Bracken", "Dewdrop"]);
+    expect(cards).toHaveLength(3);
+    expect(cards.map((c) => c.name)).toEqual(["Thimble", "Bracken", "Dewdrop"]);
+  });
+
+  it("ROUND 2D item 2 — the three cards are three DIFFERENT species", () => {
+    // Amends spec §7.1 ("same species, three distinct palettes"), written
+    // when Mosspip was the only species. The first decision a player
+    // makes has to be a real one.
+    for (const seed of [1, 7, 23, 512]) {
+      const cards = buildStarterCards(rollStarterCandidates(seed));
+      expect(new Set(cards.map((c) => c.genome.speciesId)).size).toBe(3);
+      expect(new Set(cards.map((c) => c.speciesName)).size).toBe(3);
+    }
+  });
+
+  it("ROUND 2D item 3 — every starter wears a DIFFERENT real accessory", () => {
+    // The shipped pass built candidate genomes with no accessoryId at
+    // all, so the Pip a player keeps longest was permanently bare and the
+    // pick screen taught nothing about the axis.
+    for (const seed of [1, 7, 23, 512]) {
+      const worn = rollStarterCandidates(seed).map((g) => g.accessoryId);
+      expect(new Set(worn).size).toBe(3);
+      for (const id of worn) {
+        expect(typeof id).toBe("string");
+        expect(ACCESSORY_IDS).toContain(id as string);
+      }
+    }
+  });
+
+  it("defaults to an empty name when the caller has none to offer", () => {
+    const cards = buildStarterCards(rollStarterCandidates(23));
+    for (const card of cards) expect(card.name).toBe("");
   });
 
   it("every personality has a landing greeting (and a fallback exists)", () => {

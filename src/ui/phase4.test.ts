@@ -71,7 +71,10 @@ describe("diffPhase4 — live expedition return", () => {
     expect(effects.catchup).toBeNull();
     expect(effects.toasts).toHaveLength(1);
     expect(effects.toasts[0]?.kind).toBe("expeditionReturn");
-    expect(effects.toasts[0]?.message).toContain("Mosspip");
+    // ROUND 2D: the starter's name is individually rolled, not its
+    // species name — deterministic "Rowan" for makeStore()'s default
+    // seed 7 (same value pinned in ui/buildMode.test.ts for the same seed).
+    expect(effects.toasts[0]?.message).toContain("Rowan");
     expect(effects.toasts[0]?.message).toContain("Meadow");
   });
 

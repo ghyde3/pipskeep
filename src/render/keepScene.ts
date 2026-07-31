@@ -200,6 +200,56 @@ const DUST_COLORS = ["#e8dcc0", "#d6c9a8", "#ffffff"] as const;
 const BOTTOM_CHROME_FALLBACK_PX = 157;
 
 /**
+ * Resolve one Pip's Keep sprite. Module-level and EXPORTED (round 2D fix
+ * stage) rather than a closure inside `createKeepScene`, because it is
+ * the ONLY production call site of `resolvePipSprite` and both of round
+ * 2D's render wirings live in these five lines — with no
+ * `keepScene.test.ts` at all, dropping `accessoryId` here (every Pip in
+ * the Keep renders bare) or seeding the jitter with `Date.now()` (every
+ * Pip looks different on every reload) were both silent, green changes.
+ * `keepScene.test.ts` now pins both.
+ *
+ * Resolve with the LIVE species (evolution changes it, spec §4.6); genome
+ * stays the immutable birth record for palette/pattern — UNLESS the Pip
+ * has evolved with a gift-selected variant (`pip.evolved.variantId`,
+ * content-bible §8.2.2), in which case that variant id stands in for the
+ * palette lookup key (spriteResolver.ts's optional third param). Without
+ * this, every evolution gift variant authored in content/palette.ts is
+ * dead: `applyEvolution` writes `variantId` and nothing ever read it back.
+ */
+export function resolveActorSprite(pip: PipState): PipSprite {
+  return resolvePipSprite(
+    { ...pip.genome, speciesId: pip.speciesId },
+    pip.lifeStage,
+    pip.evolved?.variantId,
+    // ROUND 2D item 4 — jitter seed: the Pip's own id VERBATIM, unique
+    // per Pip (unlike the genome, which two Pips could roll identically)
+    // and STABLE across reloads, so every actor in the Keep looks
+    // individually jittered and looks the SAME individual every session
+    // (spriteResolver.ts's `jitterSeed` doc).
+    pip.id,
+  );
+}
+
+/** The sprite cache key: every input `resolveActorSprite` reads. */
+export function actorSpriteKey(pip: PipState): string {
+  // `variantId` joins the key (content-bible §8.2.2): two Pips of the
+  // same evolved species that were fed different gift items must NOT
+  // share a cached sprite just because species/palette/pattern match.
+  // `accessoryId` joins it for the same reason (round 2D fix stage): it
+  // was safe only by accident, because `pip.id` happens to lead the key.
+  return [
+    pip.id,
+    pip.lifeStage,
+    pip.speciesId,
+    pip.genome.palette,
+    pip.genome.pattern,
+    pip.genome.accessoryId ?? "",
+    pip.evolved?.variantId ?? "",
+  ].join("|");
+}
+
+/**
  * How much of the bottom of the view the DOM chrome covers, measured off the
  * Keep strip's own top edge.
  *
@@ -651,22 +701,6 @@ export function createKeepScene(width: number, height: number): KeepScene {
     actor.eyesForced = resting ? 0.08 : sulking ? 0.45 : null;
   }
 
-  /** Resolve with the LIVE species (evolution changes it, spec §4.6);
-   * genome stays the immutable birth record for palette/pattern — UNLESS
-   * the Pip has evolved with a gift-selected variant (`pip.evolved.
-   * variantId`, content-bible §8.2.2), in which case that variant id
-   * stands in for the palette lookup key (spriteResolver.ts's optional
-   * third param). Without this, every evolution gift variant authored in
-   * content/palette.ts is dead: `applyEvolution` writes `variantId` and
-   * nothing ever read it back. */
-  function resolveActorSprite(pip: PipState): PipSprite {
-    return resolvePipSprite(
-      { ...pip.genome, speciesId: pip.speciesId },
-      pip.lifeStage,
-      pip.evolved?.variantId,
-    );
-  }
-
   function attachSprite(actor: Actor): void {
     actor.spriteKey = actorSpriteKey(actor.pip);
     actor.root.addChild(actor.sprite.view);
@@ -690,13 +724,6 @@ export function createKeepScene(width: number, height: number): KeepScene {
       cycleMs: 180,
       cycles: 2,
     });
-  }
-
-  function actorSpriteKey(pip: PipState): string {
-    // `variantId` joins the key (content-bible §8.2.2): two Pips of the
-    // same evolved species that were fed different gift items must NOT
-    // share a cached sprite just because species/palette/pattern match.
-    return `${pip.id}|${pip.lifeStage}|${pip.speciesId}|${pip.genome.palette}|${pip.genome.pattern}|${pip.evolved?.variantId ?? ""}`;
   }
 
   function spawnPos(pip: PipState): { x: number; y: number } {

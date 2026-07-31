@@ -61,7 +61,7 @@ import { initPhase5Ui } from "../ui/phase5";
 // starter trio → pick) and the guided beats. Same parallel-module
 // pattern as phase4/phase5 — a static import that fails the build
 // loudly if the module goes missing.
-import { initOnboarding, runStarterPick } from "../ui/onboarding";
+import { initOnboarding, previewStarterNames, runStarterPick } from "../ui/onboarding";
 // Round 2C dailies (docs/retention-bible.md §3/§4/§5) — same
 // parallel-module, static-import pattern as phase4/phase5/onboarding.
 import { initDailiesUi } from "../ui/dailies";
@@ -253,6 +253,11 @@ async function startGame(
     const choice = await runStarterPick({
       mount: document.body,
       candidates: rollStarterCandidates(seed),
+      // ROUND 2D item 1 — the literal three names createNewGame will roll
+      // below, previewed read-only and index-aligned with the candidates
+      // (see previewStarterNames' doc for why this is safe and why the
+      // cursor advances identically whichever card the player taps).
+      previewNames: previewStarterNames(seed),
     });
     initial = createNewGame(seed, clock.now(), undefined, choice);
   }

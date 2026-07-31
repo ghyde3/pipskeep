@@ -45,7 +45,6 @@ function makePip(id: string, overrides: Partial<PipState> = {}): PipState {
       speciesId: "mosspip",
       palette: "fern",
       pattern: "plain",
-      accessorySlots: 1,
       personalityId,
       shiny: false,
     },
@@ -74,7 +73,6 @@ function makeSeed(overrides: Partial<LineageEggSeed> = {}): LineageEggSeed {
       speciesId: "mosspip",
       palette: "fern",
       pattern: "plain",
-      accessorySlots: 1,
       personalityId: "curious",
       shiny: false,
     },
@@ -264,9 +262,9 @@ describe("settleExpeditionReturn — lineage egg finds (bible §5.2)", () => {
       registry: { bramblewick: BRAMBLEWICK },
     });
     const rng = createRng(SEED);
-    // find (1) + combine (6) + shiny (1) = 8 rolls on "lineage".
+    // find (1) + combine (7) + shiny (1) = 9 rolls on "lineage".
     const stream = rng.stream(LINEAGE_STREAM);
-    for (let i = 0; i < 8; i++) stream.next();
+    for (let i = 0; i < 9; i++) stream.next();
     expect(result.rngState[LINEAGE_STREAM]).toBe(stream.getState());
   });
 });

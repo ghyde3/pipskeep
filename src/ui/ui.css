@@ -67,7 +67,10 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  height: 64px;
+  /* 76px, not 64: round 2D's fix stage adds a name label under every
+     chip. The strip's height is published to `--pk-hud-top` by a
+     ResizeObserver (module doc), so nothing downstream hardcodes it. */
+  height: 76px;
 }
 
 .pk-cast {
@@ -95,7 +98,7 @@
      giant chips — this is what fixes N4 (roster-cap overflow) BY
      CONSTRUCTION rather than by a max-roster special case. */
   width: min(52px, calc((100% - (var(--pk-cast-n, 3) - 1) * 6px) / var(--pk-cast-n, 3)));
-  height: 64px;
+  height: 76px;
   border-radius: 16px;
   cursor: pointer;
   touch-action: manipulation;
@@ -283,6 +286,13 @@
   margin-left: 4px;
 }
 
+/* ROUND 2D FIX STAGE — the chip's interior is now `ui/pipdex.ts`'s
+   `buildPortraitEl(…, "chip")` (see topBar.ts's `buildChip`), so the
+   hand-rolled `.pk-chip-blob` / `.pk-chip-eyes` pair that used to live
+   here is gone: the strip draws the SAME portrait as the Album, complete
+   with pattern, worn accessory, species silhouette and per-individual
+   jitter. This box just positions it and hosts the mood dot + status
+   badge. */
 .pk-chip {
   position: relative;
   width: 46px;
@@ -290,42 +300,27 @@
   flex: none;
 }
 
-.pk-chip-blob {
-  position: absolute;
-  inset: 2px;
-  border-radius: 46% 54% 52% 48% / 58% 56% 44% 42%;
-  border: 2px solid;
-  box-shadow: inset 0 -6px 0 rgba(0, 0, 0, 0.06);
+/* The name under each chip. THE point of the fix: the cast strip is the
+   only roster list that is on screen all the time, and it was the only
+   one that never said who anyone was. Truncated, not wrapped — chips are
+   at most 52px wide and a constant strip height is a hard requirement
+   (redesign doc §4). */
+.pk-castchip-name {
+  width: 100%;
+  margin-top: 1px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 11px;
+  letter-spacing: 0.01em;
+  text-align: center;
+  color: #4b5a4b;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
-.pk-chip-blob::before {
-  /* accent sprout */
-  content: "";
-  position: absolute;
-  top: -6px;
-  left: 55%;
-  width: 10px;
-  height: 8px;
-  border-radius: 60% 80% 70% 40%;
-  background: var(--pk-accent, #ff8a5c);
-  transform: rotate(-20deg);
-}
-
-.pk-chip-eyes {
-  position: absolute;
-  top: 34%;
-  left: 0;
-  right: 0;
-  display: flex;
-  justify-content: center;
-  gap: 9px;
-}
-
-.pk-chip-eyes i {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #403a4d;
+.pk-castchip--active .pk-castchip-name {
+  color: #2f4630;
 }
 
 .pk-mood-dot {
@@ -1014,9 +1009,20 @@
   flex: 0 0 auto;
 }
 
+/* ROUND 2D FIX STAGE — this portrait now honours BOTH the species
+   silhouette (`--pk-wfrac`/`--pk-hfrac`, exactly as pipdex.css's
+   `.pk-pipdex-blob` already did) and the per-individual jitter
+   (`--pk-j*`, from `render/spriteResolver.ts`'s `jitterStyleVars`).
+   Before, it was a fixed `inset: 4px` box, so a Tidepip and a Mosspip
+   were the same shape here and two Pips with the same genome were
+   byte-identical. Every fallback is 1, so an un-jittered caller renders
+   the previous geometry. */
 .pk-portrait-blob {
   position: absolute;
-  inset: 4px;
+  left: 50%;
+  bottom: 4px;
+  width: calc((100% - 8px) * var(--pk-wfrac, 1) * var(--pk-jw, 1));
+  height: calc((100% - 8px) * var(--pk-hfrac, 1) * var(--pk-jh, 1));
   border-radius: 46% 54% 52% 48% / 58% 56% 44% 42%;
   border: 3px solid;
   box-shadow: inset 0 -12px 0 rgba(0, 0, 0, 0.06);
@@ -1026,10 +1032,10 @@
 @keyframes pk-portrait-bob {
   0%,
   100% {
-    transform: translateY(0) scale(1, 1);
+    transform: translateX(-50%) translateY(0) scale(1, 1);
   }
   50% {
-    transform: translateY(-3px) scale(0.99, 1.01);
+    transform: translateX(-50%) translateY(-3px) scale(0.99, 1.01);
   }
 }
 
@@ -1310,19 +1316,36 @@
 
 .pk-portrait-eyes {
   position: absolute;
-  top: 32%;
+  top: calc(32% + var(--pk-jeye-dy, 0) * 1%);
   left: 0;
   right: 0;
   display: flex;
+  align-items: center;
   justify-content: center;
-  gap: 22px;
+  gap: calc(22px * var(--pk-jgap, 1));
 }
 
 .pk-portrait-eyes i {
-  width: 12px;
-  height: 12px;
+  width: calc(12px * var(--pk-jeye-w, 1));
+  height: calc(12px * var(--pk-jeye-h, 1));
   border-radius: 50%;
   background: #403a4d;
+}
+
+/* ROUND 2D FIX STAGE — see pipdex.css's `.pk-pipdex-mouth`: the Pixi
+   resolver has always drawn a mouth and neither DOM portrait did, which
+   left the face undefined below the eyes and made every neck accessory
+   read as a mouth. */
+.pk-portrait-mouth {
+  position: absolute;
+  top: 54%;
+  left: 50%;
+  width: 20px;
+  height: 8px;
+  transform: translateX(-50%);
+  border-bottom: 2px solid;
+  border-radius: 0 0 60% 60%;
+  opacity: 0.6;
 }
 
 .pk-portrait-blush {
@@ -1342,6 +1365,363 @@
   right: 14%;
 }
 
+/* Worn accessory (round 2D item 3; docs/BACKLOG.md "Round 2D"). ONE real
+   child per portrait (`.pk-portrait-accessory--<id>`, appended after the
+   blush spans above), with up to two ::before/::after for multi-part
+   shapes — the same convention the pattern overlays above already use.
+   Colors are content-as-data: `--pk-acc-primary`/`--pk-acc-secondary` are
+   set inline from `content/accessories.ts` (render/spriteResolver.ts's
+   Pixi resolver reads the SAME two fields); the fallback color in each
+   `var()` below is that accessory's real primary/secondary so a portrait
+   never shows a broken/transparent shape if the custom property is ever
+   missing. This is an INDEPENDENTLY authored shape per id from both the
+   Pixi resolver and pipdex.css's version — the established
+   three-implementations pattern `portraitPatterns.test.ts` already
+   documents for patterns, extended to accessories by that same file. */
+
+.pk-portrait-accessory {
+  position: absolute;
+  pointer-events: none;
+  /* A pale accessory (cloudwisp, snowcap, flower) on a similarly pale body
+     needs SOME definition regardless of the exact color pairing rolled —
+     the same reasoning content/palette.ts's module doc gives for the
+     body's own outline stroke, applied here as one shared rule instead of
+     re-tuning each accessory's colors per possible body palette (an
+     unbounded combination this file cannot enumerate). Cheap and uniform:
+     a drop-shadow silhouettes the accessory's ACTUAL painted pixels
+     (including box-shadow-built shapes like the flower/pebblecrown), not
+     a fixed box. Stacked twice since the fix stage — one 0.6px shadow
+     still let the near-white cloudwisp/snowcap disappear on pale bodies
+     (Tidepip cockle, Frostpip powder, Hearthpip), which the Pixi surface
+     avoids with an explicit ACCESSORY_OUTLINE stroke. */
+  filter: drop-shadow(0 0 0.7px rgba(30, 26, 20, 0.75))
+    drop-shadow(0 0.5px 0.7px rgba(30, 26, 20, 0.45));
+}
+
+/* --- Crown accessories: worn ON the head, overlapping it (round 2D fix
+   stage — they all used to start above the blob's own top edge and read
+   as floating). Mirrors `CROWN_TUCK_PX` on the Pixi surface. --- */
+
+.pk-portrait-accessory--leafcap {
+  top: 0%;
+  left: 50%;
+  width: 22px;
+  height: 12px;
+  transform: translateX(-50%) rotate(-16deg);
+  background: var(--pk-acc-primary, #5ba05a);
+  border-radius: 65% 65% 65% 8%;
+}
+
+.pk-portrait-accessory--leafcap::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 12%;
+  right: 12%;
+  height: 1.4px;
+  background: var(--pk-acc-secondary, #3f7a40);
+  opacity: 0.75;
+}
+
+.pk-portrait-accessory--flower {
+  top: 2%;
+  left: 50%;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  transform: translateX(-50%);
+  background: var(--pk-acc-primary, #f2a6c4);
+  box-shadow:
+    -7px -2px 0 0 var(--pk-acc-primary, #f2a6c4),
+    7px -2px 0 0 var(--pk-acc-primary, #f2a6c4),
+    -4px 6px 0 0 var(--pk-acc-primary, #f2a6c4),
+    4px 6px 0 0 var(--pk-acc-primary, #f2a6c4);
+}
+
+.pk-portrait-accessory--flower::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: var(--pk-acc-secondary, #f7d24a);
+}
+
+.pk-portrait-accessory--pebblecrown {
+  top: 4%;
+  left: 50%;
+  width: 12px;
+  height: 7px;
+  transform: translateX(-50%);
+  background: var(--pk-acc-primary, #a8a29a);
+  border-radius: 50%;
+}
+
+.pk-portrait-accessory--pebblecrown::before,
+.pk-portrait-accessory--pebblecrown::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  border-radius: 50%;
+  background: var(--pk-acc-secondary, #847e73);
+}
+
+.pk-portrait-accessory--pebblecrown::before {
+  top: -8px;
+  width: 9px;
+  height: 5.5px;
+  transform: translateX(-50%);
+}
+
+.pk-portrait-accessory--pebblecrown::after {
+  top: -14px;
+  width: 6px;
+  height: 4px;
+  background: var(--pk-acc-primary, #a8a29a);
+  transform: translateX(-50%);
+}
+
+.pk-portrait-accessory--berrycrown {
+  top: 2%;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  transform: translateX(-50%) translateX(-10px);
+  border-radius: 50%;
+  background: var(--pk-acc-primary, #8e3b6b);
+}
+
+.pk-portrait-accessory--berrycrown::before,
+.pk-portrait-accessory--berrycrown::after {
+  content: "";
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--pk-acc-primary, #8e3b6b);
+}
+
+.pk-portrait-accessory--berrycrown::before {
+  left: 8px;
+  top: -6px;
+}
+
+.pk-portrait-accessory--berrycrown::after {
+  left: 16px;
+  top: 0;
+}
+
+.pk-portrait-accessory--snowcap {
+  top: 0%;
+  left: 50%;
+  width: 24px;
+  height: 11px;
+  transform: translateX(-50%);
+  background: var(--pk-acc-primary, #eaf4fb);
+  border: 1.2px solid var(--pk-acc-secondary, #a9c9de);
+  border-radius: 50% 50% 20% 20%;
+}
+
+.pk-portrait-accessory--snowcap::after {
+  content: "";
+  position: absolute;
+  top: -9px;
+  left: 50%;
+  width: 5px;
+  height: 5px;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background: var(--pk-acc-secondary, #a9c9de);
+  box-shadow:
+    -6px 0 0 -1.5px var(--pk-acc-secondary, #a9c9de),
+    6px 0 0 -1.5px var(--pk-acc-secondary, #a9c9de),
+    0 -6px 0 -1.5px var(--pk-acc-secondary, #a9c9de);
+}
+
+.pk-portrait-accessory--cloudwisp {
+  top: -6%;
+  left: 50%;
+  width: 14px;
+  height: 10px;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background: var(--pk-acc-primary, #f2eef8);
+}
+
+.pk-portrait-accessory--cloudwisp::before,
+.pk-portrait-accessory--cloudwisp::after {
+  content: "";
+  position: absolute;
+  border-radius: 50%;
+  background: var(--pk-acc-primary, #f2eef8);
+}
+
+.pk-portrait-accessory--cloudwisp::before {
+  width: 10px;
+  height: 8px;
+  left: -8px;
+  top: 2px;
+}
+
+.pk-portrait-accessory--cloudwisp::after {
+  width: 10px;
+  height: 8px;
+  left: 12px;
+  top: 1px;
+}
+
+.pk-portrait-accessory--acorncap {
+  top: 2%;
+  left: 50%;
+  width: 20px;
+  height: 12px;
+  transform: translateX(-50%);
+  background: var(--pk-acc-primary, #9c6b3e);
+  border: 1.2px solid var(--pk-acc-secondary, #5c3f24);
+  border-radius: 50% 50% 40% 40%;
+}
+
+.pk-portrait-accessory--acorncap::after {
+  content: "";
+  position: absolute;
+  top: -6px;
+  left: 50%;
+  width: 4px;
+  height: 6px;
+  transform: translateX(-50%);
+  background: var(--pk-acc-secondary, #5c3f24);
+  border-radius: 2px;
+}
+
+/* --- Neck accessories: BELOW the mouth (`.pk-portrait-mouth`, 54%). ---
+   ROUND 2D FIX STAGE: the scarf sat at 62% and the bowtie/ember bead in
+   the high 50s/60s, which on a face with no drawn mouth is exactly where
+   a mouth reads — the scarf came across as a gag across the mouth, the
+   bowtie and bead as mouths. Mirrors `NECK_Y_FRAC` on the Pixi
+   surface. */
+
+.pk-portrait-accessory--scarf {
+  top: 68%;
+  left: 50%;
+  width: 58%;
+  height: 11px;
+  transform: translateX(-50%);
+  background: var(--pk-acc-primary, #d9683c);
+  border-radius: 6px;
+}
+
+/* The KNOT — what turns a horizontal bar into a worn scarf. */
+.pk-portrait-accessory--scarf::before {
+  content: "";
+  position: absolute;
+  top: -2px;
+  left: 60%;
+  width: 12px;
+  height: 15px;
+  border-radius: 50%;
+  background: var(--pk-acc-secondary, #b84f2b);
+}
+
+.pk-portrait-accessory--scarf::after {
+  content: "";
+  position: absolute;
+  top: 10px;
+  left: 61%;
+  width: 9px;
+  height: 15px;
+  background: var(--pk-acc-primary, #d9683c);
+  clip-path: polygon(20% 0, 80% 0, 100% 100%, 0 100%);
+}
+
+.pk-portrait-accessory--bowtie {
+  top: 70%;
+  left: 50%;
+  width: 22px;
+  height: 12px;
+  transform: translateX(-50%);
+}
+
+.pk-portrait-accessory--bowtie::before,
+.pk-portrait-accessory--bowtie::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  width: 10px;
+  height: 12px;
+  background: var(--pk-acc-primary, #e0567e);
+}
+
+.pk-portrait-accessory--bowtie::before {
+  left: 0;
+  clip-path: polygon(100% 0, 100% 100%, 0 50%);
+}
+
+.pk-portrait-accessory--bowtie::after {
+  right: 0;
+  clip-path: polygon(0 0, 0 100%, 100% 50%);
+}
+
+.pk-portrait-accessory--emberbead {
+  top: 70%;
+  left: 50%;
+  width: 8px;
+  height: 8px;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background: var(--pk-acc-primary, #ff7a3c);
+  box-shadow: 0 0 6px 2px var(--pk-acc-secondary, #8a3a20);
+}
+
+/* The cord — a shallow arc above the bead, so it reads as hung round the
+   neck rather than as a dot painted on the belly. */
+.pk-portrait-accessory--emberbead::before {
+  content: "";
+  position: absolute;
+  bottom: 5px;
+  left: 50%;
+  width: 26px;
+  height: 9px;
+  transform: translateX(-50%);
+  border: 1px solid #6b4a30;
+  border-bottom: none;
+  border-radius: 60% 60% 0 0 / 90% 90% 0 0;
+  opacity: 0.75;
+}
+
+/* --- Shoulder / side accessories: out on a flank, BELOW the blush (46%)
+   so they never land on the cheek, and clear of the eye row. --- */
+
+.pk-portrait-accessory--shellpauldron {
+  top: 60%;
+  left: 74%;
+  width: 16px;
+  height: 16px;
+  border-radius: 50% 50% 50% 0;
+  background: var(--pk-acc-primary, #f0d6b8);
+  border: 1.2px solid var(--pk-acc-secondary, #d9a878);
+  transform: rotate(-20deg);
+}
+
+.pk-portrait-accessory--lantern {
+  top: 44%;
+  left: 79%;
+  width: 1.4px;
+  height: 14px;
+  background: #5a4a30;
+}
+
+.pk-portrait-accessory--lantern::after {
+  content: "";
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  width: 11px;
+  height: 12px;
+  transform: translateX(-50%);
+  background: var(--pk-acc-primary, #f7c948);
+  border: 1.2px solid var(--pk-acc-secondary, #8a6a3a);
+  border-radius: 3px;
+}
+
 /* Identity block */
 
 .pk-focus-head {
@@ -1351,9 +1731,43 @@
   gap: 3px;
 }
 
+/* ROUND 2D item 5 — the name row: the name itself plus a quiet rename
+   affordance beside it (discoverable, not prominent — the owner's own
+   lean, see focusView.ts's module doc on RENAME_ERROR_COPY). */
+.pk-focus-name-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 4px;
+}
+
 .pk-focus-name {
   font-size: 20px;
   font-weight: 800;
+}
+
+.pk-focus-rename-btn {
+  appearance: none;
+  border: none;
+  background: none;
+  padding: 2px 4px;
+  font-size: 12px;
+  line-height: 1;
+  color: rgba(61, 74, 61, 0.35);
+  cursor: pointer;
+  touch-action: manipulation;
+  transition:
+    color 140ms ease,
+    transform 90ms ease;
+}
+
+.pk-focus-rename-btn:hover,
+.pk-focus-rename-btn:focus-visible {
+  color: rgba(95, 138, 94, 0.85);
+}
+
+.pk-focus-rename-btn:active {
+  transform: scale(0.9);
 }
 
 .pk-focus-kind {
@@ -2156,4 +2570,147 @@
   line-height: 1.4;
   text-align: center;
   color: rgba(61, 74, 61, 0.6);
+}
+
+/* ---------- ROUND 2D item 5: the rename dialog — its own overlay,
+   nested inside .pk-focus-wrap (focusView.ts's module doc explains why:
+   it must survive rebuild()'s panel.replaceChildren()). Same visual
+   language as .pk-sanctuary-confirm (sanctuary.css) — cream card, soft
+   green border, springy pop. z 29: reachable only from an already-open
+   focus view (20), so it only needs to clear that one surface; pinned
+   by src/ui/layers.test.ts. ---------- */
+
+.pk-rename-wrap {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.pk-rename-wrap--open {
+  visibility: visible;
+  z-index: 29;
+}
+
+.pk-rename-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(61, 74, 61, 0.36);
+  opacity: 0;
+  transition: opacity 220ms ease;
+}
+
+.pk-rename-wrap--open .pk-rename-backdrop {
+  pointer-events: auto;
+  opacity: 1;
+}
+
+.pk-rename {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -46%) scale(0.94);
+  box-sizing: border-box;
+  width: min(320px, 88vw);
+  max-width: 100%;
+  background: #fffdf6;
+  border: 1.5px solid rgba(95, 138, 94, 0.25);
+  border-radius: 20px;
+  box-shadow: 0 14px 44px rgba(61, 74, 61, 0.3);
+  padding: 18px 16px calc(env(safe-area-inset-bottom, 0px) + 16px);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  text-align: center;
+  opacity: 0;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, sans-serif;
+  color: #3d4a3d;
+  transition:
+    opacity 200ms ease,
+    transform 260ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.pk-rename-wrap--open .pk-rename {
+  pointer-events: auto;
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+
+.pk-rename-heading {
+  font-size: 15.5px;
+  font-weight: 800;
+}
+
+.pk-rename-copy {
+  font-size: 11.5px;
+  opacity: 0.75;
+  margin-bottom: 2px;
+}
+
+.pk-rename-input {
+  box-sizing: border-box;
+  width: 100%;
+  border: 1.5px solid rgba(95, 138, 94, 0.35);
+  border-radius: 12px;
+  padding: 10px 12px;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  color: #3d4a3d;
+  background: #fff;
+}
+
+.pk-rename-input:focus-visible {
+  outline: 2px solid rgba(95, 138, 94, 0.6);
+  outline-offset: 1px;
+}
+
+.pk-rename-error {
+  font-size: 12px;
+  font-weight: 700;
+  color: #9c6f2e;
+  background: rgba(246, 183, 60, 0.18);
+  border-radius: 10px;
+  padding: 6px 10px;
+}
+
+.pk-rename-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.pk-rename-cancel,
+.pk-rename-save {
+  flex: 1;
+  appearance: none;
+  border: none;
+  border-radius: 14px;
+  min-height: 42px;
+  padding: 9px 10px;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 800;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: transform 90ms ease;
+}
+
+.pk-rename-cancel {
+  background: rgba(95, 138, 94, 0.12);
+  color: #3d4a3d;
+}
+
+.pk-rename-save {
+  background: #7cc283;
+  color: #fffdf6;
+  box-shadow: 0 2px 0 rgba(61, 107, 68, 0.4);
+}
+
+.pk-rename-cancel:active,
+.pk-rename-save:active {
+  transform: scale(0.96);
 }

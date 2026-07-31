@@ -36,9 +36,10 @@ import type { TraitGenome } from "../core/pips/types";
 import { personalities } from "../content/personalities";
 import type { PersonalityId } from "../content/personalities";
 import { species } from "../content/species";
-import { resolvePipPalette } from "../content/palette";
+import { rollStarterNames } from "../core/state";
 import { sound } from "../app/sound";
 import { personalityBlurb } from "./focusView";
+import { buildPortraitEl } from "./pipdex";
 import { notify } from "./notify";
 
 // ---------------------------------------------------------------------------
@@ -83,23 +84,50 @@ export function starterGreeting(personalityId: string): string {
 // Pure: starter cards, cue derivation, step progression, skip
 // ---------------------------------------------------------------------------
 
+/**
+ * ROUND 2D item 1 — the three names the starter trio will actually
+ * answer to, index-aligned with `rollStarterCandidates(seed)`.
+ *
+ * These are not guesses or a separate roll: `core/state.ts`'s
+ * `rollStarterNames` IS the draw `createNewGame` makes (three rolls from
+ * `NAME_STREAM`, before and independent of which candidate wins — see
+ * that function's cursor contract), so the name on the card the player
+ * taps is the name the Pip is created with.
+ *
+ * The fix stage exists because the first pass showed ONE name on all
+ * three cards, which rendered as "Bracken / Bracken / Bracken" — the
+ * round's own "Mosspip / Mosspip / Mosspip" complaint, on the very first
+ * screen of the game.
+ */
+export function previewStarterNames(seed: number): readonly string[] {
+  return rollStarterNames(seed);
+}
+
 /** Everything one starter card renders (view model over a genome). */
 export interface StarterCardModel {
   readonly index: number;
   readonly genome: TraitGenome;
+  /** The name THIS Pip will answer to (see `previewStarterNames` above) —
+   * distinct per card, and the primary label now that round 2D demotes
+   * species to a subtitle. Empty string when the caller has no preview
+   * for this index (defensive default; every real caller has three). */
+  readonly name: string;
   readonly speciesName: string;
   readonly personalityName: string;
   /** One-line personality intro, drawn from the focus-view blurbs. */
   readonly intro: string;
 }
 
-/** View models for the trio (pure; content lookups fall back softly). */
+/** View models for the trio (pure; content lookups fall back softly).
+ * `names` is index-aligned with `candidates`. */
 export function buildStarterCards(
   candidates: readonly TraitGenome[],
+  names: readonly string[] = [],
 ): readonly StarterCardModel[] {
   return candidates.map((genome, index) => ({
     index,
     genome,
+    name: names[index] ?? "",
     speciesName: species[genome.speciesId]?.name ?? genome.speciesId,
     personalityName:
       personalities[genome.personalityId as PersonalityId]?.name ??
@@ -190,35 +218,45 @@ export function skipOnboarding(): GameAction {
 // DOM: the new-game ceremony (title card → trio → pick → goodbyes)
 // ---------------------------------------------------------------------------
 
-/** A little DOM Pip: body blob + belly + eyes + blush, palette-inked
- * from the genome (same placeholder language as the focus portrait). */
-function buildBlob(genome: TraitGenome): HTMLElement {
-  const palette = resolvePipPalette(genome.speciesId, genome.palette);
-  const blob = document.createElement("div");
-  blob.className = "pk-onboard-blob";
-  blob.style.background = palette.body;
-  blob.style.borderColor = palette.outline;
-  blob.style.setProperty("--pk-accent", palette.accent);
-  const belly = document.createElement("span");
-  belly.className = "pk-onboard-belly";
-  belly.style.background = palette.belly;
-  const eyes = document.createElement("span");
-  eyes.className = "pk-onboard-eyes";
-  eyes.append(document.createElement("i"), document.createElement("i"));
-  const blushL = document.createElement("span");
-  blushL.className = "pk-onboard-blush pk-onboard-blush--l";
-  blushL.style.background = palette.blush;
-  const blushR = document.createElement("span");
-  blushR.className = "pk-onboard-blush pk-onboard-blush--r";
-  blushR.style.background = palette.blush;
-  blob.append(belly, eyes, blushL, blushR);
-  return blob;
+/**
+ * A little DOM Pip for one starter card.
+ *
+ * ROUND 2D item 2, FIX STAGE — this is now `ui/pipdex.ts`'s
+ * `buildPortraitEl`, the SAME builder the Album, the Long Meadow, the
+ * Nursery and the cast strip use, rather than a fourth hand-rolled blob.
+ *
+ * The first pass made the trio three different SPECIES in the data and in
+ * the subtitle, but `.pk-onboard-blob` was a hard-coded 74×64 rounded box
+ * with one border-radius and no per-species override — so the round's
+ * headline decision ("the first choice a player makes is a real one")
+ * reached the player as three colours of one shape. `buildPortraitEl`
+ * honours the species silhouette (`--pk-wfrac`/`--pk-hfrac`), the pattern
+ * overlay, the worn accessory, the shiny sheen and the per-individual
+ * jitter automatically, for every species that will ever exist — and
+ * every future fix to any of those lands here for free instead of being
+ * forgotten on a fourth surface (the exact divergence round 2E shipped).
+ */
+function buildStarterPortrait(genome: TraitGenome, jitterSeed: string): HTMLElement {
+  return buildPortraitEl(
+    {
+      speciesId: genome.speciesId,
+      paletteId: genome.palette,
+      pattern: genome.pattern,
+      shiny: genome.shiny,
+      accessoryId: genome.accessoryId,
+      jitterSeed,
+    },
+    "small",
+  );
 }
 
 export interface StarterPickDeps {
   readonly mount: HTMLElement;
   /** The trio from core's rollStarterCandidates(seed). */
   readonly candidates: readonly TraitGenome[];
+  /** ROUND 2D item 1 — `previewStarterNames(seed)`: the three names the
+   * candidates will actually receive, index-aligned with `candidates`. */
+  readonly previewNames: readonly string[];
 }
 
 /**
@@ -229,7 +267,7 @@ export interface StarterPickDeps {
  */
 export function runStarterPick(deps: StarterPickDeps): Promise<number> {
   return new Promise((resolve) => {
-    const cards = buildStarterCards(deps.candidates);
+    const cards = buildStarterCards(deps.candidates, deps.previewNames);
 
     const overlay = document.createElement("div");
     overlay.className = "pk-onboard";
@@ -285,13 +323,18 @@ export function runStarterPick(deps: StarterPickDeps): Promise<number> {
         btn.type = "button";
         btn.className = "pk-onboard-card";
         btn.style.animationDelay = `${160 + card.index * 150}ms`;
-        btn.appendChild(buildBlob(card.genome));
+        // Jitter seed: the candidate's OWN slot, so the three portraits
+        // are never pixel-identical even if two ever shared a genome.
+        btn.appendChild(buildStarterPortrait(card.genome, `starter-${card.index}`));
+        // ROUND 2D item 1 — the name leads (species drops to a subtitle,
+        // same demotion as everywhere else in the round): whichever card
+        // gets tapped, `card.name` is who this Pip actually becomes.
         const name = document.createElement("span");
         name.className = "pk-onboard-card-name";
-        name.textContent = card.speciesName;
+        name.textContent = card.name;
         const kind = document.createElement("span");
         kind.className = "pk-onboard-card-kind";
-        kind.textContent = card.personalityName;
+        kind.textContent = `${card.speciesName} · ${card.personalityName}`;
         const intro = document.createElement("span");
         intro.className = "pk-onboard-card-intro";
         intro.textContent = card.intro;

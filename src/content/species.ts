@@ -37,7 +37,6 @@ export type Rarity = "common" | "uncommon" | "rare" | "lineage";
 export interface SpriteVariantParams {
   palettes: readonly string[];
   patterns: readonly string[];
-  accessorySlots: number;
   /**
    * Body shape inside the FIXED sprite box (spec §11; content-bible §1.4).
    * Optional — absent means "round", so existing entries (Mosspip,
@@ -104,7 +103,7 @@ export const species: Readonly<Record<SpeciesId, SpeciesDef>> = {
   // --- terminal. Same palette/pattern id lists as their base species ----
   // --- (content-bible §1.3: "a Pip keeps its birth variant ids through ---
   // --- evolution — the renderer reads genome.palette after the species --
-  // --- flips"), accessorySlots 2 (vs the base's 1). ---------------------
+  // --- flips"). -------------------------------------------------------
   grovepip: {
     id: "grovepip",
     name: "Grovepip",
@@ -113,7 +112,6 @@ export const species: Readonly<Record<SpeciesId, SpeciesDef>> = {
     sprite: {
       palettes: ["fern", "lichen", "clover"],
       patterns: ["plain", "speckled", "swirl"],
-      accessorySlots: 2,
     },
   },
   cairnpip: {
@@ -123,7 +121,6 @@ export const species: Readonly<Record<SpeciesId, SpeciesDef>> = {
     sprite: {
       palettes: ["flint", "riverstone", "sandstone"],
       patterns: ["plain", "banded", "speckled"],
-      accessorySlots: 2,
       silhouette: "chunky",
     },
   },
@@ -134,7 +131,6 @@ export const species: Readonly<Record<SpeciesId, SpeciesDef>> = {
     sprite: {
       palettes: ["cockle", "sandbar", "seafoam"],
       patterns: ["ripple", "speckled", "plain"],
-      accessorySlots: 2,
       silhouette: "wide",
     },
   },
@@ -147,7 +143,6 @@ export const species: Readonly<Record<SpeciesId, SpeciesDef>> = {
     sprite: {
       palettes: ["cinder", "hearthash", "coalglow"],
       patterns: ["ember", "plain", "speckled"],
-      accessorySlots: 2,
       silhouette: "round",
     },
   },
@@ -158,7 +153,6 @@ export const species: Readonly<Record<SpeciesId, SpeciesDef>> = {
     sprite: {
       palettes: ["powder", "hush", "bluehour"],
       patterns: ["flake", "plain", "banded"],
-      accessorySlots: 2,
       silhouette: "round",
     },
   },
@@ -169,7 +163,6 @@ export const species: Readonly<Record<SpeciesId, SpeciesDef>> = {
     sprite: {
       palettes: ["nimbus", "dawnwash", "duskveil"],
       patterns: ["puff", "plain", "ripple"],
-      accessorySlots: 2,
       silhouette: "tall",
     },
   },
@@ -182,7 +175,6 @@ export const species: Readonly<Record<SpeciesId, SpeciesDef>> = {
     sprite: {
       palettes: ["deepwater", "mossglow", "embercave"],
       patterns: ["glowdot", "plain", "ripple"],
-      accessorySlots: 2,
       silhouette: "round",
     },
   },
@@ -195,7 +187,6 @@ export const species: Readonly<Record<SpeciesId, SpeciesDef>> = {
     sprite: {
       palettes: ["fern", "lichen", "clover"],
       patterns: ["plain", "speckled", "swirl"],
-      accessorySlots: 1,
     },
     evolution: {
       targetSpeciesId: "grovepip",
@@ -217,7 +208,6 @@ export const species: Readonly<Record<SpeciesId, SpeciesDef>> = {
     sprite: {
       palettes: ["flint", "riverstone", "sandstone"],
       patterns: ["plain", "banded", "speckled"],
-      accessorySlots: 1,
       silhouette: "chunky",
     },
     evolution: {
@@ -237,7 +227,6 @@ export const species: Readonly<Record<SpeciesId, SpeciesDef>> = {
     sprite: {
       palettes: ["cockle", "sandbar", "seafoam"],
       patterns: ["ripple", "speckled", "plain"],
-      accessorySlots: 1,
       silhouette: "wide",
     },
     evolution: {
@@ -257,7 +246,6 @@ export const species: Readonly<Record<SpeciesId, SpeciesDef>> = {
     sprite: {
       palettes: ["cinder", "hearthash", "coalglow"],
       patterns: ["ember", "plain", "speckled"],
-      accessorySlots: 1,
       silhouette: "tiny",
     },
     evolution: {
@@ -277,7 +265,6 @@ export const species: Readonly<Record<SpeciesId, SpeciesDef>> = {
     sprite: {
       palettes: ["powder", "hush", "bluehour"],
       patterns: ["flake", "plain", "banded"],
-      accessorySlots: 1,
       silhouette: "round",
     },
     evolution: {
@@ -297,7 +284,6 @@ export const species: Readonly<Record<SpeciesId, SpeciesDef>> = {
     sprite: {
       palettes: ["nimbus", "dawnwash", "duskveil"],
       patterns: ["puff", "plain", "ripple"],
-      accessorySlots: 1,
       silhouette: "tall",
     },
     evolution: {
@@ -317,7 +303,6 @@ export const species: Readonly<Record<SpeciesId, SpeciesDef>> = {
     sprite: {
       palettes: ["deepwater", "mossglow", "embercave"],
       patterns: ["glowdot", "plain", "ripple"],
-      accessorySlots: 1,
       silhouette: "tiny",
     },
     evolution: {

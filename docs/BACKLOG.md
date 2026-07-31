@@ -65,3 +65,8 @@ Unfenced by §16 v1.6. The Keep-upgrade registry has carried `effect: "attractio
 
 - **Day 30 is thin.** Round 2F's design pass said so plainly: day 14 has four named pulls, day 30 has Renown and little else. 2H (individual Pips that develop and are finite) is the main answer; if it lands and day 30 is still thin, that is the next design problem.
 - **Six dead features have shipped so far** — `evolved.variantId`, milestone flair, the Album's bucketed patterns, `state.keepsakes`, Renown's reward, and the loot reveal's XP chip. Spec §16 v1.3 made it a standing rule: *"written to state" and "visible to the player" are separate acceptance criteria.* Every round since has still found one. Keep the mutation-testing stage that catches them.
+
+## Known defects awaiting a polish pass
+
+- **Accessory placement (round 2D).** Several of the 12 accessories render on the wrong body part: the scarf sits across the mouth rather than the neck, and the round's identity audit also reported the lantern over an eye and the bowtie/ember bead on the belly. Head accessories can also collide with the species sprout and float detached above the crown with inconsistent z-order. Visible on the starter-pick screen — the first thing a new player sees. Fix in `render/spriteResolver.ts`'s `drawAccessory` plus the two DOM portrait stylesheets, keeping `portraitPatterns.test.ts` parity green.
+- **Jitter is near-invisible.** Under ~1 CSS px at Keep scale and applied on one surface of seven. Either make it perceptible or cut it — an imperceptible feature is a dead one.

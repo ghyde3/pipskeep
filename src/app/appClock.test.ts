@@ -70,7 +70,6 @@ const CURIOUS_ONLY: StarterContent = {
   speciesId: "mosspip",
   palettes: ["fern"],
   patterns: ["plain"],
-  accessorySlots: 1,
   personalityIds: ["curious"],
   startingInventory: { berry: 3 },
 };

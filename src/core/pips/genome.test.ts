@@ -15,10 +15,13 @@ import type { RngStream } from "../rng";
 import { LifeStage, NEED_MAX, PipActivity } from "./types";
 import type { TraitGenome } from "./types";
 import {
+  NAME_STREAM,
   combineGenomes,
   createPipFromGenome,
   rollGenome,
+  rollPipName,
 } from "./genome";
+import { NAME_POOL } from "../../content/names";
 import type { GenomeSpeciesRegistry } from "./genome";
 import { species as contentSpecies } from "../../content/species";
 import { PERSONALITY_IDS } from "../../content/personalities";
@@ -31,7 +34,6 @@ const REGISTRY: GenomeSpeciesRegistry = {
     sprite: {
       palettes: ["fern", "lichen", "clover"],
       patterns: ["plain", "speckled", "swirl"],
-      accessorySlots: 1,
     },
   },
   emberpip: {
@@ -40,7 +42,6 @@ const REGISTRY: GenomeSpeciesRegistry = {
     sprite: {
       palettes: ["cinder", "flare"],
       patterns: ["smolder"],
-      accessorySlots: 3,
     },
   },
 };
@@ -51,7 +52,6 @@ const genomeOf = (
   speciesId: "mosspip",
   palette: "fern",
   pattern: "plain",
-  accessorySlots: 1,
   personalityId: "curious",
   shiny: false,
   ...overrides,
@@ -69,16 +69,76 @@ describe("rollGenome — spec §7.2/§7.3", () => {
     expect(a).toEqual(b);
   });
 
-  it("consumes exactly 5 rolls (species, palette, pattern, personality, shiny)", () => {
-    // The shiny check consumes its roll whether or not it fires — force
-    // both extremes to prove the cursor advance is outcome-independent.
+  it("consumes exactly 6 rolls (species, palette, pattern, personality, shiny, accessory)", () => {
+    // Six rolls, sampled against a 7-roll manual stream and compared
+    // after 6 — see the loop below.
+    // The shiny check and the accessory pick each consume their roll
+    // whether or not they "fire" — force both extremes on each to prove
+    // the cursor advance is outcome-independent.
     for (const shinyChance of [0, 1]) {
-      const rolled = stream(7);
-      rollGenome(rolled, { species: REGISTRY, shinyChance });
-      const manual = stream(7);
-      for (let i = 0; i < 5; i++) manual.next();
-      expect(rolled.getState()).toBe(manual.getState());
+      for (const accessoryIds of [[], ["leaf-cap", "scarf"]]) {
+        const rolled = stream(7);
+        rollGenome(rolled, { species: REGISTRY, shinyChance, accessoryIds });
+        const manual = stream(7);
+        for (let i = 0; i < 6; i++) manual.next();
+        expect(rolled.getState()).toBe(manual.getState());
+      }
     }
+  });
+
+  it("accessoryId resolves to null with no accessory content, else a pick from accessoryIds (round 2D)", () => {
+    for (let seed = 1; seed <= 20; seed++) {
+      expect(rollGenome(stream(seed), { species: REGISTRY }).accessoryId).toBeNull();
+    }
+    const accessoryIds = ["leaf-cap", "scarf", "flower"];
+    const seen = new Set<string | null | undefined>();
+    for (let seed = 1; seed <= 60; seed++) {
+      const genome = rollGenome(stream(seed), { species: REGISTRY, accessoryIds });
+      expect(accessoryIds).toContain(genome.accessoryId);
+      seen.add(genome.accessoryId);
+    }
+    expect(seen.size).toBeGreaterThan(1); // actually rolled, not a constant pick
+  });
+
+  it("never writes a dead `accessorySlots` field back into the genome (spec §16 v1.7)", () => {
+    // The field was copied verbatim from the species registry into every
+    // genome, serialized, schema-validated and migrated since Phase 1, and
+    // rendered by NOTHING — the seventh dead trait, and the one round 2D
+    // was pointed at. It is also the shape the round exists to prevent
+    // (species-wide data masquerading as per-individual), so it gets a
+    // standing guard rather than just a deletion.
+    const genome = rollGenome(stream(1), { species: REGISTRY });
+    expect(Object.keys(genome).sort()).toEqual(
+      ["accessoryId", "palette", "pattern", "personalityId", "shiny", "speciesId"].sort(),
+    );
+    const child = combineGenomes(genome, genome, stream(2), { species: REGISTRY });
+    expect("accessorySlots" in child).toBe(false);
+  });
+
+  it("the accessory is rolled PER-INDIVIDUAL, not derived from the species (round 2D item 3)", () => {
+    // ROUND 2D FIX STAGE. The test above varies the SEED over a
+    // multi-species registry, so different seeds pick different species —
+    // which means a species-DERIVED accessory (`accessoryIds[speciesId.
+    // length % n]`, the pre-2D `accessorySlots` failure mode reproduced
+    // exactly) still yields `seen.size > 1` and passes. The state-level
+    // guard in state.test.ts has the same hole: it calls `createNewGame`
+    // with a fresh seed per iteration, so species varies there too.
+    //
+    // Holding the species FIXED is the only way to see it. Round 2D's
+    // headline claim for this axis is "two Pips of the same species can
+    // wear different accessories"; this is that sentence as an assertion.
+    const singleSpecies: GenomeSpeciesRegistry = { mosspip: REGISTRY["mosspip"] as never };
+    const accessoryIds = ["leaf-cap", "scarf", "flower", "lantern"];
+    const seen = new Set<string | null | undefined>();
+    for (let seed = 1; seed <= 40; seed++) {
+      const genome = rollGenome(stream(seed), { species: singleSpecies, accessoryIds });
+      expect(genome.speciesId).toBe("mosspip");
+      seen.add(genome.accessoryId);
+    }
+    expect(
+      seen.size,
+      "every Mosspip rolled the same accessory — it is derived from the species, not the individual",
+    ).toBeGreaterThan(1);
   });
 
   it("rolls shiny deterministically from the stream at the tuning chance", () => {
@@ -115,7 +175,6 @@ describe("rollGenome — spec §7.2/§7.3", () => {
       expect(speciesEntry).toBeDefined();
       expect(speciesEntry?.sprite.palettes).toContain(genome.palette);
       expect(speciesEntry?.sprite.patterns).toContain(genome.pattern);
-      expect(genome.accessorySlots).toBe(speciesEntry?.sprite.accessorySlots);
       expect(PERSONALITY_IDS).toContain(genome.personalityId);
     }
   });
@@ -159,7 +218,6 @@ describe("combineGenomes — the breeding seam (spec §7.3/§12)", () => {
     speciesId: "emberpip",
     palette: "cinder",
     pattern: "smolder",
-    accessorySlots: 3,
     personalityId: "chaotic",
   });
 
@@ -187,7 +245,7 @@ describe("combineGenomes — the breeding seam (spec §7.3/§12)", () => {
     expect(restored).toEqual(live);
   });
 
-  it("consumes exactly 6 rolls whether or not mutations fire", () => {
+  it("consumes exactly 7 rolls whether or not mutations fire (round 2D fix stage added the accessory parent pick)", () => {
     for (const mutationChance of [0, 1]) {
       const rolled = stream(5);
       combineGenomes(parentA, parentB, rolled, {
@@ -195,7 +253,7 @@ describe("combineGenomes — the breeding seam (spec §7.3/§12)", () => {
         tuning: { breeding: { mutationChance } },
       });
       const manual = stream(5);
-      for (let i = 0; i < 6; i++) manual.next();
+      for (let i = 0; i < 7; i++) manual.next();
       expect(rolled.getState()).toBe(manual.getState());
     }
   });
@@ -230,7 +288,6 @@ describe("combineGenomes — the breeding seam (spec §7.3/§12)", () => {
       speciesId: "emberpip",
       palette: "also-not", // not in emberpip's list either
       pattern: "nope",
-      accessorySlots: 3,
       personalityId: "clingy",
     });
     for (let seed = 1; seed <= 60; seed++) {
@@ -244,21 +301,34 @@ describe("combineGenomes — the breeding seam (spec §7.3/§12)", () => {
     }
   });
 
-  it("accessorySlots comes from the child species' registry entry", () => {
+  it("the accessory is INHERITED from a parent, 50/50 (round 2D fix stage)", () => {
+    // The first pass omitted `accessoryId` from the child entirely, so
+    // every Pip ever born in the Nursery was permanently bare — and round
+    // 2H had already made breeding live and the succession mechanic, so
+    // that was a real path, not a dormant seam.
+    const wearer = genomeOf({ accessoryId: "leafcap" });
+    const other = genomeOf({ accessoryId: "scarf" });
+    const seen = new Set<string | null | undefined>();
     for (let seed = 1; seed <= 40; seed++) {
-      const child = combineGenomes(parentA, parentB, stream(seed), {
-        species: REGISTRY,
-        tuning: { breeding: { mutationChance: 0 } },
-      });
-      expect(child.accessorySlots).toBe(
-        REGISTRY[child.speciesId]?.sprite.accessorySlots,
-      );
+      const child = combineGenomes(wearer, other, stream(seed), { species: REGISTRY });
+      expect(["leafcap", "scarf"]).toContain(child.accessoryId);
+      seen.add(child.accessoryId);
+    }
+    expect(seen.size, "the accessory always came from the same parent").toBe(2);
+  });
+
+  it("two bare parents still produce a bare child (the roll fires either way)", () => {
+    const bare = genomeOf({ accessoryId: null });
+    for (let seed = 1; seed <= 20; seed++) {
+      expect(
+        combineGenomes(bare, bare, stream(seed), { species: REGISTRY }).accessoryId,
+      ).toBeNull();
     }
   });
 
-  it("species missing from the registry: variants inherit from parents, slots from the winning parent", () => {
-    const ghostA = genomeOf({ speciesId: "ghostpip", accessorySlots: 5, palette: "boo" });
-    const ghostB = genomeOf({ speciesId: "wispip", accessorySlots: 7, palette: "waft" });
+  it("species missing from the registry: variants inherit from parents", () => {
+    const ghostA = genomeOf({ speciesId: "ghostpip", palette: "boo" });
+    const ghostB = genomeOf({ speciesId: "wispip", palette: "waft" });
     for (let seed = 1; seed <= 40; seed++) {
       // mutationChance 1: with no registry entry the mutation cannot draw,
       // so it falls back to the parent pick (same roll count).
@@ -267,9 +337,7 @@ describe("combineGenomes — the breeding seam (spec §7.3/§12)", () => {
         tuning: { breeding: { mutationChance: 1 } },
       });
       expect([ghostA.palette, ghostB.palette]).toContain(child.palette);
-      expect(child.accessorySlots).toBe(
-        child.speciesId === "ghostpip" ? 5 : 7,
-      );
+      expect(["ghostpip", "wispip"]).toContain(child.speciesId);
     }
   });
 
@@ -280,7 +348,7 @@ describe("combineGenomes — the breeding seam (spec §7.3/§12)", () => {
 
   it("does not inherit shiny (fresh sparkle is earned at hatch, zero extra rolls)", () => {
     const shinyA = genomeOf({ shiny: true });
-    const shinyB = genomeOf({ speciesId: "emberpip", accessorySlots: 3, shiny: true });
+    const shinyB = genomeOf({ speciesId: "emberpip", shiny: true });
     for (let seed = 1; seed <= 20; seed++) {
       const child = combineGenomes(shinyA, shinyB, stream(seed), { species: REGISTRY });
       expect(child.shiny).toBe(false);
@@ -326,5 +394,55 @@ describe("createPipFromGenome — shared construction path (spec §7.2)", () => 
     });
     expect(pip.lifeStage).toBe(LifeStage.Adult);
     expect(pip.needs.hunger).toBe(60);
+  });
+});
+
+describe("rollPipName — individual names (round 2D, docs/BACKLOG.md 'Round 2D' item 1)", () => {
+  it("is deterministic from the stream cursor: same seed, same name", () => {
+    const a = rollPipName(stream(4, NAME_STREAM));
+    const b = rollPipName(stream(4, NAME_STREAM));
+    expect(a).toBe(b);
+  });
+
+  it("consumes exactly 1 roll, regardless of the used-names set", () => {
+    for (const used of [new Set<string>(), new Set(NAME_POOL.slice(0, 90))]) {
+      const rolled = stream(7, NAME_STREAM);
+      rollPipName(rolled, used);
+      const manual = stream(7, NAME_STREAM);
+      manual.next();
+      expect(rolled.getState()).toBe(manual.getState());
+    }
+  });
+
+  it("always returns a name from the pool", () => {
+    for (let seed = 1; seed <= 100; seed++) {
+      expect(NAME_POOL).toContain(rollPipName(stream(seed, NAME_STREAM)));
+    }
+  });
+
+  it("never returns a name already in usedNames, while an alternative exists", () => {
+    for (let seed = 1; seed <= 100; seed++) {
+      const used = new Set(NAME_POOL.slice(0, NAME_POOL.length - 1)); // all but one
+      const name = rollPipName(stream(seed, NAME_STREAM), used);
+      expect(name).toBe(NAME_POOL[NAME_POOL.length - 1]);
+    }
+  });
+
+  it("falls back to the full pool (permitting a duplicate) rather than crashing when every name is used", () => {
+    const used = new Set(NAME_POOL);
+    expect(() => rollPipName(stream(1, NAME_STREAM), used)).not.toThrow();
+    expect(NAME_POOL).toContain(rollPipName(stream(1, NAME_STREAM), used));
+  });
+
+  it("varies across seeds (not a constant pick)", () => {
+    const seen = new Set<string>();
+    for (let seed = 1; seed <= 40; seed++) {
+      seen.add(rollPipName(stream(seed, NAME_STREAM)));
+    }
+    expect(seen.size).toBeGreaterThan(1);
+  });
+
+  it("throws loudly on an empty pool (content error, same bar as pickSpecies)", () => {
+    expect(() => rollPipName(stream(1, NAME_STREAM), new Set(), [])).toThrow();
   });
 });

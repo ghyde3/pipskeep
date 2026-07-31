@@ -17,8 +17,20 @@ import type { PipId, PipNeeds, PipState } from "./pips/types";
 import { applyNeedsDelta } from "./pips/needs";
 import { runCatchup } from "./pips/catchup";
 import { ROSTER_FULL_MESSAGE, rosterFullMaxMessage } from "../content/eggs";
-import { GENESIS_STREAM, STARTER_HUNGER, createNewGame, rootReducer } from "./state";
+import {
+  GENESIS_STREAM,
+  PIP_NAME_MAX_LENGTH,
+  STARTER_CANDIDATE_COUNT,
+  STARTER_HUNGER,
+  createNewGame,
+  rollStarterCandidates,
+  rootReducer,
+  validatePipName,
+} from "./state";
 import type { GameAction, GameState } from "./state";
+import { species as contentSpecies } from "../content/species";
+import { NAME_POOL } from "../content/names";
+import { ACCESSORY_ROLL_POOL, NO_ACCESSORY_ID } from "../content/accessories";
 
 const needs = (overrides: Partial<PipNeeds> = {}): PipNeeds => ({
   hunger: 80,
@@ -37,7 +49,6 @@ function makePip(overrides: Partial<PipState> = {}): PipState {
       speciesId: "mosspip",
       palette: "fern",
       pattern: "plain",
-      accessorySlots: 1,
       personalityId: "curious",
       shiny: false,
     },
@@ -184,6 +195,99 @@ describe("createNewGame — spec §10.1 / §6.3", () => {
     expect(a).toEqual(b);
     expect(a.rngState[GENESIS_STREAM]).toBeTypeOf("number");
     expect(a.seed).toBe(123);
+  });
+
+  it("the starter gets an individually rolled name, not its species name (round 2D)", () => {
+    for (let seed = 1; seed <= 40; seed++) {
+      const starter = pip(createNewGame(seed, 0));
+      expect(NAME_POOL).toContain(starter.name);
+      expect(starter.name).not.toBe(contentSpecies[starter.speciesId]?.name);
+    }
+  });
+});
+
+describe("createNewGame / rollStarterCandidates — the starter trio (round 2D, docs/BACKLOG.md 'Round 2D' item 2)", () => {
+  it("rolls exactly three candidates of three DIFFERENT species", () => {
+    for (let seed = 0; seed < 30; seed++) {
+      const trio = rollStarterCandidates(seed);
+      expect(trio).toHaveLength(STARTER_CANDIDATE_COUNT);
+      const speciesIds = trio.map((g) => g.speciesId);
+      expect(new Set(speciesIds).size).toBe(STARTER_CANDIDATE_COUNT);
+      for (const genome of trio) {
+        const entry = contentSpecies[genome.speciesId];
+        expect(entry).toBeDefined();
+        expect(entry?.sprite.palettes).toContain(genome.palette);
+        expect(entry?.sprite.patterns).toContain(genome.pattern);
+      }
+    }
+  });
+
+  it("the genesis cursor advances IDENTICALLY whichever candidate wins (spec §2 rule 3)", () => {
+    for (const seed of [1, 42, 99, 0xdeadbeef]) {
+      const picks = [0, 1, 2].map((choice) => createNewGame(seed, 1_000, undefined, choice));
+      for (const state of picks) {
+        expect(state.rngState).toStrictEqual(picks[0]?.rngState);
+      }
+    }
+  });
+
+  it("createNewGame(choice i) is born from candidate i of the same trio", () => {
+    const seed = 2024;
+    const trio = rollStarterCandidates(seed);
+    for (let i = 0; i < trio.length; i++) {
+      const starter = pip(createNewGame(seed, 0, undefined, i));
+      expect(starter.genome).toStrictEqual(trio[i]);
+    }
+  });
+});
+
+describe("RENAME_PIP (round 2D, docs/BACKLOG.md 'Round 2D' item 5) — player data, not a roll", () => {
+  it("validatePipName trims, rejects empty, and caps length", () => {
+    expect(validatePipName("  Clover  ")).toEqual({ ok: true, name: "Clover" });
+    expect(validatePipName("")).toEqual({ ok: false, reason: "empty" });
+    expect(validatePipName("   ")).toEqual({ ok: false, reason: "empty" });
+    expect(validatePipName("x".repeat(PIP_NAME_MAX_LENGTH))).toEqual({
+      ok: true,
+      name: "x".repeat(PIP_NAME_MAX_LENGTH),
+    });
+    expect(validatePipName("x".repeat(PIP_NAME_MAX_LENGTH + 1))).toEqual({
+      ok: false,
+      reason: "tooLong",
+    });
+  });
+
+  it("renames a roster pip, trimmed", () => {
+    const state = createNewGame(7, 0);
+    const id = state.rosterOrder[0] as string;
+    const next = rootReducer(state, { type: "RENAME_PIP", pipId: id, name: "  Marmalade  " });
+    expect(next.pips[id]?.name).toBe("Marmalade");
+  });
+
+  it("is a silent no-op for an unknown pipId (same reference, matches SET_ACTIVE_PIP's contract)", () => {
+    const state = createNewGame(7, 0);
+    const next = rootReducer(state, { type: "RENAME_PIP", pipId: "nobody", name: "Ghost" });
+    expect(next).toBe(state);
+  });
+
+  it("is a silent no-op for an invalid name (empty or too long), and for renaming to the current name", () => {
+    const state = createNewGame(7, 0);
+    const id = state.rosterOrder[0] as string;
+    const currentName = state.pips[id]?.name as string;
+    expect(rootReducer(state, { type: "RENAME_PIP", pipId: id, name: "" })).toBe(state);
+    expect(rootReducer(state, { type: "RENAME_PIP", pipId: id, name: "   " })).toBe(state);
+    expect(
+      rootReducer(state, { type: "RENAME_PIP", pipId: id, name: "x".repeat(PIP_NAME_MAX_LENGTH + 1) }),
+    ).toBe(state);
+    expect(rootReducer(state, { type: "RENAME_PIP", pipId: id, name: currentName })).toBe(state);
+  });
+
+  it("does not touch any other pip, and never rolls or spends time", () => {
+    const state = createNewGame(7, 0);
+    const id = state.rosterOrder[0] as string;
+    const next = rootReducer(state, { type: "RENAME_PIP", pipId: id, name: "Juniper" });
+    expect(next.rngState).toEqual(state.rngState);
+    expect(next.lastTickAt).toBe(state.lastTickAt);
+    expect({ ...next.pips[id], name: state.pips[id]?.name }).toEqual(state.pips[id]);
   });
 });
 
@@ -679,6 +783,108 @@ describe("ROUND 2C — the Album (pipdex) wiring (docs/retention-bible.md §1)",
     expect(state.pipdex.entries["mosspip"]?.seenAt).toBe(6_000);
     expect(state.pipdex.entries["mosspip"]?.caughtAt).toBe(0);
     expect(state.pipdex.entries["mosspip"]?.knownBiomes).toContain("meadow");
+  });
+});
+
+describe("HATCH_EGG naming (round 2D, docs/BACKLOG.md 'Round 2D' items 1 & 3)", () => {
+  it("a hatchling gets an individually rolled name, distinct from its species name", () => {
+    const state = createNewGame(7, 0);
+    const { state: after } = hatchSecondPip(state, 1_000);
+    const hatchling = after.pips[
+      after.rosterOrder.find((id) => id !== state.rosterOrder[0]) as string
+    ];
+    expect(hatchling).toBeDefined();
+    expect(NAME_POOL).toContain(hatchling?.name);
+    expect(hatchling?.name).not.toBe(contentSpecies[hatchling?.speciesId as string]?.name);
+  });
+
+  it("a hatchling's genome carries an accessoryId rolled from the real accessory pool (round 2D item 3)", () => {
+    const state = createNewGame(7, 0);
+    const { state: after, pipId } = hatchSecondPip(state, 1_000);
+    // Accessory content now exists (content/accessories.ts) and is wired
+    // into HATCH_EGG's rollGenome call, so the field is a real pool member
+    // — either a genuine accessory id or the "none" bare sentinel — never
+    // the pre-content `null` placeholder.
+    const accessoryId = after.pips[pipId]?.genome.accessoryId;
+    expect(ACCESSORY_ROLL_POOL).toContain(accessoryId);
+  });
+
+  it("hatching many eggs rolls a mix of bare and accessorized Pips, never an unknown id", () => {
+    // A fresh single-starter game per seed (roster cap is 3 — one hatch on
+    // top of the starter never risks it) so this is 20 independent rolls,
+    // not one roster's worth.
+    const seen = new Set<string | null | undefined>();
+    for (let i = 0; i < 20; i++) {
+      const fresh = createNewGame(100 + i, 0);
+      const { state: after, pipId } = hatchSecondPip(fresh, 1_000);
+      const accessoryId = after.pips[pipId]?.genome.accessoryId;
+      expect(ACCESSORY_ROLL_POOL).toContain(accessoryId);
+      seen.add(accessoryId);
+    }
+    // Both a bare outcome and at least one real accessory showed up across
+    // 20 independent rolls — not a rigorous distribution test, just proof
+    // the pool is actually exercised both ways (spec §16 v1.3: "written to
+    // state" and "visible" are separate, and a roll that always lands on
+    // one outcome would be the same silent-dead-feature failure mode).
+    expect(seen.has(NO_ACCESSORY_ID)).toBe(true);
+    expect([...seen].some((id) => id !== NO_ACCESSORY_ID)).toBe(true);
+  });
+
+  it("avoids handing out a name already in the roster, Long Meadow, or Album (spec item 3)", () => {
+    // Seed the Album with every NAME_POOL entry but one, as synthetic
+    // "already caught" species pages — proves collectUsedNames actually
+    // narrows the pool at HATCH_EGG time, not just that rollPipName can.
+    const state = createNewGame(7, 0);
+    const starterName = state.pips[state.rosterOrder[0] as string]?.name;
+    // The one name left open must differ from the STARTER's own rolled
+    // name too (it is already in `usedNames` via the roster) — pick it
+    // relative to the starter, not by pool position, so this test can
+    // never accidentally reserve away the one name it expects to see.
+    const lastOpenName = NAME_POOL.find((n) => n !== starterName) as string;
+    const reserved = NAME_POOL.filter((n) => n !== lastOpenName);
+    const syntheticEntries = Object.fromEntries(
+      reserved.map((name, i) => [
+        `synthetic-species-${i}`,
+        {
+          speciesId: `synthetic-species-${i}`,
+          seenAt: 0,
+          caughtAt: 0,
+          caughtCount: 1,
+          firstPortrait: {
+            pipId: `synthetic-pip-${i}`,
+            name,
+            genome: {
+              speciesId: "mosspip",
+              palette: "fern",
+              pattern: "plain",
+              personalityId: "curious",
+              shiny: false,
+            },
+            personalityId: "curious",
+            lifeStageAtCatch: LifeStage.Adult,
+            sourceExpeditionId: null,
+          },
+          shinyCaughtAt: null,
+          variantsCaught: {},
+          knownBiomes: [],
+        },
+      ]),
+    );
+    const loaded = rootReducer(state, {
+      type: "LOAD_SAVE",
+      state: {
+        ...state,
+        pipdex: {
+          ...state.pipdex,
+          entries: { ...state.pipdex.entries, ...syntheticEntries },
+        },
+      },
+    });
+    const { state: after } = hatchSecondPip(loaded, 1_000);
+    const hatchling = after.pips[
+      after.rosterOrder.find((id) => id !== state.rosterOrder[0]) as string
+    ];
+    expect(hatchling?.name).toBe(lastOpenName);
   });
 });
 

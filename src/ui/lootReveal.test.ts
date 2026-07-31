@@ -415,7 +415,6 @@ describe("ROUND 2H — a lineage egg is named, not anonymous", () => {
     speciesId: "pebblepip",
     palette: "sandstone",
     pattern: "banded",
-    accessorySlots: 1,
     personalityId: "curious",
     shiny: false,
   };
@@ -493,7 +492,6 @@ describe("ROUND 2H — the queue controller resolves names from the Long Meadow"
               speciesId: "pebblepip",
               palette: "sandstone",
               pattern: "banded",
-              accessorySlots: 1,
               personalityId: "curious",
               shiny: false,
             },

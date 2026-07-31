@@ -151,12 +151,12 @@ describe("pity hatch cursor parity — the hard constraint", () => {
       mosspip: {
         id: "mosspip",
         rarity: "common",
-        sprite: { palettes: ["fern"], patterns: ["plain"], accessorySlots: 1 },
+        sprite: { palettes: ["fern"], patterns: ["plain"] },
       },
       cloudpip: {
         id: "cloudpip",
         rarity: "uncommon",
-        sprite: { palettes: ["nimbus"], patterns: ["puff"], accessorySlots: 1 },
+        sprite: { palettes: ["nimbus"], patterns: ["puff"] },
       },
     };
     const narrowedRegistry: GenomeSpeciesRegistry = {

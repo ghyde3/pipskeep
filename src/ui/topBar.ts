@@ -54,6 +54,7 @@ import type { NeedId } from "../core/pips/types";
 import type { Mood } from "../core/pips/mood";
 import { MOOD_DISPLAY_STREAM, displayedMood } from "../core/pips/dialogue";
 import { isSulking } from "../core/pips/machine";
+import { buildPortraitEl } from "./pipdex";
 import { createRngFromState } from "../core/rng";
 import {
   moodColors,
@@ -340,20 +341,38 @@ export function createTopBar(deps: TopBarDeps): TopBar {
 
     const chip = document.createElement("div");
     chip.className = "pk-chip";
-    const blob = document.createElement("div");
-    blob.className = "pk-chip-blob";
-    const eyes = document.createElement("div");
-    eyes.className = "pk-chip-eyes";
-    eyes.append(document.createElement("i"), document.createElement("i"));
-    blob.appendChild(eyes);
+    // ROUND 2D FIX STAGE — the cast strip is the ONE roster list on screen
+    // 100 % of the time, and it was the one list that showed no name, no
+    // pattern, no accessory, no silhouette and no jitter: it drew a
+    // palette-tinted rounded box with two eye dots, so two Pips of the
+    // same species on the same palette rendered as identical chips, and a
+    // 12-Pip roster with twelve different accessories rendered as twelve
+    // identical chips. `title` is hover-only and this game targets
+    // 430×932 mobile, so there was no way to tell chips apart except by
+    // tapping them.
+    //
+    // Reusing `ui/pipdex.ts`'s `buildPortraitEl` — the same builder the
+    // Album, Long Meadow, Nursery, memorial and starter cards use — fixes
+    // all five at once and, more importantly, means the strip can never
+    // drift from them again (the divergence round 2E already shipped once
+    // and `portraitPatterns.test.ts` exists to prevent).
+    const portrait = buildPortraitEl(
+      {
+        speciesId: pip.speciesId,
+        paletteId: pip.genome.palette,
+        pattern: pip.genome.pattern,
+        shiny: pip.genome.shiny,
+        accessoryId: pip.genome.accessoryId,
+        jitterSeed: pip.id,
+      },
+      "chip",
+    );
     const palette = resolvePipPalette(pip.speciesId, pip.genome.palette);
-    blob.style.background = palette.body;
-    blob.style.borderColor = palette.outline;
     chip.style.setProperty("--pk-accent", palette.accent);
 
     const moodDot = document.createElement("div");
     moodDot.className = "pk-mood-dot";
-    chip.append(blob, moodDot);
+    chip.append(portrait, moodDot);
 
     const comb = document.createElement("div");
     comb.className = "pk-comb";
@@ -369,7 +388,15 @@ export function createTopBar(deps: TopBarDeps): TopBar {
       combFills[need] = fill;
     }
 
-    button.append(chip, comb);
+    // The name, under the comb. Truncated with an ellipsis at chip width
+    // — the first several characters are what distinguish "Bracken" from
+    // "Sorrel", and the full name is one tap away in the who-line and the
+    // focus header.
+    const nameEl = document.createElement("div");
+    nameEl.className = "pk-castchip-name";
+    nameEl.textContent = pip.name;
+
+    button.append(chip, comb, nameEl);
     button.addEventListener("click", () => {
       sound("ui.tap");
       if (button.classList.contains("pk-castchip--active")) {
@@ -402,7 +429,22 @@ export function createTopBar(deps: TopBarDeps): TopBar {
         state.rosterOrder
           .map((id) => {
             const p = state.pips[id];
-            return p === undefined ? id : `${id}|${p.speciesId}|${p.genome.palette}`;
+            // Every field `buildChip` draws. `name` is in here since the
+            // fix stage: a rename used to update the who-line and the
+            // aria-label but leave the chip's own tooltip (and now its
+            // label) showing the OLD name indefinitely, because a rename
+            // changed nothing in this key.
+            return p === undefined
+              ? id
+              : [
+                  id,
+                  p.name,
+                  p.speciesId,
+                  p.genome.palette,
+                  p.genome.pattern,
+                  p.genome.accessoryId ?? "",
+                  p.genome.shiny ? "1" : "0",
+                ].join("|");
           })
           .join("~") + `~active:${state.activePipId}~reveals:${revealCount}`;
 

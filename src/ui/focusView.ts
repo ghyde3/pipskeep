@@ -43,6 +43,7 @@
  */
 
 import type { Clock } from "../core/clock";
+import { PIP_NAME_MAX_LENGTH, validatePipName } from "../core/state";
 import type { GameAction, GameState } from "../core/state";
 import { LifeStage, NEED_IDS, PipActivity } from "../core/pips/types";
 import type { NeedId, PipState } from "../core/pips/types";
@@ -95,6 +96,8 @@ import { lineageHintFor } from "./memorial";
 import { pipSeason } from "../core/pips/lifecycle";
 import { peekDisplayedMood } from "./topBar";
 import { sound } from "../app/sound";
+import { resolveAccessory } from "../content/accessories";
+import { SILHOUETTE_FRACTIONS, jitterStyleVars } from "../render/pipGeometry";
 
 /** Bar color-shift thresholds — same readout language as the top bar. */
 const WARN_BELOW = 40;
@@ -124,6 +127,35 @@ const FALLBACK_BLURB = "A Pip of mysterious habits and strong opinions.";
 /** Blurb for a personality id — never empty, never crashes. */
 export function personalityBlurb(personalityId: string): string {
   return PERSONALITY_BLURBS[personalityId] ?? FALLBACK_BLURB;
+}
+
+/**
+ * ROUND 2D item 5 (docs/BACKLOG.md "Round 2D" item 1, the owner's own
+ * lean: "game-given with rename available but not prominent — the Pip
+ * *is* Pipsqueak, you didn't author it") — warm copy for a RENAME_PIP
+ * validation failure (`core/state.ts`'s `validatePipName`). Same
+ * precedent as `ui/sanctuary.ts`'s `RETIRE_REFUSAL_COPY`: a structural
+ * rule, stated kindly, never a scold.
+ */
+export const RENAME_ERROR_COPY: Readonly<Record<"empty" | "tooLong", string>> = {
+  empty: "Every Pip needs a name to answer to.",
+  tooLong: `Let's keep it to ${PIP_NAME_MAX_LENGTH} characters or fewer.`,
+};
+
+/**
+ * ROUND 2D item 3 — a genome's `accessoryId` → the focus-view portrait's
+ * CSS class suffix, or `null` for "draw nothing" (every "bare" spelling
+ * `resolveAccessory` already collapses: `undefined`/`null`/the `"none"`
+ * sentinel/an unrecognized id). Direct 1:1 pass-through, same shape as
+ * `ui/pipdex.ts`'s `albumAccessoryClassSuffix` (that file's own doc has
+ * the "why export this at all" reasoning: `portraitPatterns.test.ts`
+ * calls it directly so a typo here can't silently ship a blank
+ * accessory on THIS surface either).
+ */
+export function focusAccessoryClassSuffix(
+  accessoryId: string | null | undefined,
+): string | null {
+  return resolveAccessory(accessoryId)?.id ?? null;
 }
 
 /** Life-stage readout (spec §4.6): short, warm. */
@@ -760,6 +792,27 @@ export function createFocusView(deps: FocusViewDeps): FocusView {
   panel.className = "pk-focus";
   el.append(backdrop, panel);
 
+  // ROUND 2D item 5 — the rename dialog. Its own overlay, same reasoning
+  // as `ui/sanctuary.ts`'s retire confirm (that file's module doc has the
+  // full case): it must survive `panel.replaceChildren()` inside
+  // `rebuild()` below, which fires on nearly every TICK while the focus
+  // view stays open (needs decay changes state ~1/s), so its DOM lives as
+  // a SIBLING of `panel` — appended to `el`, never to `panel` — and paints
+  // only from its own cached state (`renamePipId`/`renameDraft`/
+  // `renameError`), never re-derived from live GameState. An in-progress
+  // edit must never be stomped by an unrelated rebuild.
+  const renameWrap = document.createElement("div");
+  renameWrap.className = "pk-rename-wrap";
+  const renameBackdrop = document.createElement("div");
+  renameBackdrop.className = "pk-rename-backdrop";
+  const renamePanel = document.createElement("div");
+  renamePanel.className = "pk-rename";
+  renamePanel.setAttribute("role", "dialog");
+  renamePanel.setAttribute("aria-modal", "true");
+  renamePanel.setAttribute("aria-label", "Rename this Pip");
+  renameWrap.append(renameBackdrop, renamePanel);
+  el.appendChild(renameWrap);
+
   let isOpen = false;
   let viewedPipId: string | null = null;
   let lastState: GameState | null = null;
@@ -794,6 +847,15 @@ export function createFocusView(deps: FocusViewDeps): FocusView {
   let greetingTimer: number | null = null;
   let greetingText: string | null = null;
 
+  // ROUND 2D item 5 — the rename dialog's own cached state (module doc on
+  // `renameWrap` above explains why it is cached rather than re-derived).
+  let renamePipId: string | null = null;
+  /** The name being edited (immutable original — for the heading). */
+  let renameOriginalName = "";
+  /** Live textbox contents, kept in sync via the input's own listener. */
+  let renameDraft = "";
+  let renameError: string | null = null;
+
   const close = (): void => {
     isOpen = false;
     viewedPipId = null;
@@ -804,8 +866,117 @@ export function createFocusView(deps: FocusViewDeps): FocusView {
       greetingTimer = null;
     }
     el.classList.remove("pk-focus-wrap--open");
+    // Rename lives nested inside `el` (module doc above), so it is already
+    // visually hidden the instant the wrap loses `--open` — this just
+    // keeps its own state from surviving into the next open() too.
+    closeRename();
   };
   backdrop.addEventListener("click", close);
+
+  const closeRename = (): void => {
+    renamePipId = null;
+    renameOriginalName = "";
+    renameDraft = "";
+    renameError = null;
+    renameWrap.classList.remove("pk-rename-wrap--open");
+  };
+  renameBackdrop.addEventListener("click", closeRename);
+
+  /** Pure paint from the cached rename state — see `renameWrap`'s module
+   * doc for why this never reads live GameState. Safe to call as many
+   * times as needed (every keystroke's error-clear, the Save handler). */
+  const paintRename = (): void => {
+    renamePanel.replaceChildren();
+    if (renamePipId === null) return;
+
+    const heading = document.createElement("div");
+    heading.className = "pk-rename-heading";
+    heading.textContent = `Rename ${renameOriginalName}?`;
+
+    const sub = document.createElement("div");
+    sub.className = "pk-rename-copy";
+    sub.textContent = "Same Pip, new name — change it again anytime.";
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "pk-rename-input";
+    input.maxLength = PIP_NAME_MAX_LENGTH;
+    input.value = renameDraft;
+    input.setAttribute("aria-label", `New name for ${renameOriginalName}`);
+    input.addEventListener("input", () => {
+      renameDraft = input.value;
+      // Clear a standing error the moment they start fixing it, rather
+      // than making them re-submit to find out it's gone.
+      if (renameError !== null) {
+        renameError = null;
+        const errorEl = renamePanel.querySelector(".pk-rename-error");
+        errorEl?.remove();
+      }
+    });
+    input.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        submitRename();
+      } else if (ev.key === "Escape") {
+        ev.preventDefault();
+        closeRename();
+      }
+    });
+
+    renamePanel.append(heading, sub, input);
+
+    if (renameError !== null) {
+      const error = document.createElement("div");
+      error.className = "pk-rename-error";
+      error.textContent = renameError;
+      renamePanel.appendChild(error);
+    }
+
+    const actions = document.createElement("div");
+    actions.className = "pk-rename-actions";
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "pk-rename-cancel";
+    cancel.textContent = "Never mind";
+    cancel.addEventListener("click", () => {
+      sound("ui.tap");
+      closeRename();
+    });
+    const save = document.createElement("button");
+    save.type = "button";
+    save.className = "pk-rename-save";
+    save.textContent = "Save";
+    save.addEventListener("click", submitRename);
+    actions.append(cancel, save);
+    renamePanel.appendChild(actions);
+
+    input.focus?.();
+  };
+
+  /** Validate + dispatch, or repaint with a kind inline error. Shared by
+   * the Save tap and the input's Enter key. */
+  function submitRename(): void {
+    if (renamePipId === null) return;
+    sound("ui.tap");
+    const validated = validatePipName(renameDraft);
+    if (!validated.ok) {
+      renameError = RENAME_ERROR_COPY[validated.reason];
+      paintRename();
+      return;
+    }
+    deps.dispatch({ type: "RENAME_PIP", pipId: renamePipId, name: validated.name });
+    closeRename();
+  }
+
+  const openRename = (pipId: string, currentName: string): void => {
+    renamePipId = pipId;
+    renameOriginalName = currentName;
+    renameDraft = currentName;
+    renameError = null;
+    sound("ui.sheet");
+    paintRename();
+    renameWrap.classList.add("pk-rename-wrap--open");
+  };
 
   const applyGreeting = (): void => {
     if (greetingEl === null) return;
@@ -877,6 +1048,20 @@ export function createFocusView(deps: FocusViewDeps): FocusView {
     const portrait = document.createElement("div");
     portrait.className = "pk-portrait";
     portrait.style.setProperty("--pk-accent", palette.accent);
+    // ROUND 2D FIX STAGE — this portrait now wears the species silhouette
+    // and the Pip's own jitter, both of which it previously ignored (a
+    // fixed `inset: 4px` box: a Tidepip and a Mosspip were the same
+    // shape, and two Pips with one genome were byte-identical). Same
+    // fractions ui/pipdex.ts uses, same pure jitter the Keep sprite uses.
+    const portraitFractions =
+      SILHOUETTE_FRACTIONS[
+        species[pip.speciesId]?.sprite.silhouette ?? "round"
+      ];
+    portrait.style.setProperty("--pk-wfrac", String(portraitFractions.w));
+    portrait.style.setProperty("--pk-hfrac", String(portraitFractions.h));
+    for (const [varName, value] of Object.entries(jitterStyleVars(pip.id))) {
+      portrait.style.setProperty(varName, value);
+    }
     const pBlob = document.createElement("div");
     pBlob.className = `pk-portrait-blob pk-portrait-blob--${pip.genome.pattern}`;
     pBlob.style.background = palette.body;
@@ -894,15 +1079,57 @@ export function createFocusView(deps: FocusViewDeps): FocusView {
     const blushR = document.createElement("span");
     blushR.className = "pk-portrait-blush pk-portrait-blush--r";
     blushR.style.background = palette.blush;
-    pBlob.append(pBelly, pEyes, blushL, blushR);
+    // ROUND 2D FIX STAGE — the mouth (see ui.css). Parity with the Pixi
+    // resolver, which has always drawn one; without it the face has no
+    // lower landmark and every neck accessory reads as a mouth.
+    const pMouth = document.createElement("span");
+    pMouth.className = "pk-portrait-mouth";
+    pMouth.style.borderBottomColor = palette.outline;
+    pBlob.append(pBelly, pEyes, pMouth, blushL, blushR);
+    // ROUND 2D item 3 — worn accessory, the same registry
+    // render/spriteResolver.ts's Pixi resolver reads, rendered through an
+    // independently authored DOM shape (portraitPatterns.test.ts's
+    // three-implementations parity, extended to accessories).
+    const accessorySuffix = focusAccessoryClassSuffix(pip.genome.accessoryId);
+    if (accessorySuffix !== null) {
+      const accessoryDef = resolveAccessory(pip.genome.accessoryId);
+      const pAccessory = document.createElement("span");
+      pAccessory.className = `pk-portrait-accessory pk-portrait-accessory--${accessorySuffix}`;
+      if (accessoryDef !== null) {
+        pAccessory.style.setProperty("--pk-acc-primary", accessoryDef.primaryColor);
+        pAccessory.style.setProperty(
+          "--pk-acc-secondary",
+          accessoryDef.secondaryColor ?? accessoryDef.primaryColor,
+        );
+        pAccessory.setAttribute("aria-hidden", "true");
+        pAccessory.title = accessoryDef.name;
+      }
+      pBlob.appendChild(pAccessory);
+    }
     portrait.appendChild(pBlob);
 
     // --- Identity block ---
     const head = document.createElement("div");
     head.className = "pk-focus-head";
+    const nameRow = document.createElement("div");
+    nameRow.className = "pk-focus-name-row";
     const name = document.createElement("div");
     name.className = "pk-focus-name";
     name.textContent = model.name;
+    // ROUND 2D item 5 — rename, discoverable but not prominent (the
+    // owner's own lean, module doc above): a small pencil beside the
+    // name, never a headline action.
+    const renameBtn = document.createElement("button");
+    renameBtn.type = "button";
+    renameBtn.className = "pk-focus-rename-btn";
+    renameBtn.textContent = "✎";
+    renameBtn.title = "Rename";
+    renameBtn.setAttribute("aria-label", `Rename ${model.name}`);
+    renameBtn.addEventListener("click", () => {
+      sound("ui.tap");
+      openRename(model.pipId, model.name);
+    });
+    nameRow.append(name, renameBtn);
     const kind = document.createElement("div");
     kind.className = "pk-focus-kind";
     kind.textContent = `${model.speciesName} · ${model.personalityName} · ${model.stageLabel}`;
@@ -933,7 +1160,7 @@ export function createFocusView(deps: FocusViewDeps): FocusView {
     // line does (see the two `applyX()` calls below).
     greetingEl = document.createElement("div");
     greetingEl.className = "pk-focus-greeting";
-    head.append(name, kind);
+    head.append(nameRow, kind);
     if (titles !== null) head.appendChild(titles);
     head.append(blurb, greetingEl, moodRow);
 

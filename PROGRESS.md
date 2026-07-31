@@ -14,6 +14,16 @@ Phase-gate log and decision journal, per spec §13–§15. Append entries; never
 | 5 — The Keep | **gate passed** | 2026-07-29 |
 | 6 — Polish, PWA, onboarding | **gate passed** | 2026-07-29 |
 
+### Round 2D — Pip identity & variety — 2026-07-31 — GATE PASSED (with a known visual defect)
+**2920 tests** (was 2662). Save schema v9→v10.
+
+- **The round's purpose is achieved.** A fresh onboarding now offers **Ribbon** (Mosspip · Clingy), **Oatcake** (Pebblepip · Hardworking) and **Spindle** (Tidepip · Lazy) — three names, three species, three silhouettes, three palettes, three personalities, each wearing a different accessory. Verified in the browser at 375px. The complaint that started this round — "Mosspip / Mosspip / Mosspip" — is gone.
+- **Shipped:** a 140-name pool in 7 thematic groups; per-individual name rolls on create, hatch AND the lineage-egg branch, deduped against roster + Long Meadow + Album; `RENAME_PIP`; three distinct starter species; **12 accessories finally attached to the `accessoryAnchor` that had been positioned and empty since Phase 2 — the seventh dead feature, now alive**; per-individual jitter (body, eyes, markings).
+- **Deliberate design calls:** the name is NOT part of `TraitGenome` (it is not heritable, and keeping it out left `combineGenomes` and every cursor contract untouched); a dedicated `NAME_STREAM` disjoint from the genesis/egg streams so no existing determinism guarantee — 2C's pity ladder, 2H's lineage — was perturbed; and `NO_ACCESSORY_ID` is a real pool entry rather than a null, so **40% of Pips come up bare** because bare has to stay charming.
+- **The identity audit failed the round on its first pass and was right to.** It found the starter cards all showing the SAME name (the exact bug the round existed to fix), the cast strip carrying no name/accessory/pattern so same-palette Pips were pixel-identical in the always-visible surface, starters and bred children permanently unable to wear accessories, jitter invisible in practice (<1 CSS px, and two of four axes mathematically dead because FNV-1a's last-byte diffusion made `eyeRadiusX ≡ eyeRadiusY`), the loss eulogy stripping a Pip's accessory at the one moment individuality matters most, and eight pool names colliding with existing vocabulary (Berry is a food, Meadow is an expedition AND the sanctuary). All fixed in-round.
+- **KNOWN DEFECT, not fixed:** several accessories still render on the wrong body part — the scarf sits across the mouth like a gag rather than around the neck, and the audit reported the lantern over an eye and the bowtie/ember bead on the belly. Cosmetic, visible on the first screen a new player sees. Logged in `docs/BACKLOG.md` for a render polish pass.
+- Mutation blockers fixed in-round: the accessory parity guard never rendered DOM (the entire DOM half of the feature could be deleted with the suite green), and the lineage-egg hatch branch could revert to species-naming with no test noticing — which would have silently gutted round 2H's payoff.
+
 ### Round 2H — Lifecycle, lineage & risk — 2026-07-30 — GATE PASSED
 **2662 tests** (was 2286). The round that changed what the game *is*: Pips are finite. Spec §16 v1.5's five promises are the gate, and each has named tests.
 

@@ -40,6 +40,12 @@ import { tuning as contentTuning } from "../../content/tuning";
 // registry `core/state.ts`'s CLAIM_MILESTONE arm reads.
 import { MILESTONES as contentMilestones } from "../../content/milestones";
 import { masteryTier } from "../progression/mastery";
+// ROUND 2D — INDIVIDUAL NAMES (docs/BACKLOG.md "Round 2D" item 1): the
+// v9 → v10 step's own migration-only RNG draw + the species registry it
+// reads to detect "still carrying a bare species name".
+import { createRng } from "../rng";
+import { rollPipName } from "../pips/genome";
+import { species as contentSpecies } from "../../content/species";
 
 /**
  * One schema upgrade step: takes a raw vN blob, returns a raw v(N+1)
@@ -99,10 +105,6 @@ function derivePipdex(pipsRaw: unknown, keepLevel: number, at: number): PipdexSt
           speciesId: birthSpeciesId,
           palette: typeof genomeValue["palette"] === "string" ? genomeValue["palette"] : "",
           pattern: typeof genomeValue["pattern"] === "string" ? genomeValue["pattern"] : "",
-          accessorySlots:
-            typeof genomeValue["accessorySlots"] === "number"
-              ? genomeValue["accessorySlots"]
-              : 0,
           personalityId:
             typeof genomeValue["personalityId"] === "string"
               ? genomeValue["personalityId"]
@@ -635,6 +637,109 @@ export const MIGRATIONS: Readonly<Record<number, MigrationStep>> = {
 
       out["state"] = { ...state, pips: migratedPips, sanctuary: migratedSanctuary };
     }
+    return out;
+  },
+
+  /**
+   * v9 → v10 (round 2D — docs/BACKLOG.md "Round 2D — Pip identity &
+   * variety" item 1, spec §7.1/§7.3 amended): INDIVIDUAL NAMES.
+   *
+   * Every Pip already owned — active AND resident in the Long Meadow —
+   * that is STILL CARRYING A BARE SPECIES DISPLAY NAME
+   * (`createPipFromGenome` used to default every hatch's name to
+   * `contentSpecies[speciesId].name`, so "the name equals SOME species'
+   * display name" is the exact, structural "never got an individual
+   * name" tell) is OFFERED a real one, rolled deterministically from a
+   * dedicated migration-only stream seeded off the save's own `seed`.
+   * Matched against EVERY species in the registry, not just the Pip's own
+   * live `speciesId` — a Pip that evolved after hatching keeps its BIRTH
+   * species' name untouched (e.g. a Grovepip still named "Mosspip"), and
+   * that still counts as "never renamed". A Pip whose name is anything
+   * else — including a name a PLAYER already typed that happens not to
+   * match any species — is a real, chosen identity and is NEVER touched
+   * (the player-rename guarantee: "a player-renamed Pip is never
+   * touched").
+   *
+   * The migration stream is NOT persisted into `rngState` — this is a
+   * ONE-TIME backfill over already-serialized data, not a live gameplay
+   * roll, so it needs no cursor to resume from (`rollPipName`'s own doc
+   * comment: the live equivalent, `NAME_STREAM`, is used ONLY by
+   * `createNewGame`/`HATCH_EGG`, never here).
+   *
+   * Dedup ("avoid duplicate names against the roster + Long Meadow +
+   * Album at roll time", item 3): seeded with every name already frozen
+   * into the Album's `firstPortrait`s (read-only — Album portraits are
+   * NEVER touched by this step, matching how `RENAME_PIP` never touches
+   * them at live gameplay either), then every pip is visited in a fixed
+   * order (roster, then Long Meadow) with each pip's resulting name — kept
+   * or freshly rolled — added to the used set before the next pip is
+   * considered, so the SAME fixture always migrates to the SAME names and
+   * two Pips needing a name in the same save never collide with each
+   * other.
+   *
+   * `TraitGenome.accessoryId` (this SAME v10 bump's other slice, round
+   * 2D item 3's data half) needs no migration at all — it is OPTIONAL
+   * (`undefined ≡ never rolled`, the `sulking`/`mastery` precedent), so
+   * every existing genome round-trips untouched with the field simply
+   * absent (`serialize.ts`'s own module doc for v10).
+   */
+  9: (blob) => {
+    const out: Record<string, unknown> = { ...blob, schemaVersion: 10 };
+    const state = blob["state"];
+    if (!isPlainRecord(state)) return out;
+
+    const seedValue = state["seed"];
+    const seed = typeof seedValue === "number" ? seedValue : 0;
+    const rng = createRng(seed).stream("migration-name-v10");
+
+    const usedNames = new Set<string>();
+    const pipdexValue = state["pipdex"];
+    const entriesValue = isPlainRecord(pipdexValue) ? pipdexValue["entries"] : undefined;
+    if (isPlainRecord(entriesValue)) {
+      for (const entry of Object.values(entriesValue)) {
+        if (!isPlainRecord(entry)) continue;
+        const portrait = entry["firstPortrait"];
+        if (isPlainRecord(portrait) && typeof portrait["name"] === "string") {
+          usedNames.add(portrait["name"]);
+        }
+      }
+    }
+
+    const speciesNames = new Set(Object.values(contentSpecies).map((def) => def.name));
+
+    const migratePip = (pip: unknown): unknown => {
+      if (!isPlainRecord(pip)) return pip;
+      const name = pip["name"];
+      if (typeof name !== "string") return pip;
+      if (!speciesNames.has(name)) {
+        usedNames.add(name);
+        return pip;
+      }
+      const rolled = rollPipName(rng, usedNames);
+      usedNames.add(rolled);
+      return { ...pip, name: rolled };
+    };
+
+    const pips = state["pips"];
+    const migratedPips = isPlainRecord(pips)
+      ? Object.fromEntries(
+          Object.entries(pips).map(([pipId, pip]) => [pipId, migratePip(pip)]),
+        )
+      : pips;
+
+    const sanctuary = state["sanctuary"];
+    let migratedSanctuary = sanctuary;
+    if (isPlainRecord(sanctuary) && isPlainRecord(sanctuary["pips"])) {
+      const residents = Object.fromEntries(
+        Object.entries(sanctuary["pips"]).map(([pipId, record]) => {
+          if (!isPlainRecord(record)) return [pipId, record];
+          return [pipId, { ...record, pip: migratePip(record["pip"]) }];
+        }),
+      );
+      migratedSanctuary = { ...sanctuary, pips: residents };
+    }
+
+    out["state"] = { ...state, pips: migratedPips, sanctuary: migratedSanctuary };
     return out;
   },
 };

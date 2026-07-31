@@ -175,6 +175,13 @@ function portraitVisualOf(pip: PipState): PortraitVisual {
     paletteId: pip.evolved?.variantId ?? pip.genome.palette,
     pattern: pip.genome.pattern,
     shiny: pip.genome.shiny,
+    // ROUND 2D FIX STAGE — `accessoryId` and `jitterSeed` were both
+    // omitted here, so this surface drew a LESS individual Pip than every
+    // other one: the same creature, minus what it was wearing and minus
+    // its own proportions. `ui/sanctuary.ts` and `ui/pipdex.ts` always
+    // passed them; these builders were the outliers.
+    accessoryId: pip.genome.accessoryId,
+    jitterSeed: pip.id,
   };
 }
 

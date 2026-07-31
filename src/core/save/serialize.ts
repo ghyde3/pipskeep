@@ -71,6 +71,27 @@ import type { KeepState, Placement, PlacementId } from "../keep";
 import type { JobAssignment, JobOutcome, JobsByPip } from "../keep/jobs";
 
 /**
+ * v10 (round 2D — docs/BACKLOG.md "Round 2D — Pip identity & variety",
+ * spec §7.1/§7.3 amended): INDIVIDUAL NAMES + the accessory seam.
+ *
+ *   - `TraitGenome.accessoryId?: string | null` (optional, `undefined ≡`
+ *     never rolled — the same `sulking`/`mastery` precedent) — the
+ *     per-INDIVIDUAL worn accessory `rollGenome` now rolls (round 2D item
+ *     3's data half; content authoring/rendering is a separate seam). An
+ *     optional field alone needs no migration (the `Placement.granted`,
+ *     v8, precedent) — `MIGRATIONS[9]` below does NOT touch it.
+ *   - The schema bump itself is for a genuine DATA migration, not a shape
+ *     change: `PipState.name` was already required and unchanged in
+ *     shape, but `MIGRATIONS[9]` offers a real, individually rolled name
+ *     (`core/pips/genome.ts`'s `rollPipName`) to every Pip STILL CARRYING
+ *     a bare species display name (`createPipFromGenome` used to default
+ *     every hatch's name to `contentSpecies[speciesId].name` — three
+ *     starters all reading "Mosspip / Mosspip / Mosspip" was the flaw
+ *     this round exists to fix). A Pip whose name is anything else —
+ *     including one a PLAYER already typed — is never touched; matches
+ *     the v5 `sulking` precedent for "a genuine behavioral migration gets
+ *     its own version even though no field's TYPE changed".
+ *
  * v9 (round 2H — spec §16 v1.5, docs/lifecycle-bible.md §9.2): PER-PIP
  * LEVELS + LIFESPAN. Four new OPTIONAL per-pip fields, same
  * `undefined ≡ default` contract `sulking`/`mastery` already established
@@ -158,7 +179,7 @@ import type { JobAssignment, JobOutcome, JobsByPip } from "../keep/jobs";
  * `nextPlacementNumber`, per-pip `evolved` records, and the two new
  * transient outcome echoes (job, evolve). v2, Phase 4: keepLevel, eggs,
  * pendingReveals, id counters.) */
-export const CURRENT_SCHEMA_VERSION = 9;
+export const CURRENT_SCHEMA_VERSION = 10;
 
 /** The on-disk envelope (spec §8). */
 export interface SaveBlob {
@@ -445,16 +466,29 @@ function validateGenome(value: unknown, path: string): TraitGenome {
     speciesId: expectString(rec["speciesId"], p(path, "speciesId")),
     palette: expectString(rec["palette"], p(path, "palette")),
     pattern: expectString(rec["pattern"], p(path, "pattern")),
-    accessorySlots: expectFiniteNumber(
-      rec["accessorySlots"],
-      p(path, "accessorySlots"),
-    ),
+    // v10 (round 2D fix stage, spec §16 v1.7) — `accessorySlots` is NOT
+    // read any more. It was written into every genome since Phase 1,
+    // validated here, and rendered by nothing; worse, evolved forms
+    // carried 2 while base forms carried 1, so the save promised a second
+    // accessory that could never appear. Old blobs still CONTAIN the key
+    // and that is fine: this validator builds a fresh object from the
+    // fields it knows, so the stale number is simply dropped on the first
+    // save-load round trip. (Nothing needs a migration step for the same
+    // reason — see migrate.ts's v9→v10 doc.)
     personalityId: expectString(rec["personalityId"], p(path, "personalityId")),
     // Absent = false rather than a hard failure: `shiny` landed inside
     // the v4 window, so a v4 blob written just before it may lack the
     // field. The v3→v4 migration writes it explicitly for older saves.
     shiny:
       rec["shiny"] === undefined ? false : expectBoolean(rec["shiny"], p(path, "shiny")),
+    // v10 (round 2D) — the per-individual worn accessory. Optional exactly
+    // like `PipState.sulking`/`mastery`: `undefined ≡` never rolled (every
+    // pre-2D genome, and every `combineGenomes` child, which does not roll
+    // one). No migration needed — the same "optional field alone needs no
+    // backfill" precedent `Placement.granted` (v8) already established.
+    ...(rec["accessoryId"] !== undefined
+      ? { accessoryId: expectStringOrNull(rec["accessoryId"], p(path, "accessoryId")) }
+      : {}),
   };
 }
 

@@ -16,6 +16,7 @@ import type { GameState } from "../core/state";
 import { adultAt } from "../core/pips/lifecycle";
 import {
   PERSONALITY_BLURBS,
+  RENAME_ERROR_COPY,
   buildExpeditionRow,
   buildFocusModel,
   formatCountdown,
@@ -32,6 +33,7 @@ import { tripsForTier } from "../core/progression/mastery";
 import { installFakeDom } from "./fakeDom";
 import type { FakeElement } from "./fakeDom";
 import { SAFE_TRAIL_COPY, expeditions } from "../content/expeditions";
+import { PIP_NAME_MAX_LENGTH } from "../core/state";
 
 const needs = (overrides: Partial<PipNeeds> = {}): PipNeeds => ({
   hunger: 80,
@@ -50,7 +52,6 @@ function makePip(overrides: Partial<PipState> = {}): PipState {
       speciesId: "mosspip",
       palette: "fern",
       pattern: "plain",
-      accessorySlots: 1,
       personalityId: "curious",
       shiny: false,
     },
@@ -720,5 +721,227 @@ describe("ROUND 2H — THE SEND SEAM: the Send button routes through the risk co
     expect(dispatched.filter((a) => a.type === "ASSIGN_EXPEDITION")).toHaveLength(
       1,
     );
+  });
+});
+
+describe("ROUND 2D item 5 — the rename dialog (discoverable, not prominent)", () => {
+  /** Opens the focus view then taps the rename affordance, returning the
+   * root so a test can drive the dialog. Fails loudly if either the
+   * trigger button or the dialog it opens is missing — the whole point of
+   * a DOM test here (round 2D's task brief: "unit-test the models" plus
+   * an actual click-through, not just a pure-model assertion that the
+   * button could quietly stop being wired to anything). */
+  function openRenameDialog(deps: Record<string, unknown>): FakeElement {
+    const view = createFocusView(
+      deps as unknown as Parameters<typeof createFocusView>[0],
+    );
+    view.sync(makeState());
+    view.open();
+    const root = view.el as unknown as FakeElement;
+    const renameBtn = root.querySelector(".pk-focus-rename-btn");
+    expect(renameBtn, "no rename button was rendered").not.toBeNull();
+    renameBtn?.click();
+    const wrap = root.querySelector(".pk-rename-wrap");
+    expect(
+      wrap?.classList.contains("pk-rename-wrap--open"),
+      "rename button click did not open the dialog",
+    ).toBe(true);
+    return root;
+  }
+
+  it("pre-fills the input with the Pip's current name", () => {
+    const dom = installFakeDom();
+    try {
+      const root = openRenameDialog({
+        dispatch: () => {},
+        getState: () => makeState(),
+        clock: { now: () => 0 },
+      });
+      const input = root.querySelector(".pk-rename-input") as FakeElement | null;
+      expect(input?.value).toBe("Mosspip");
+    } finally {
+      dom.uninstall();
+    }
+  });
+
+  it("Save dispatches RENAME_PIP with the trimmed, validated name, and closes", () => {
+    const dom = installFakeDom();
+    const dispatched: unknown[] = [];
+    try {
+      const root = openRenameDialog({
+        dispatch: (a: unknown) => dispatched.push(a),
+        getState: () => makeState(),
+        clock: { now: () => 0 },
+      });
+      const input = root.querySelector(".pk-rename-input") as FakeElement;
+      input.value = "  Clover  ";
+      input.dispatch("input");
+      root.querySelector(".pk-rename-save")?.click();
+
+      expect(dispatched).toEqual([
+        { type: "RENAME_PIP", pipId: "pip-1", name: "Clover" },
+      ]);
+      expect(
+        root.querySelector(".pk-rename-wrap")?.classList.contains("pk-rename-wrap--open"),
+      ).toBe(false);
+    } finally {
+      dom.uninstall();
+    }
+  });
+
+  it("Enter in the input submits, exactly like tapping Save", () => {
+    const dom = installFakeDom();
+    const dispatched: unknown[] = [];
+    try {
+      const root = openRenameDialog({
+        dispatch: (a: unknown) => dispatched.push(a),
+        getState: () => makeState(),
+        clock: { now: () => 0 },
+      });
+      const input = root.querySelector(".pk-rename-input") as FakeElement;
+      input.value = "Pebble";
+      input.dispatch("input");
+      input.dispatch("keydown", { key: "Enter" });
+
+      expect(dispatched).toEqual([
+        { type: "RENAME_PIP", pipId: "pip-1", name: "Pebble" },
+      ]);
+    } finally {
+      dom.uninstall();
+    }
+  });
+
+  it("an empty (or whitespace-only) name is refused kindly, in-panel, and never dispatched", () => {
+    const dom = installFakeDom();
+    const dispatched: unknown[] = [];
+    try {
+      const root = openRenameDialog({
+        dispatch: (a: unknown) => dispatched.push(a),
+        getState: () => makeState(),
+        clock: { now: () => 0 },
+      });
+      const input = root.querySelector(".pk-rename-input") as FakeElement;
+      input.value = "   ";
+      input.dispatch("input");
+      root.querySelector(".pk-rename-save")?.click();
+
+      expect(dispatched).toHaveLength(0);
+      expect(root.querySelector(".pk-rename-error")?.textContent).toBe(
+        RENAME_ERROR_COPY.empty,
+      );
+      // Stays open — a refusal is not a close.
+      expect(
+        root.querySelector(".pk-rename-wrap")?.classList.contains("pk-rename-wrap--open"),
+      ).toBe(true);
+    } finally {
+      dom.uninstall();
+    }
+  });
+
+  it("a name over the length cap is refused kindly, and never dispatched", () => {
+    const dom = installFakeDom();
+    const dispatched: unknown[] = [];
+    try {
+      const root = openRenameDialog({
+        dispatch: (a: unknown) => dispatched.push(a),
+        getState: () => makeState(),
+        clock: { now: () => 0 },
+      });
+      const input = root.querySelector(".pk-rename-input") as FakeElement;
+      input.value = "x".repeat(PIP_NAME_MAX_LENGTH + 1);
+      input.dispatch("input");
+      root.querySelector(".pk-rename-save")?.click();
+
+      expect(dispatched).toHaveLength(0);
+      expect(root.querySelector(".pk-rename-error")?.textContent).toBe(
+        RENAME_ERROR_COPY.tooLong,
+      );
+    } finally {
+      dom.uninstall();
+    }
+  });
+
+  it("editing after an error clears it, without needing another Save tap", () => {
+    const dom = installFakeDom();
+    try {
+      const root = openRenameDialog({
+        dispatch: () => {},
+        getState: () => makeState(),
+        clock: { now: () => 0 },
+      });
+      const input = root.querySelector(".pk-rename-input") as FakeElement;
+      input.value = "   ";
+      input.dispatch("input");
+      root.querySelector(".pk-rename-save")?.click();
+      expect(root.querySelector(".pk-rename-error")).not.toBeNull();
+
+      input.value = "Wisp";
+      input.dispatch("input");
+      expect(root.querySelector(".pk-rename-error")).toBeNull();
+    } finally {
+      dom.uninstall();
+    }
+  });
+
+  it("Cancel closes without dispatching, discarding the draft", () => {
+    const dom = installFakeDom();
+    const dispatched: unknown[] = [];
+    try {
+      const root = openRenameDialog({
+        dispatch: (a: unknown) => dispatched.push(a),
+        getState: () => makeState(),
+        clock: { now: () => 0 },
+      });
+      const input = root.querySelector(".pk-rename-input") as FakeElement;
+      input.value = "Ignored";
+      input.dispatch("input");
+      root.querySelector(".pk-rename-cancel")?.click();
+
+      expect(dispatched).toHaveLength(0);
+      expect(
+        root.querySelector(".pk-rename-wrap")?.classList.contains("pk-rename-wrap--open"),
+      ).toBe(false);
+    } finally {
+      dom.uninstall();
+    }
+  });
+
+  it("Escape in the input closes without dispatching", () => {
+    const dom = installFakeDom();
+    const dispatched: unknown[] = [];
+    try {
+      const root = openRenameDialog({
+        dispatch: (a: unknown) => dispatched.push(a),
+        getState: () => makeState(),
+        clock: { now: () => 0 },
+      });
+      const input = root.querySelector(".pk-rename-input") as FakeElement;
+      input.dispatch("keydown", { key: "Escape" });
+
+      expect(dispatched).toHaveLength(0);
+      expect(
+        root.querySelector(".pk-rename-wrap")?.classList.contains("pk-rename-wrap--open"),
+      ).toBe(false);
+    } finally {
+      dom.uninstall();
+    }
+  });
+
+  it("carries an aria-label naming the Pip, so the affordance is announced (not just visible)", () => {
+    const dom = installFakeDom();
+    try {
+      const view = createFocusView({
+        dispatch: () => {},
+        getState: () => makeState(),
+        clock: { now: () => 0 },
+      } as unknown as Parameters<typeof createFocusView>[0]);
+      view.sync(makeState());
+      view.open();
+      const root = view.el as unknown as FakeElement;
+      const renameBtn = root.querySelector(".pk-focus-rename-btn");
+      expect(renameBtn?.getAttribute("aria-label")).toBe("Rename Mosspip");
+    } finally {
+      dom.uninstall();
+    }
   });
 });

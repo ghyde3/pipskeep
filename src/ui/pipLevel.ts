@@ -152,6 +152,10 @@ function portraitVisualOf(pip: LeveledPip): PortraitVisual {
     paletteId: pip.evolved?.variantId ?? pip.genome.palette,
     pattern: pip.genome.pattern,
     shiny: pip.genome.shiny,
+    // ROUND 2D FIX STAGE — the worn accessory and per-individual jitter,
+    // omitted here exactly as in memorial/breeding/ailment.
+    accessoryId: pip.genome.accessoryId,
+    jitterSeed: pip.id,
   };
 }
 

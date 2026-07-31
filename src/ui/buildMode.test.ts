@@ -321,7 +321,11 @@ describe("rearrange rows — placements + who works there (spec §6.2)", () => {
     expect(model.rearrange).toHaveLength(2);
     const station = model.rearrange.find((r) => r.placementId === "place-1");
     expect(station?.name).toBe("Gathering Station");
-    expect(station?.workerName).toBe("Mosspip");
+    // ROUND 2D: the starter gets an individually rolled name (no longer
+    // its species name) — deterministic for seed 7 (state.ts's stateWith
+    // fixture), same as every other assertion this suite already pins to
+    // this seed's exact roll.
+    expect(station?.workerName).toBe("Rowan");
     expect(station?.resolvedIcon.motif).toBe("basket");
     const tuft = model.rearrange.find((r) => r.placementId === "place-2");
     expect(tuft?.workerName).toBeNull();

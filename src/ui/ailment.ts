@@ -212,6 +212,11 @@ export function buildAilmentCardModel(
       paletteId: pip.evolved?.variantId ?? pip.genome.palette,
       pattern: pip.genome.pattern,
       shiny: pip.genome.shiny,
+      // ROUND 2D FIX STAGE — see memorial.ts: this builder stripped the
+      // worn accessory and the per-individual jitter, so the ailment
+      // sheet showed a less individual Pip than the Keep did.
+      accessoryId: pip.genome.accessoryId,
+      jitterSeed: pip.id,
     },
     poulticeCount: state.inventory[POULTICE_ITEM_ID] ?? 0,
     needsAllHighForFreeChance: Object.values(pip.needs).every((n) => n >= floor),

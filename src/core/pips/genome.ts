@@ -7,13 +7,18 @@
  * consumes a FIXED number of rolls from the stream it is handed, so the
  * cursor advance never depends on outcomes:
  *
- * - `rollGenome`: exactly 5 rolls — species (weighted by registry
- *   rarity), palette, pattern, personality, shiny, in that order.
- * - `combineGenomes`: exactly 6 rolls — species parent (1), palette
+ * - `rollGenome`: exactly 6 rolls — species (weighted by registry
+ *   rarity), palette, pattern, personality, shiny, accessory, in that
+ *   order. ROUND 2D added the accessory roll (previously 5) — see its own
+ *   doc comment; the accessory roll ALWAYS fires, resolving to `null`
+ *   when no accessory content is injected, so the cursor advance never
+ *   depends on whether accessory content exists yet.
+ * - `combineGenomes`: exactly 7 rolls — species parent (1), palette
  *   mutation check + value (2), pattern mutation check + value (2),
- *   personality parent (1), in that order. The value roll is consumed
- *   whether or not the mutation fired (parent pick and mutation pick each
- *   cost one roll).
+ *   personality parent (1), ACCESSORY parent (1), in that order. The
+ *   value roll is consumed whether or not the mutation fired (parent pick
+ *   and mutation pick each cost one roll). The name is NOT among them:
+ *   it lives outside `TraitGenome` entirely (see `rollPipName`'s doc).
  *
  * BREEDING SEAM (spec §12): `combineGenomes` is fully implemented and
  * unit-tested NOW so breeding is a UI feature later, not a data
@@ -28,6 +33,7 @@
 import { tuning as contentTuning } from "../../content/tuning";
 import { species as contentSpecies } from "../../content/species";
 import { PERSONALITY_IDS } from "../../content/personalities";
+import { NAME_POOL } from "../../content/names";
 import type { RngStream } from "../rng";
 import { NEED_MAX, PipActivity } from "./types";
 import type { LifeStage, PipId, PipNeeds, PipState, TraitGenome } from "./types";
@@ -44,7 +50,6 @@ export interface GenomeSpeciesEntry {
   readonly sprite: {
     readonly palettes: readonly string[];
     readonly patterns: readonly string[];
-    readonly accessorySlots: number;
   };
 }
 
@@ -58,6 +63,14 @@ export interface GenomeRollContent {
   readonly personalityIds?: readonly string[];
   /** Chance the hatched genome is the rare iridescent variant. */
   readonly shinyChance?: number;
+  /**
+   * ROUND 2D — accessory ids to roll the hatchling's worn accessory from
+   * (`TraitGenome.accessoryId`). Defaults to none: the roll still always
+   * fires (see the module doc's roll-count contract) but resolves to
+   * `null` until an accessory registry is injected here — the seam a
+   * later content/render pass fills in, with zero changes to this file.
+   */
+  readonly accessoryIds?: readonly string[];
 }
 
 /** Weight for a rarity id missing from the table — ×1 keeps the species
@@ -89,12 +102,30 @@ function pickSpecies(
 }
 
 /**
+ * ROUND 2D — one roll, always: pick a worn accessory id from
+ * `accessoryIds`, or consume the roll and resolve to `null` when no
+ * accessory content is injected (the pre-content-authoring default). The
+ * `stream.next()` call in the empty branch exists ONLY to keep the roll
+ * count fixed — see the module doc's cursor contract.
+ */
+function pickAccessory(
+  stream: RngStream,
+  accessoryIds: readonly string[],
+): string | null {
+  if (accessoryIds.length === 0) {
+    stream.next();
+    return null;
+  }
+  return stream.pick(accessoryIds);
+}
+
+/**
  * Roll a complete fresh genome for a hatching egg (spec §7.2/§7.3:
  * "species + traits rolled from the RNG egg stream", species weighted by
- * registry rarity, everything else uniform). Exactly 5 rolls, in the
- * order: species, palette, pattern, personality, shiny — the shiny check
- * always consumes its roll, so the cursor advance never depends on the
- * outcome (spec §2 rule 3).
+ * registry rarity, everything else uniform). Exactly 6 rolls, in the
+ * order: species, palette, pattern, personality, shiny, accessory — the
+ * shiny check and the accessory pick always consume their roll, so the
+ * cursor advance never depends on the outcome (spec §2 rule 3).
  */
 export function rollGenome(
   stream: RngStream,
@@ -104,6 +135,7 @@ export function rollGenome(
   const rarityWeights = content.rarityWeights ?? contentTuning.eggs.rarityWeights;
   const personalityIds = content.personalityIds ?? PERSONALITY_IDS;
   const shinyChance = content.shinyChance ?? contentTuning.genome.shinyChance;
+  const accessoryIds = content.accessoryIds ?? [];
 
   const speciesEntry = pickSpecies(stream, registry, rarityWeights);
   // Sprite variant lists are validated non-empty at boot (content/validate).
@@ -111,16 +143,62 @@ export function rollGenome(
   const pattern = stream.pick(speciesEntry.sprite.patterns);
   const personalityId = stream.pick(personalityIds);
   const shiny = stream.chance(shinyChance);
+  const accessoryId = pickAccessory(stream, accessoryIds);
 
   return {
     speciesId: speciesEntry.id,
     palette,
     pattern,
-    accessorySlots: speciesEntry.sprite.accessorySlots,
     personalityId,
     shiny,
+    accessoryId,
   };
 }
+
+/**
+ * ROUND 2D (docs/BACKLOG.md "Round 2D" item 1) — roll one Pip's
+ * individual name. Deliberately OUTSIDE `TraitGenome`/`rollGenome`:
+ *
+ * 1. Names are not a heritable trait — `combineGenomes` never combines
+ *    two parents' names, so folding this into the genome roll would mean
+ *    special-casing it out of that function's per-field inheritance table
+ *    for no benefit.
+ * 2. Collision-avoidance NEEDS caller context (`usedNames`: the roster +
+ *    Long Meadow + Album, spec item 3) that `rollGenome` deliberately
+ *    does not have — `core/pips/genome.ts` stays state-shape-agnostic
+ *    (its content parameters are structural views, never `GameState`).
+ *    Keeping the roll here means `rollGenome`'s own cursor contract, and
+ *    every existing `rollGenome(...)` reference call across the test
+ *    suite, is completely unaffected by this round.
+ *
+ * Exactly ONE roll, always: `usedNames` only changes WHICH array
+ * `stream.pick` draws from, never how many draws happen — the same
+ * "narrow the pool, not the roll count" trick `core/state.ts`'s egg-pity
+ * narrowing already relies on. Falls back to the full pool (permitting a
+ * rare duplicate) only in the practically unreachable case that every
+ * single pool name is already in use; `pool` itself being empty is a
+ * content error and throws loudly, matching `pickSpecies` above.
+ */
+export function rollPipName(
+  stream: RngStream,
+  usedNames: ReadonlySet<string> = new Set(),
+  pool: readonly string[] = NAME_POOL,
+): string {
+  if (pool.length === 0) {
+    throw new Error("rollPipName: name pool is empty");
+  }
+  const available = pool.filter((name) => !usedNames.has(name));
+  return stream.pick(available.length > 0 ? available : pool);
+}
+
+/** ROUND 2D — the dedicated stream every individual-name roll draws from
+ * (starters via `createNewGame`, hatchlings via `HATCH_EGG` — both
+ * branches). Kept separate from `GENESIS_STREAM`/`EGG_STREAM` on purpose:
+ * a name roll never perturbs either of those cursors, so every cursor
+ * contract those streams already had (biome-pool parity, pity-ladder
+ * parity, "the pick never perturbs future rolls") holds completely
+ * unchanged by this round. */
+export const NAME_STREAM = "pip-name";
 
 /** The slice of tuning breeding reads (injectable for tests). */
 export interface BreedingTuning {
@@ -176,12 +254,17 @@ function inheritVariant(
  *   with a parent's value — a mutation is a fresh draw, not a guaranteed
  *   difference).
  * - `personalityId`: either parent, 50/50.
- * - `accessorySlots`: not rolled — taken from the child species' registry
- *   entry (it is a property of the species' sprite rig, spec §11), or
- *   inherited from whichever parent the species came from when the
- *   species is missing from the registry.
+ * - `accessoryId`: either parent, 50/50 — ROUND 2D FIX STAGE. The first
+ *   pass omitted the field entirely, so EVERY Pip ever born in the
+ *   Nursery was permanently bare. Round 2H made breeding live and the
+ *   succession mechanic, so that was not a dormant seam: it meant the two
+ *   Pips a player is most attached to (their starter and their bred
+ *   descendants) were the two that could never wear anything. Inheriting
+ *   it is also the warmer reading — a descendant with its parent's leaf
+ *   cap is exactly the kind of thread lineage is for. Two bare parents
+ *   still yield a bare child; the roll fires either way.
  *
- * Exactly 6 rolls from `rng`, always (see module doc) — determinism
+ * Exactly 7 rolls from `rng`, always (see module doc) — determinism
  * never depends on which branches fire.
  */
 export function combineGenomes(
@@ -211,16 +294,13 @@ export function combineGenomes(
     mutationChance,
   );
   const personalityId = pickParent(rng, a.personalityId, b.personalityId);
-
-  const accessorySlots =
-    speciesEntry?.sprite.accessorySlots ??
-    (speciesId === a.speciesId ? a.accessorySlots : b.accessorySlots);
+  const accessoryId = pickParent(rng, a.accessoryId, b.accessoryId);
 
   // Shininess is NOT inherited (and costs zero rolls — the 6-roll
   // contract above stays exact): a fresh sparkle is earned at hatch, not
   // passed down. The breeding phase may revisit this rule; until then
   // nothing in gameplay calls this function anyway (spec §12).
-  return { speciesId, palette, pattern, accessorySlots, personalityId, shiny: false };
+  return { speciesId, palette, pattern, personalityId, shiny: false, accessoryId };
 }
 
 export interface CreatePipOptions {

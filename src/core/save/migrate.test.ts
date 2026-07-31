@@ -14,6 +14,8 @@ import { HOUR_MS, tuning as tuningModule } from "../../content/tuning";
 import { MILESTONES as contentMilestones } from "../../content/milestones";
 import { pipSeason, updateAging } from "../pips/lifecycle";
 import type { PipState } from "../pips/types";
+import { species as contentSpecies } from "../../content/species";
+import { NAME_POOL } from "../../content/names";
 
 /** Raw fixture text per file, via Vite's glob import (no node types
  * needed; vitest runs through Vite). Keys look like "./fixtures/v1.json". */
@@ -36,13 +38,41 @@ function loadFixture(version: number): unknown {
 }
 
 /**
+ * Deep-copy `value` with every `accessorySlots` key removed, at any depth.
+ *
+ * ROUND 2D FIX STAGE (spec §16 v1.7): `TraitGenome.accessorySlots` was
+ * written into every genome since Phase 1, serialized, schema-validated
+ * and migrated — and rendered by nothing. It has been removed, so the
+ * save validator no longer copies it forward and it is dropped on the
+ * first load. That is a DELIBERATE, recorded schema change, so the
+ * "nothing was lost" sweeps below exempt exactly this key (and only this
+ * key) rather than being loosened generally: everything else in a v5/v6
+ * blob must still survive byte-identical.
+ */
+function withoutRetiredGenomeSlots<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value.map((item) => withoutRetiredGenomeSlots(item)) as unknown as T;
+  }
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([key]) => key !== "accessorySlots")
+        .map(([key, inner]) => [key, withoutRetiredGenomeSlots(inner)]),
+    ) as unknown as T;
+  }
+  return value;
+}
+
+/**
  * ROUND 2H (docs/lifecycle-bible.md §9.2) — `MIGRATIONS[8]` (v8 → v9)
- * grants every pip `level`/`pipXp`/`lifeMs`/`readyToRetire` generously and
- * changes NOTHING else about it. Used by the two pre-existing "nothing
- * was lost" integrate-gate tests below, which otherwise walk every field
- * of a pre-v9 pip expecting byte-identical output — this asserts the
- * grant is exactly right instead, and that it is the ONLY thing that
- * changed.
+ * grants every pip `level`/`pipXp`/`lifeMs`/`readyToRetire` generously.
+ * ROUND 2D (docs/BACKLOG.md "Round 2D" item 1) — `MIGRATIONS[9]` (v9 →
+ * v10) additionally offers a real name to a pip still carrying a species
+ * display name. Used by the "nothing was lost" integrate-gate tests
+ * below, which otherwise walk every field of a pre-v9 pip expecting
+ * byte-identical output — this asserts the level/lifespan grant AND the
+ * name change are exactly right instead, and that together they are the
+ * ONLY things that changed.
  */
 function expectPipMigratedToV9(
   before: Record<string, unknown>,
@@ -50,7 +80,7 @@ function expectPipMigratedToV9(
 ): void {
   const grantLevel = tuningModule.lifecycle.level.migrationGrantLevel;
   const grantXp = tuningModule.lifecycle.level.levelXp[grantLevel - 1] ?? 0;
-  const { level, pipXp, lifeMs, readyToRetire, ...restAfter } = after as Record<
+  const { level, pipXp, lifeMs, readyToRetire, name, ...restAfter } = after as Record<
     string,
     unknown
   > & {
@@ -58,13 +88,31 @@ function expectPipMigratedToV9(
     pipXp?: number;
     lifeMs?: number;
     readyToRetire?: boolean;
+    name?: string;
   };
   expect(level).toBe(grantLevel);
   expect(pipXp).toBe(grantXp);
   expect(lifeMs).toBe(0);
   expect(readyToRetire).toBe(false);
-  expect(restAfter).toEqual(before);
+
+  const speciesNames = new Set(Object.values(contentSpecies).map((def) => def.name));
+  const { name: nameBefore, ...restBefore } = before as Record<string, unknown> & {
+    name?: string;
+  };
+  if (typeof nameBefore === "string" && speciesNames.has(nameBefore)) {
+    expect(name).not.toBe(nameBefore);
+    expect(NAME_POOL).toContain(name);
+  } else {
+    expect(name).toBe(nameBefore);
+  }
+  // `accessorySlots` is exempt for the reason `withoutRetiredGenomeSlots`
+  // documents: spec §16 v1.7 retired it, so the validator no longer copies
+  // it forward. Everything else about the Pip must be byte-identical.
+  expect(withoutRetiredGenomeSlots(restAfter)).toEqual(
+    withoutRetiredGenomeSlots(restBefore),
+  );
 }
+
 
 describe("migrate fixtures", () => {
   it("has a fixture for every schema version 1..CURRENT, and each migrates cleanly", () => {
@@ -376,7 +424,7 @@ describe("migrate fixtures", () => {
     for (const [key, value] of Object.entries(rawV6.state)) {
       if (key === "counters" || key === "pips" || key === "sanctuary") continue;
       expect(JSON.stringify(after[key]), `state.${key} was lost or altered`).toBe(
-        JSON.stringify(value),
+        JSON.stringify(withoutRetiredGenomeSlots(value)),
       );
     }
     for (const [key, value] of Object.entries(
@@ -474,7 +522,7 @@ describe("migrate fixtures", () => {
     for (const key of Object.keys(before.state)) {
       if (transient.has(key)) continue;
       expect(after[key], `state.${key} was changed or dropped by the migration`).toEqual(
-        before.state[key],
+        withoutRetiredGenomeSlots(before.state[key]),
       );
     }
     // Envelope, too: the seed decides the whole RNG universe, and savedAt
@@ -585,6 +633,192 @@ describe("v8 → v9 (round 2H, docs/lifecycle-bible.md §9.2): PER-PIP LEVELS + 
     >;
     const addedKeys = Object.keys(migrated).filter((key) => !(key in before));
     expect(addedKeys.sort()).toEqual(["level", "lifeMs", "pipXp", "readyToRetire"]);
+  });
+});
+
+describe("v9 → v10 (round 2D, docs/BACKLOG.md 'Round 2D' item 1): INDIVIDUAL NAMES — offered, never forced", () => {
+  it("a Pip still carrying its species display name is offered a real one from NAME_POOL", () => {
+    const v9 = loadFixture(9) as { readonly state: Record<string, unknown> };
+    const state = v9.state as Record<string, unknown>;
+    const pipsRec = state["pips"] as Record<string, Record<string, unknown>>;
+    // pip-1 is fixed at "Mosspip" — its BIRTH species' name, even though
+    // it evolved to grovepip — the exact "never got an individual name"
+    // tell (matched against every species, not just the live one).
+    expect(pipsRec["pip-1"]?.["name"]).toBe("Mosspip");
+
+    const after = MIGRATIONS[9]!(v9)["state"] as Record<string, unknown>;
+    const migrated = (after["pips"] as Record<string, Record<string, unknown>>)["pip-1"];
+    expect(migrated?.["name"]).not.toBe("Mosspip");
+    expect(NAME_POOL).toContain(migrated?.["name"]);
+    // Nothing else about the pip changed.
+    const { name, ...restBefore } = pipsRec["pip-1"] as Record<string, unknown>;
+    const { name: _migratedName, ...restAfter } = migrated as Record<string, unknown>;
+    expect(restAfter).toEqual(restBefore);
+  });
+
+  it("two Pips needing a name in the same save never collide with each other", () => {
+    // ROUND 2D FIX STAGE — the migration's own doc comment states this
+    // contract explicitly ("each pip's resulting name — kept or freshly
+    // rolled — added to the used set before the next pip is considered"),
+    // and removing the `usedNames.add(rolled)` feedback line left the
+    // whole suite green. The player-rename half of the same step WAS well
+    // guarded; the dedup half was not.
+    //
+    // Every roster Pip and Long Meadow resident is renamed to a species
+    // display name first, so EVERY one of them takes the roll path.
+    const v9 = loadFixture(9) as { readonly state: Record<string, unknown> };
+    const state = v9.state as Record<string, unknown>;
+    const pipsRec = state["pips"] as Record<string, Record<string, unknown>>;
+    const sanctuary = state["sanctuary"] as {
+      readonly pips: Record<string, { readonly pip: Record<string, unknown> }>;
+    };
+    // The pool is narrowed to EXACTLY as many free names as there are
+    // Pips needing one, by reserving the rest in the Album (which the
+    // migration seeds `usedNames` from and never rewrites). With the
+    // feedback line present, each Pip takes a different survivor; without
+    // it, all three draw from the same 3-name set and collide.
+    const pipCount = Object.keys(pipsRec).length + Object.keys(sanctuary.pips).length;
+    const freeNames = NAME_POOL.slice(NAME_POOL.length - pipCount);
+    const reservedEntries = Object.fromEntries(
+      NAME_POOL.slice(0, NAME_POOL.length - pipCount).map((name, i) => [
+        `reserved-${i}`,
+        { firstPortrait: { name } },
+      ]),
+    );
+    const allSpeciesNamed = {
+      ...state,
+      pipdex: { entries: reservedEntries },
+      pips: Object.fromEntries(
+        Object.entries(pipsRec).map(([id, pip]) => [id, { ...pip, name: "Mosspip" }]),
+      ),
+      sanctuary: {
+        ...sanctuary,
+        pips: Object.fromEntries(
+          Object.entries(sanctuary.pips).map(([id, record]) => [
+            id,
+            { ...record, pip: { ...record.pip, name: "Mosspip" } },
+          ]),
+        ),
+      },
+    };
+
+    const migrated = MIGRATIONS[9]!({ ...v9, state: allSpeciesNamed })["state"] as Record<
+      string,
+      unknown
+    >;
+    const names: string[] = [
+      ...Object.values(migrated["pips"] as Record<string, Record<string, unknown>>).map(
+        (p) => p["name"] as string,
+      ),
+      ...Object.values(
+        (migrated["sanctuary"] as { readonly pips: Record<string, { readonly pip: Record<string, unknown> }> })
+          .pips,
+      ).map((r) => r.pip["name"] as string),
+    ];
+
+    expect(names.length).toBeGreaterThan(2);
+    for (const name of names) expect(freeNames).toContain(name);
+    expect(
+      new Set(names).size,
+      `two migrated Pips share a name: ${names.join(", ")}`,
+    ).toBe(names.length);
+
+    // …and none of them collides with a name already frozen in the Album.
+    const albumNames = new Set(
+      Object.values(
+        (migrated["pipdex"] as { readonly entries: Record<string, Record<string, unknown>> })
+          .entries,
+      )
+        .map((entry) => (entry["firstPortrait"] as Record<string, unknown> | undefined)?.["name"])
+        .filter((n): n is string => typeof n === "string"),
+    );
+    for (const name of names) expect(albumNames.has(name)).toBe(false);
+  });
+
+  it("a Pip with a real, player-distinguishable name is never touched", () => {
+    const v9 = loadFixture(9) as { readonly state: Record<string, unknown> };
+    const after = MIGRATIONS[9]!(v9)["state"] as Record<string, unknown>;
+    const pipsRec = after["pips"] as Record<string, Record<string, unknown>>;
+    // pip-2 was already "Sprout" — not a species name — before this step.
+    expect(pipsRec["pip-2"]?.["name"]).toBe("Sprout");
+  });
+
+  it("a Long Meadow resident with a real name is never touched, and one still species-named would be offered one too", () => {
+    const v9 = loadFixture(9) as { readonly state: Record<string, unknown> };
+    const state = v9.state as Record<string, unknown>;
+    // Baseline: the fixture's own resident already has a real name.
+    const after = MIGRATIONS[9]!(v9)["state"] as Record<string, unknown>;
+    const residentAfter = (
+      (after["sanctuary"] as { readonly pips: Record<string, { readonly pip: Record<string, unknown> }> })
+        .pips["pip-9"] as { readonly pip: Record<string, unknown> }
+    ).pip;
+    expect(residentAfter["name"]).toBe("Old Friend");
+
+    // Now prove the OFFER path also reaches the Long Meadow: rename the
+    // fixture's resident to its species name before migrating.
+    const sanctuary = state["sanctuary"] as { readonly pips: Record<string, { readonly pip: Record<string, unknown> }> };
+    const resident = sanctuary.pips["pip-9"] as { readonly pip: Record<string, unknown> };
+    const stillNamed = {
+      ...state,
+      sanctuary: {
+        ...sanctuary,
+        pips: {
+          ...sanctuary.pips,
+          "pip-9": { ...resident, pip: { ...resident.pip, name: "Tidepip" } },
+        },
+      },
+    };
+    const migrateStep = MIGRATIONS[9] as (
+      blob: Readonly<Record<string, unknown>>,
+    ) => Record<string, unknown>;
+    const afterState = migrateStep({ ...v9, state: stillNamed })["state"] as Record<
+      string,
+      unknown
+    >;
+    const afterSanctuary = afterState["sanctuary"] as {
+      readonly pips: Record<string, { readonly pip: Record<string, unknown> }>;
+    };
+    const migratedResident = afterSanctuary.pips["pip-9"]?.pip as Record<string, unknown>;
+    expect(migratedResident["name"]).not.toBe("Tidepip");
+    expect(NAME_POOL).toContain(migratedResident["name"]);
+  });
+
+  it("two Pips that both still carry species names get DIFFERENT rolled names (no collision)", () => {
+    const v9 = loadFixture(9) as { readonly state: Record<string, unknown> };
+    const state = v9.state as Record<string, unknown>;
+    const pipsRec = state["pips"] as Record<string, Record<string, unknown>>;
+    const bothSpeciesNamed = {
+      ...state,
+      pips: {
+        ...pipsRec,
+        "pip-2": { ...pipsRec["pip-2"], name: "Tidepip" },
+      },
+    };
+    const after = MIGRATIONS[9]!({ ...v9, state: bothSpeciesNamed })["state"] as Record<
+      string,
+      unknown
+    >;
+    const migratedPips = after["pips"] as Record<string, Record<string, unknown>>;
+    const nameA = migratedPips["pip-1"]?.["name"];
+    const nameB = migratedPips["pip-2"]?.["name"];
+    expect(NAME_POOL).toContain(nameA);
+    expect(NAME_POOL).toContain(nameB);
+    expect(nameA).not.toBe(nameB);
+  });
+
+  it("is deterministic: migrating the same blob twice yields the same names", () => {
+    const v9 = loadFixture(9) as { readonly state: Record<string, unknown> };
+    const a = MIGRATIONS[9]!(v9)["state"] as Record<string, unknown>;
+    const b = MIGRATIONS[9]!(v9)["state"] as Record<string, unknown>;
+    expect(a).toEqual(b);
+  });
+
+  it("never invents a species-named Pip's fresh name as one that equals a species display name", () => {
+    const v9 = loadFixture(9) as { readonly state: Record<string, unknown> };
+    const speciesNames = new Set(Object.values(contentSpecies).map((def) => def.name));
+    const after = MIGRATIONS[9]!(v9)["state"] as Record<string, unknown>;
+    const migrated = (after["pips"] as Record<string, Record<string, unknown>>)["pip-1"];
+    expect(speciesNames.has(migrated?.["name"] as string)).toBe(false);
   });
 });
 

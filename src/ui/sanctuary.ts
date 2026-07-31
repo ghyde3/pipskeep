@@ -40,6 +40,7 @@ import { tuning } from "../content/tuning";
 import { masteryTier, masteryTitle } from "../core/progression/mastery";
 import { earnedFlairOfKind } from "../content/flair";
 import type { FlairDef } from "../content/flair";
+import { species as contentSpecies } from "../content/species";
 import { buildPortraitEl } from "./pipdex";
 import type { PortraitVisual } from "./pipdex";
 import { sound } from "../app/sound";
@@ -51,13 +52,16 @@ import { sound } from "../app/sound";
 /** A resident's portrait uses the LIVE Pip (unlike the Album's frozen
  * snapshot): if they evolved before retiring, `evolved.variantId` picks
  * the gift-look exactly as the Keep would (spec §4.6) — "same name, same
- * freckles, same everything" means the variant too. */
+ * freckles, same everything" means the variant too. Same reasoning
+ * extends to the worn accessory (round 2D item 3) — a resident keeps it. */
 function portraitVisualOf(pip: PipState): PortraitVisual {
   return {
     speciesId: pip.speciesId,
     paletteId: pip.evolved?.variantId ?? pip.genome.palette,
     pattern: pip.genome.pattern,
     shiny: pip.genome.shiny,
+    accessoryId: pip.genome.accessoryId,
+    jitterSeed: pip.id,
   };
 }
 
@@ -187,6 +191,11 @@ export interface ResidentModel {
   readonly pipId: string;
   readonly name: string;
   readonly personalityName: string;
+  /** ROUND 2D FIX STAGE — the species, which this card never named. The
+   * Album gets it right ("Inkwell — Mosspip / Curious"); the Long Meadow
+   * read "Cricket / Chaotic · here 2 days", so two same-species residents
+   * differed only by name and tenure. */
+  readonly speciesName: string;
   readonly portraitVisual: PortraitVisual;
   readonly residencyLabel: string;
   readonly keepLevelFlavor: string;
@@ -237,6 +246,7 @@ export function buildResidentModel(
     name: pip.name,
     personalityName:
       personalities[pip.personalityId as PersonalityId]?.name ?? pip.personalityId,
+    speciesName: contentSpecies[pip.speciesId]?.name ?? pip.speciesId,
     portraitVisual: portraitVisualOf(pip),
     residencyLabel: formatResidencySince(record.retiredAt, now),
     keepLevelFlavor: keepLevelFlavor(record.retiredFromKeepLevel),
@@ -458,7 +468,7 @@ export function createSanctuaryView(deps: SanctuaryViewDeps): SanctuaryView {
 
     const sub = document.createElement("div");
     sub.className = "pk-sanctuary-sub";
-    sub.textContent = `${model.personalityName} · ${model.residencyLabel}`;
+    sub.textContent = `${model.speciesName} · ${model.personalityName} · ${model.residencyLabel}`;
 
     const flavor = document.createElement("div");
     flavor.className = "pk-sanctuary-flavor";

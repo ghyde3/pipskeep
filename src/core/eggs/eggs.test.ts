@@ -25,6 +25,8 @@ import { createRngFromState } from "../rng";
 import { LifeStage, PipActivity } from "../pips/types";
 import type { PipNeeds, PipState } from "../pips/types";
 import { rollGenome } from "../pips/genome";
+import { NAME_POOL } from "../../content/names";
+import { ACCESSORY_ROLL_POOL } from "../../content/accessories";
 import { runCatchup } from "../pips/catchup";
 import type { GameState } from "../state";
 import { createNewGame, rootReducer } from "../state";
@@ -57,7 +59,6 @@ function makePip(id: string, overrides: Partial<PipState> = {}): PipState {
       speciesId: "mosspip",
       palette: "fern",
       pattern: "plain",
-      accessorySlots: 1,
       personalityId: "curious",
       shiny: false,
     },
@@ -333,9 +334,13 @@ describe("HATCH_EGG (spec §7.2/§7.4)", () => {
     const at = T0 + HOUR_MS;
 
     // Reference roll: same seed, same cursors, same stream — the reducer
-    // must consume exactly this genome.
+    // must consume exactly this genome. `accessoryIds` mirrors core/state.ts's
+    // HATCH_EGG call exactly (round 2D item 3) — the production reducer
+    // hands rollGenome the real, weighted accessory pool, not the bare
+    // default.
     const expectedGenome = rollGenome(
       createRngFromState(state.seed, state.rngState).stream(EGG_STREAM),
+      { accessoryIds: ACCESSORY_ROLL_POOL },
     );
 
     const next = rootReducer(state, { type: "HATCH_EGG", eggId: "egg-1", at });
@@ -346,7 +351,12 @@ describe("HATCH_EGG (spec §7.2/§7.4)", () => {
     expect(pipling?.lifeStage).toBe(LifeStage.Pipling);
     expect(pipling?.activity).toBe(PipActivity.Idle);
     expect(pipling?.hatchedAt).toBe(at);
-    expect(pipling?.name).toBe(contentSpecies[expectedGenome.speciesId]?.name);
+    // ROUND 2D: a hatchling gets an individually rolled name (docs/
+    // BACKLOG.md "Round 2D" item 1), NOT its species name — the exact
+    // flaw the round exists to fix ("every Pip is literally named after
+    // its species").
+    expect(NAME_POOL).toContain(pipling?.name);
+    expect(pipling?.name).not.toBe(contentSpecies[expectedGenome.speciesId]?.name);
     expect(next.eggs).toEqual([]); // Hatched is terminal — egg removed
     expect(next.nextPipNumber).toBe(3);
     expect(next.lastHatchOutcome).toEqual({
@@ -474,7 +484,7 @@ describe("HATCH_EGG — biome-themed egg pools (round 2B, orchestrator ruling #1
 
     const expectedGenome = rollGenome(
       createRngFromState(state.seed, state.rngState).stream(EGG_STREAM),
-      { species: poolRegistry(forestPool ?? []) },
+      { species: poolRegistry(forestPool ?? []), accessoryIds: ACCESSORY_ROLL_POOL },
     );
 
     const next = rootReducer(state, { type: "HATCH_EGG", eggId: "egg-1", at });
@@ -501,6 +511,7 @@ describe("HATCH_EGG — biome-themed egg pools (round 2B, orchestrator ruling #1
     const state = makeState({ eggs: [pippingEgg("egg-1", T0)] }); // sourceExpeditionId: null
     const expectedGenome = rollGenome(
       createRngFromState(state.seed, state.rngState).stream(EGG_STREAM),
+      { accessoryIds: ACCESSORY_ROLL_POOL },
     );
     const next = rootReducer(state, {
       type: "HATCH_EGG",
@@ -516,6 +527,7 @@ describe("HATCH_EGG — biome-themed egg pools (round 2B, orchestrator ruling #1
     });
     const expectedGenome = rollGenome(
       createRngFromState(state.seed, state.rngState).stream(EGG_STREAM),
+      { accessoryIds: ACCESSORY_ROLL_POOL },
     );
     const next = rootReducer(state, {
       type: "HATCH_EGG",

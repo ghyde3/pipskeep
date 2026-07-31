@@ -44,7 +44,6 @@ function makePip(overrides: Partial<PipState> = {}): PipState {
       speciesId: "mosspip",
       palette: "fern",
       pattern: "plain",
-      accessorySlots: 1,
       personalityId: "curious",
       shiny: false,
     },
@@ -324,6 +323,80 @@ describe("createTopBar — the cast strip", () => {
     // cap fit BY CONSTRUCTION rather than by a special case.
     const cast = root.querySelector(".pk-cast") as FakeElement;
     expect(cast.style.getPropertyValue("--pk-cast-n")).toBe("3");
+  });
+
+  it("ROUND 2D — every chip shows the Pip's NAME, not just the active one's", () => {
+    // THE fix-stage blocker for this file. The cast strip is the only
+    // roster list on screen 100% of the time, and it carried no name, no
+    // pattern, no accessory, no silhouette and no jitter — so twelve Pips
+    // with twelve different accessories rendered as twelve identical
+    // chips, and two same-palette Pips of one species were
+    // indistinguishable. `title` is hover-only and this game targets
+    // 430x932 mobile, so there was literally no way to identify a chip
+    // except by tapping it.
+    const { bar, root } = mount();
+    bar.sync(
+      stateWith([
+        makePip({ id: "a", name: "Aster" }),
+        makePip({ id: "b", name: "Bram" }),
+        makePip({ id: "c", name: "Clove" }),
+      ]),
+    );
+    const labels = root.querySelectorAll(".pk-castchip-name").map((el) => el.textContent);
+    expect(labels).toEqual(["Aster", "Bram", "Clove"]);
+  });
+
+  it("ROUND 2D — a rename updates the chip label AND its tooltip", () => {
+    // The structural rebuild key used to be `id|speciesId|palette`, so a
+    // rename left the chip's tooltip showing the old name indefinitely
+    // while the who-line and aria-label updated correctly.
+    const { bar, root } = mount();
+    bar.sync(stateWith([makePip({ id: "a", name: "Bracken" })]));
+    expect(root.querySelector(".pk-castchip-name")?.textContent).toBe("Bracken");
+    bar.sync(stateWith([makePip({ id: "a", name: "Thistledown" })]));
+    expect(root.querySelector(".pk-castchip-name")?.textContent).toBe("Thistledown");
+    expect(root.querySelector(".pk-castchip")?.title).toBe("Thistledown");
+  });
+
+  it("ROUND 2D — chips render the worn accessory and the pattern, so same-palette Pips differ", () => {
+    const { bar, root } = mount();
+    const twin = (id: string, accessoryId: string | null, pattern: string): PipState => {
+      const base = makePip({ id, name: id });
+      return {
+        ...base,
+        genome: { ...base.genome, accessoryId, pattern },
+      } as PipState;
+    };
+    bar.sync(
+      stateWith([
+        twin("a", "leafcap", "plain"),
+        twin("b", "scarf", "speckled"),
+        twin("c", null, "swirl"),
+      ]),
+    );
+    // Same species, same palette — the accessory and pattern are the only
+    // things telling these three apart.
+    expect(root.querySelectorAll(".pk-pipdex-accessory--leafcap")).toHaveLength(1);
+    expect(root.querySelectorAll(".pk-pipdex-accessory--scarf")).toHaveLength(1);
+    expect(root.querySelectorAll(".pk-pipdex-accessory")).toHaveLength(2);
+    const patternClasses = root
+      .querySelectorAll(".pk-pipdex-blob")
+      .map((el) => el.className.split(" ").find((c) => c.startsWith("pk-pipdex-blob--pattern-")));
+    expect(new Set(patternClasses).size).toBe(3);
+  });
+
+  it("ROUND 2D — chips carry per-individual jitter, so identical genomes still differ", () => {
+    const { bar, root } = mount();
+    bar.sync(
+      stateWith([makePip({ id: "pip-1", name: "One" }), makePip({ id: "pip-2", name: "Two" })]),
+    );
+    const portraits = root.querySelectorAll(".pk-pipdex-portrait");
+    expect(portraits).toHaveLength(2);
+    const read = (el: FakeElement): string =>
+      ["--pk-jw", "--pk-jh", "--pk-jgap", "--pk-jeye-w"]
+        .map((n) => el.style.getPropertyValue(n))
+        .join("|");
+    expect(read(portraits[0] as FakeElement)).not.toBe(read(portraits[1] as FakeElement));
   });
 
   it("an empty need paints a visible 1% slot, never a missing bar", () => {

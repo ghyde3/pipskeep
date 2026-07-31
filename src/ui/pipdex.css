@@ -348,6 +348,21 @@
 
 /* ---------- Portrait (bible §1.3.3 — the frozen first look) ---------- */
 
+/* ROUND 2D FIX STAGE — the cast strip's chip size. `ui/topBar.ts` renders
+   its roster chips through this same builder now (see its `buildChip`),
+   so the strip gains pattern/accessory/silhouette/shiny/jitter and can
+   never drift from the Album again. Margins are zeroed: the chip's own
+   `.pk-chip` box does the positioning. */
+.pk-pipdex-portrait--chip {
+  --pk-box-w: 44px;
+  --pk-box-h: 40px;
+  margin: 0;
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  transform: translateX(-50%);
+}
+
 .pk-pipdex-portrait--small {
   --pk-box-w: 58px;
   --pk-box-h: 48px;
@@ -365,17 +380,63 @@
   margin: 2px auto 4px;
 }
 
+/* `--pk-jw`/`--pk-jh`/`--pk-jgap`/`--pk-jeye-*` are the PER-INDIVIDUAL
+   jitter (round 2D item 4), written inline by `pipdex.ts`'s
+   `buildPortraitEl` from `render/spriteResolver.ts`'s `jitterStyleVars`
+   — the same numbers the Pixi Keep sprite uses, as unitless multipliers
+   so one computation scales across every portrait box (42px cast chip →
+   112px Album detail). Every fallback is 1 (or 0 for the offset), so a
+   caller that passes no `jitterSeed` renders the exact pre-jitter
+   geometry. The fix stage added these because the shipped pass applied
+   jitter on ONE surface — the smallest sprite in the game — leaving two
+   Pips with the same genome byte-identical everywhere a player actually
+   reads a portrait. */
 .pk-pipdex-blob {
   position: absolute;
   left: 50%;
   bottom: 4px;
-  width: calc(var(--pk-box-w) * var(--pk-wfrac, 1));
-  height: calc(var(--pk-box-h) * var(--pk-hfrac, 1));
+  width: calc(var(--pk-box-w) * var(--pk-wfrac, 1) * var(--pk-jw, 1));
+  height: calc(var(--pk-box-h) * var(--pk-hfrac, 1) * var(--pk-jh, 1));
   transform: translateX(-50%);
   border-radius: 46% 54% 52% 48% / 58% 56% 44% 42%;
   background: var(--pk-body, #cbc3e3);
   border: 2px solid var(--pk-outline, #847aa8);
   box-shadow: inset 0 -8px 0 rgba(0, 0, 0, 0.06);
+}
+
+/* The species' one vibrant note (spec §11) — the accent sprout. ROUND 2D
+   FIX STAGE: the Pixi Keep sprite, the focus portrait and the old cast
+   chip all drew one and this shared portrait did not, so folding the cast
+   strip and the starter cards onto this builder would have quietly
+   deleted it from two surfaces. Parity, and one less thing that can
+   diverge. */
+.pk-pipdex-blob::before {
+  content: "";
+  position: absolute;
+  top: -13%;
+  left: 55%;
+  width: 17%;
+  min-width: 7px;
+  height: 20%;
+  min-height: 8px;
+  border-radius: 50% 50% 50% 50% / 70% 70% 30% 30%;
+  background: var(--pk-accent, #ff8a5c);
+  transform: rotate(-16deg);
+}
+
+/* A worn crown accessory would otherwise be pierced by the sprout — the
+   same collision `render/spriteResolver.ts` fixes by displacing the
+   sprout sideways (`wearsCrown`). Kept in sync by shape, not by comment:
+   both surfaces move it to the same side. */
+.pk-pipdex-blob:has(.pk-pipdex-accessory--leafcap)::before,
+.pk-pipdex-blob:has(.pk-pipdex-accessory--flower)::before,
+.pk-pipdex-blob:has(.pk-pipdex-accessory--pebblecrown)::before,
+.pk-pipdex-blob:has(.pk-pipdex-accessory--berrycrown)::before,
+.pk-pipdex-blob:has(.pk-pipdex-accessory--snowcap)::before,
+.pk-pipdex-blob:has(.pk-pipdex-accessory--cloudwisp)::before,
+.pk-pipdex-blob:has(.pk-pipdex-accessory--acorncap)::before {
+  left: 74%;
+  transform: rotate(16deg);
 }
 
 .pk-pipdex-portrait--large .pk-pipdex-blob {
@@ -406,21 +467,42 @@
 
 .pk-pipdex-eyes {
   position: absolute;
-  top: 30%;
+  top: calc(30% + var(--pk-jeye-dy, 0) * 1%);
   left: 0;
   right: 0;
   display: flex;
+  align-items: center;
   justify-content: center;
-  gap: 16%;
+  gap: calc(16% * var(--pk-jgap, 1));
 }
 
 .pk-pipdex-eyes i {
-  width: 14%;
+  width: calc(14% * var(--pk-jeye-w, 1));
   min-width: 5px;
-  aspect-ratio: 1;
+  aspect-ratio: calc(var(--pk-jeye-w, 1) / var(--pk-jeye-h, 1));
   border-radius: 50%;
   background: #403a4d;
   display: block;
+}
+
+/* ROUND 2D FIX STAGE — the mouth. The Pixi resolver has always drawn one
+   (`spriteResolver.ts`, a quadratic curve at −0.4·bh); the two DOM
+   portraits did not, which left the face undefined below the eyes and is
+   the reason three different accessories were all reported as "sitting
+   where a mouth would be". It is also plain parity: this surface claims
+   to be the same Pip as the Keep's. */
+.pk-pipdex-mouth {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 18%;
+  min-width: 8px;
+  height: 7%;
+  min-height: 3px;
+  transform: translateX(-50%);
+  border-bottom: 1.6px solid var(--pk-outline, #847aa8);
+  border-radius: 0 0 60% 60%;
+  opacity: 0.65;
 }
 
 .pk-pipdex-blush {
@@ -464,6 +546,398 @@
   100% {
     background-position: -20% 100%;
   }
+}
+
+/* Worn accessory (round 2D item 3; docs/BACKLOG.md "Round 2D") — same
+ * content-as-data colors as ui.css's `.pk-portrait-accessory--<id>`
+ * (`--pk-acc-primary`/`--pk-acc-secondary`, set inline from
+ * content/accessories.ts, same fields render/spriteResolver.ts's Pixi
+ * resolver reads), but an INDEPENDENTLY authored shape — the established
+ * three-implementations pattern the pattern overlays below already
+ * follow (see this file's own comment there, and
+ * `portraitPatterns.test.ts`, which this round extends to accessories).
+ * Percent-based sizing (with a small px floor via `min-width`/
+ * `min-height`, matching `.pk-pipdex-blush`'s own `width:16%;
+ * min-width:6px` mix above) so accessories scale sensibly between the
+ * grid thumbnail and the detail-page portrait. */
+
+.pk-pipdex-accessory {
+  position: absolute;
+  pointer-events: none;
+  /* Same reasoning as ui.css's `.pk-portrait-accessory` — a pale
+     accessory (cloudwisp, snowcap, flower) needs definition regardless of
+     which body palette it happens to land on. Two stacked shadows, not
+     one: the fix stage found the near-white cloudwisp/snowcap still
+     vanishing on the pale bodies (Tidepip cockle, Frostpip powder,
+     Hearthpip) that the Pixi surface handles with an explicit
+     `ACCESSORY_OUTLINE` stroke. Stacking approximates that contour on
+     the ACTUAL painted pixels, including box-shadow-built shapes. */
+  filter: drop-shadow(0 0 0.7px rgba(30, 26, 20, 0.75))
+    drop-shadow(0 0.5px 0.7px rgba(30, 26, 20, 0.45));
+}
+
+/* --- Crown accessories: worn ON the head, overlapping it. ---
+   ROUND 2D FIX STAGE: every one of these used to start at or above 0%,
+   i.e. at or above the blob's own top edge, so all seven read as
+   FLOATING with background showing between hat and skull. The whole
+   family drops ~5% of body height, exactly as `CROWN_TUCK_PX` does on
+   the Pixi surface. */
+
+.pk-pipdex-accessory--leafcap {
+  top: 1%;
+  left: 50%;
+  width: 34%;
+  height: 16%;
+  min-width: 14px;
+  min-height: 7px;
+  transform: translateX(-50%) rotate(-16deg);
+  background: var(--pk-acc-primary, #5ba05a);
+  border-radius: 65% 65% 65% 8%;
+}
+
+.pk-pipdex-accessory--leafcap::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 12%;
+  right: 12%;
+  height: 1.2px;
+  background: var(--pk-acc-secondary, #3f7a40);
+  opacity: 0.75;
+}
+
+.pk-pipdex-accessory--flower {
+  top: 3%;
+  left: 50%;
+  width: 9%;
+  height: 9%;
+  min-width: 5px;
+  min-height: 5px;
+  border-radius: 50%;
+  transform: translateX(-50%);
+  background: var(--pk-acc-primary, #f2a6c4);
+  box-shadow:
+    -6px -2px 0 0 var(--pk-acc-primary, #f2a6c4),
+    6px -2px 0 0 var(--pk-acc-primary, #f2a6c4),
+    -3.5px 5px 0 0 var(--pk-acc-primary, #f2a6c4),
+    3.5px 5px 0 0 var(--pk-acc-primary, #f2a6c4);
+}
+
+.pk-pipdex-accessory--flower::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: var(--pk-acc-secondary, #f7d24a);
+}
+
+.pk-pipdex-accessory--pebblecrown {
+  top: 8%;
+  left: 50%;
+  width: 20%;
+  height: 10%;
+  min-width: 9px;
+  min-height: 5px;
+  transform: translateX(-50%);
+  background: var(--pk-acc-primary, #a8a29a);
+  border-radius: 50%;
+}
+
+.pk-pipdex-accessory--pebblecrown::before,
+.pk-pipdex-accessory--pebblecrown::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  border-radius: 50%;
+  background: var(--pk-acc-secondary, #847e73);
+}
+
+.pk-pipdex-accessory--pebblecrown::before {
+  top: -70%;
+  width: 72%;
+  height: 78%;
+  transform: translateX(-50%);
+}
+
+.pk-pipdex-accessory--pebblecrown::after {
+  top: -128%;
+  width: 50%;
+  height: 62%;
+  background: var(--pk-acc-primary, #a8a29a);
+  transform: translateX(-50%);
+}
+
+.pk-pipdex-accessory--berrycrown {
+  top: 3%;
+  left: 34%;
+  width: 12%;
+  height: 12%;
+  min-width: 6px;
+  min-height: 6px;
+  border-radius: 50%;
+  background: var(--pk-acc-primary, #8e3b6b);
+}
+
+.pk-pipdex-accessory--berrycrown::before,
+.pk-pipdex-accessory--berrycrown::after {
+  content: "";
+  position: absolute;
+  width: 12%;
+  height: 12%;
+  min-width: 6px;
+  min-height: 6px;
+  border-radius: 50%;
+  background: var(--pk-acc-primary, #8e3b6b);
+}
+
+.pk-pipdex-accessory--berrycrown::before {
+  left: 14px;
+  top: -5px;
+}
+
+.pk-pipdex-accessory--berrycrown::after {
+  left: 26px;
+  top: 0;
+}
+
+.pk-pipdex-accessory--snowcap {
+  top: 1%;
+  left: 50%;
+  width: 36%;
+  height: 15%;
+  min-width: 16px;
+  min-height: 7px;
+  transform: translateX(-50%);
+  background: var(--pk-acc-primary, #eaf4fb);
+  border: 1px solid var(--pk-acc-secondary, #a9c9de);
+  border-radius: 50% 50% 20% 20%;
+}
+
+.pk-pipdex-accessory--snowcap::after {
+  content: "";
+  position: absolute;
+  top: -7px;
+  left: 50%;
+  width: 4px;
+  height: 4px;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background: var(--pk-acc-secondary, #a9c9de);
+  box-shadow:
+    -5px 0 0 -1px var(--pk-acc-secondary, #a9c9de),
+    5px 0 0 -1px var(--pk-acc-secondary, #a9c9de),
+    0 -5px 0 -1px var(--pk-acc-secondary, #a9c9de);
+}
+
+.pk-pipdex-accessory--cloudwisp {
+  top: -5%;
+  left: 50%;
+  width: 20%;
+  height: 14%;
+  min-width: 9px;
+  min-height: 6px;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background: var(--pk-acc-primary, #f2eef8);
+}
+
+.pk-pipdex-accessory--cloudwisp::before,
+.pk-pipdex-accessory--cloudwisp::after {
+  content: "";
+  position: absolute;
+  width: 16%;
+  height: 12%;
+  min-width: 7px;
+  min-height: 5px;
+  border-radius: 50%;
+  background: var(--pk-acc-primary, #f2eef8);
+}
+
+.pk-pipdex-accessory--cloudwisp::before {
+  left: -6px;
+  top: 2px;
+}
+
+.pk-pipdex-accessory--cloudwisp::after {
+  left: 8px;
+  top: 1px;
+}
+
+.pk-pipdex-accessory--acorncap {
+  top: 3%;
+  left: 50%;
+  width: 30%;
+  height: 16%;
+  min-width: 13px;
+  min-height: 7px;
+  transform: translateX(-50%);
+  background: var(--pk-acc-primary, #9c6b3e);
+  border: 1px solid var(--pk-acc-secondary, #5c3f24);
+  border-radius: 50% 50% 40% 40%;
+}
+
+.pk-pipdex-accessory--acorncap::after {
+  content: "";
+  position: absolute;
+  top: -5px;
+  left: 50%;
+  width: 3px;
+  height: 5px;
+  transform: translateX(-50%);
+  background: var(--pk-acc-secondary, #5c3f24);
+  border-radius: 2px;
+}
+
+/* --- Neck accessories: BELOW the mouth (`.pk-pipdex-mouth`, ~50%),
+   across the top of the belly. ---
+   ROUND 2D FIX STAGE: the scarf sat at 60% and the bowtie/ember bead in
+   the mid-50s, which on a face with no drawn mouth landed exactly where
+   a mouth reads — the scarf came across as a gag, the bowtie and the
+   bead as a mouth. Adding the mouth defines the face; moving these below
+   it makes them read as worn. Mirrors `NECK_Y_FRAC` on the Pixi
+   surface. */
+
+.pk-pipdex-accessory--scarf {
+  top: 59%;
+  left: 50%;
+  width: 54%;
+  height: 11%;
+  min-width: 22px;
+  min-height: 6px;
+  transform: translateX(-50%);
+  background: var(--pk-acc-primary, #d9683c);
+  border-radius: 6px 6px 8px 8px;
+}
+
+/* The KNOT, sitting ON the band — what turns a horizontal bar into a
+   worn scarf rather than a stripe painted on the belly. */
+.pk-pipdex-accessory--scarf::before {
+  content: "";
+  position: absolute;
+  top: -18%;
+  left: 58%;
+  width: 22%;
+  height: 136%;
+  min-width: 6px;
+  border-radius: 45%;
+  background: var(--pk-acc-secondary, #b84f2b);
+}
+
+/* …and the tail hanging from it, TAPERING (the shipped clip-path
+   widened downward, which read as a mallet head). */
+.pk-pipdex-accessory--scarf::after {
+  content: "";
+  position: absolute;
+  top: 95%;
+  left: 60%;
+  width: 17%;
+  height: 115%;
+  min-width: 5px;
+  background: var(--pk-acc-primary, #d9683c);
+  clip-path: polygon(0 0, 100% 0, 78% 100%, 22% 100%);
+}
+
+.pk-pipdex-accessory--bowtie {
+  top: 60%;
+  left: 50%;
+  width: 34%;
+  height: 14%;
+  min-width: 16px;
+  min-height: 8px;
+  transform: translateX(-50%);
+}
+
+.pk-pipdex-accessory--bowtie::before,
+.pk-pipdex-accessory--bowtie::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  width: 46%;
+  height: 100%;
+  background: var(--pk-acc-primary, #e0567e);
+}
+
+.pk-pipdex-accessory--bowtie::before {
+  left: 0;
+  clip-path: polygon(100% 0, 100% 100%, 0 50%);
+}
+
+.pk-pipdex-accessory--bowtie::after {
+  right: 0;
+  clip-path: polygon(0 0, 0 100%, 100% 50%);
+}
+
+.pk-pipdex-accessory--emberbead {
+  top: 63%;
+  left: 50%;
+  width: 10%;
+  height: 10%;
+  min-width: 5px;
+  min-height: 5px;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background: var(--pk-acc-primary, #ff7a3c);
+  /* A tight rim rather than a wide glow: the shipped 5px/1.5px shadow
+     read as a dark hole with a dot in it. */
+  box-shadow: 0 0 0 1.2px var(--pk-acc-secondary, #8a3a20);
+}
+
+/* The cord — a shallow arc above the bead, so it reads as hung round the
+   neck rather than as a dot painted on the belly. */
+.pk-pipdex-accessory--emberbead::before {
+  content: "";
+  position: absolute;
+  bottom: 45%;
+  left: 50%;
+  width: 260%;
+  height: 110%;
+  transform: translateX(-50%);
+  border: 1.2px solid #6b4a30;
+  border-bottom: none;
+  border-radius: 60% 60% 0 0 / 92% 92% 0 0;
+  opacity: 0.8;
+}
+
+/* --- Shoulder / side accessories: out on a flank, BELOW the blush
+   (~44-52%) so they never land on the cheek, and clear of the eye row. --- */
+
+.pk-pipdex-accessory--shellpauldron {
+  top: 58%;
+  left: 72%;
+  width: 20%;
+  height: 20%;
+  min-width: 11px;
+  min-height: 11px;
+  border-radius: 50% 50% 50% 0;
+  background: var(--pk-acc-primary, #f0d6b8);
+  border: 1px solid var(--pk-acc-secondary, #d9a878);
+  transform: rotate(-20deg);
+}
+
+.pk-pipdex-accessory--lantern {
+  top: 40%;
+  left: 78%;
+  width: 2px;
+  height: 16%;
+  min-height: 8px;
+  background: #5a4a30;
+  border-radius: 1px;
+}
+
+.pk-pipdex-accessory--lantern::after {
+  content: "";
+  position: absolute;
+  top: 90%;
+  left: 50%;
+  width: 22%;
+  height: 22%;
+  min-width: 11px;
+  min-height: 12px;
+  transform: translateX(-50%);
+  background: var(--pk-acc-primary, #f7c948);
+  border: 1.2px solid var(--pk-acc-secondary, #8a6a3a);
+  border-radius: 3px;
+  box-shadow: 0 0 5px 1px rgba(247, 201, 72, 0.55);
 }
 
 /* Pattern overlays (content-bible §1.5), matching ui.css's

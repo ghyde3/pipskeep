@@ -35,7 +35,6 @@ function makePip(id: string, overrides: Partial<PipState> = {}): PipState {
       speciesId: "mosspip",
       palette: "fern",
       pattern: "plain",
-      accessorySlots: 1,
       personalityId,
       shiny: false,
     },
@@ -65,7 +64,6 @@ function makeSeed(overrides: Partial<LineageEggSeed> = {}): LineageEggSeed {
       speciesId: "mosspip",
       palette: "fern",
       pattern: "plain",
-      accessorySlots: 1,
       personalityId: "curious",
       shiny: false,
     },
@@ -226,7 +224,7 @@ describe("attemptLineageFind", () => {
     expect(rate).toBeLessThan(0.5);
   });
 
-  it("found: removes the seed, and the total roll count is exactly 1 (find) + 6 (combine) + 1 (shiny) = 8", () => {
+  it("found: removes the seed, and the total roll count is exactly 1 (find) + 7 (combine) + 1 (shiny) = 9", () => {
     const rng = createRng(9);
     const stream = rng.stream(LINEAGE_STREAM);
     const seed = makeSeed({ misses: 1 });
@@ -239,7 +237,7 @@ describe("attemptLineageFind", () => {
 
     const rng2 = createRng(9);
     const stream2 = rng2.stream(LINEAGE_STREAM);
-    for (let i = 0; i < 8; i++) stream2.next();
+    for (let i = 0; i < 9; i++) stream2.next();
     expect(stream.getState()).toBe(stream2.getState());
     expect(stream.getState()).not.toBe(before);
   });
@@ -476,14 +474,14 @@ describe("breedEligibility", () => {
 });
 
 describe("combineForBreeding", () => {
-  it("consumes exactly 7 rolls (6 combineGenomes + 1 shiny), always", () => {
+  it("consumes exactly 8 rolls (7 combineGenomes + 1 shiny), always", () => {
     const rng = createRng(5);
     const stream = rng.stream(LINEAGE_STREAM);
     combineForBreeding(makePip("a"), makePip("b"), stream, fixtureTuning);
 
     const rng2 = createRng(5);
     const stream2 = rng2.stream(LINEAGE_STREAM);
-    for (let i = 0; i < 7; i++) stream2.next();
+    for (let i = 0; i < 8; i++) stream2.next();
     expect(stream.getState()).toBe(stream2.getState());
   });
 

@@ -237,7 +237,7 @@ Every action produces: stat change, animation, one dialogue line drawn from `per
 
 ### 7.1 Sources (MVP)
 
-1. **Starter:** onboarding offers 3 starter Pips (same species, three distinct palettes + personalities shown up front); player picks one.
+1. **Starter:** onboarding offers 3 starter Pips — **three DIFFERENT species** (amended §16 v1.7; the original "same species, three distinct palettes" was written when Mosspip was the only species), each with its own silhouette, palette, pattern, personality, individual name and worn accessory, all shown up front; player picks one.
 2. **Expedition eggs** per §6.1 chances.
 3. ~~Breeding~~ — **NOT in MVP** (see §12), but inheritance data structures are built now (§7.3).
 
@@ -253,7 +253,7 @@ Found → Incubating → Pipping → Hatched
 
 ### 7.3 Traits & inheritance
 
-Each Pip carries a trait genome: `{ species, palette, pattern, accessorySlots, personality }`. Expedition eggs roll all of it randomly (weighted by registry rarity). The genome structure and a `combineGenomes(a, b, rng)` function are implemented and unit-tested **now** so breeding is a UI feature later, not a data migration.
+Each Pip carries a trait genome: `{ species, palette, pattern, personality }`, plus `shiny` and the individually rolled `accessoryId` (**`accessorySlots` was removed in §16 v1.7** — it was per-species data living in per-individual state that nothing rendered). Expedition eggs roll all of it randomly (weighted by registry rarity). The genome structure and a `combineGenomes(a, b, rng)` function are implemented and unit-tested **now** so breeding is a UI feature later, not a data migration.
 
 ### 7.4 Roster cap
 
@@ -387,6 +387,17 @@ Onboarding flow, first-90-seconds sequence tuned, in-app notifications, PWA mani
 ---
 
 ## 16. Changelog
+
+**v1.7 (2026-07-31)** — **round 2D: Pips become individuals.** Three sections are amended by what this round shipped.
+
+- **§7.1 is amended: the starter trio is THREE DIFFERENT SPECIES.** The old wording ("same species, three distinct palettes + personalities") was written when Mosspip was the only species; there are now 14 forms. The trio is Mosspip / Pebblepip / Tidepip — three silhouettes, three palette families, three biome affinities, three personalities, three names, three accessories — so the first decision a player makes is a real one. Common-tier on purpose: a starter is a free pick outside the rarity economy. **The genesis cursor contract is unchanged and still binds**: `rollStarterCandidates` consumes a fixed number of rolls per candidate and `createNewGame` rolls all three names BEFORE it knows the winner, so the RNG cursor advances identically whichever Pip is picked.
+- **§7.3 is amended: `accessorySlots` is removed from the trait genome.** The genome is `{ species, palette, pattern, personality }` plus `shiny` and `accessoryId`. `accessorySlots` was written into every genome, serialized, schema-validated and migrated since Phase 1, and **no surface ever rendered it** — it was not even per-individual (copied verbatim from the species registry), and it was not constant (evolved forms carried 2, base forms 1), so the save file promised a second accessory that could never appear. One accessory per Pip is the design: one anchor on the rig, one shape on each of the three render surfaces. Old saves keep the key harmlessly; the validator drops it on first load. No migration step needed.
+- **§0 gains a vocabulary rule for NAMES.** A Pip's name may never be a word the game already uses for a THING. The first name pool shipped nine collisions and every one broke a real sentence — "Feed Berry a Berry", "Send Meadow to the Meadow", a Pip called Sprout when a sprout is the accent feature every Pip wears, a shiny called Glimmer when "glimmer" IS the word for shiny. `content/names.test.ts` now derives the forbidden vocabulary from the content registries themselves, so the rule cannot rot as either side grows.
+
+**Two standing rules earned again this round** (both are §16 v1.3's, restated because they were violated in the same shapes):
+
+1. **"Written to state" and "visible to the player" are separate acceptance criteria** — and *"visible on one surface"* is not *"visible"*. Jitter was applied at exactly one production call site, which was also the smallest sprite in the game; accessories were stripped by four portrait builders; the cast strip — the only roster list on screen 100% of the time — carried no name, accessory, pattern or silhouette at all. Every round should produce the visibility table, and every row of it should name **all** the surfaces.
+2. **A guard that never renders is not a guard.** The accessory parity test string-matched CSS and called pure functions; deleting the `appendChild` on BOTH DOM portraits left the suite green. Tests for a visual feature must build the DOM and query the node.
 
 **v1.6 (2026-07-30)** — **§12 (Scope Fence) is RETIRED by owner decision.** "Anything ruled out because of MVP we don't need to worry about anymore — if you find value in building a feature, just build it."
 

@@ -94,7 +94,6 @@ function portrait(overrides: Partial<PipdexPortrait> = {}): PipdexPortrait {
       speciesId: "mosspip",
       palette: "fern",
       pattern: "speckled",
-      accessorySlots: 1,
       personalityId: "clingy",
       shiny: false,
     },
@@ -209,6 +208,10 @@ describe("buildPipdexCardModel — the three tiers", () => {
     expect(card.displayName).toBe("Mosspip");
     expect(card.portraitVisual).toEqual({
       speciesId: "mosspip",
+      // The frozen catch's own Pip id — round 2D item 4's jitter seed, so
+      // the Album page keeps the individual it met, not a generic Mosspip.
+      jitterSeed: "pip-7",
+      accessoryId: undefined,
       paletteId: "fern",
       pattern: "speckled",
       shiny: false,
