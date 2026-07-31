@@ -178,6 +178,26 @@ export interface NavMenuDeps {
    * construction site (and the layer tests) compiles unchanged; when
    * omitted the switch is simply not drawn. */
   onSetQuietKeep?(on: boolean): void;
+  /** ROUND 2I (docs/notifications-bible.md §5.1) — "Tap on the shoulder".
+   * A DESTINATION, not a switch (unlike Quiet Keep): tapping opens the
+   * notification settings sheet, so this closes the menu like an ordinary
+   * `onPick` row rather than toggling in place. Optional for the same
+   * reason `onSetQuietKeep` is — omit it and the row is simply not drawn.
+   * Takes the live row model so the hint reflects permission state, which
+   * lives outside `GameState` (bible §8: device-local, not save-local). */
+  onOpenNotifications?(): void;
+  /** Pulled fresh on every render (like `getState`), never cached: the
+   * row's label/hint depends on browser permission state and device-local
+   * prefs this module cannot see (bible §8 — not part of `GameState`), so
+   * there is no store dispatch to key a `sync()` off. */
+  getNotifyRow?(): NookNotifyRowLike;
+}
+
+/** Structural — `src/ui/notificationSettings.ts`'s `NookNotifyRowModel`
+ * satisfies this without either module importing the other's types. */
+export interface NookNotifyRowLike {
+  readonly label: string;
+  readonly hint: string;
 }
 
 export interface NavMenu {
@@ -299,6 +319,35 @@ export function createNavMenu(deps: NavMenuDeps): NavMenu {
         render(deps.getState());
       });
       panel.appendChild(toggle);
+    }
+
+    // ROUND 2I (bible §5.1) — "Tap on the shoulder", directly under Quiet
+    // Keep. A DESTINATION (opens the settings sheet), so — unlike the
+    // switch above — it closes the menu on tap, the same manners every
+    // ordinary row uses.
+    const openNotifications = deps.onOpenNotifications;
+    const getNotifyRow = deps.getNotifyRow;
+    if (openNotifications !== undefined && getNotifyRow !== undefined) {
+      const notifyRow = getNotifyRow();
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "pk-nav-item pk-nav-footer-row";
+
+      const label = document.createElement("span");
+      label.className = "pk-nav-item-label";
+      label.textContent = notifyRow.label;
+
+      const hint = document.createElement("span");
+      hint.className = "pk-nav-item-hint";
+      hint.textContent = notifyRow.hint;
+
+      item.append(label, hint);
+      item.addEventListener("click", () => {
+        sound("ui.tap");
+        close();
+        openNotifications();
+      });
+      panel.appendChild(item);
     }
   };
 

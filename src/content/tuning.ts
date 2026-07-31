@@ -1748,6 +1748,63 @@ export const tuning = {
     },
   },
 
+  /**
+   * ROUND 2I — NOTIFICATIONS (docs/notifications-bible.md). Live as of the
+   * build round: `src/ui/notificationAsk.ts` / `notificationSettings.ts`
+   * consume `permissionAsk`; the scheduling side (`src/app/notifications/`
+   * — plan/budget/channel) consumes the rest. Uncommented once, here, so
+   * both halves of the round read the same numbers instead of each
+   * inventing their own copy.
+   */
+  notifications: {
+    // Bible §4.1 — dropped, never deferred. Local wall-clock hours,
+    // derived from `GameState.dayOffsetMs` (no timezone library:
+    // tzOffsetMs = dayOffsetMs - retention.dayStartHour * HOUR_MS).
+    quietHours: { startHour: 22, endHour: 8 },
+
+    // Bible §4.2 — volume. `maxPerDay` is counted per the SAME 04:00-local
+    // dayIndex the streak and bounties use, so the whole game rolls over
+    // together. `minGapMs` is the real spam control: three back-to-back
+    // 5-minute Meadow trips can never produce three buzzes.
+    maxPerDay: 4,
+    minGapMs: 25 * MINUTE_MS,
+    coalesceWindowMs: 10 * MINUTE_MS,
+    maxNamesInBody: 3,
+
+    // Hidden-tab timers are throttled to ~1/min after five minutes hidden,
+    // so a delivery may be up to a minute late. That is handled by the COPY
+    // rather than by a number: no notification string may contain a time
+    // word, which copy.test.ts enforces. (The bible's `timerSlopMs` and
+    // `maxClausesPerNotification` are deliberately absent — see
+    // core/notifications/types.ts for why they were removed rather than
+    // shipped as knobs that turn nothing.)
+
+    // Bible §3 — the EARNED ask. Never on first launch; never during
+    // onboarding; only from a tap, `delayAfterSendMs` after the departure
+    // trot of the first qualifying expedition send. A soft dismiss may be
+    // re-asked after `reAskAfterSends` more sends, to `maxAsks` lifetime.
+    // An explicit "No thanks" or a browser deny is FINAL — never re-asked.
+    permissionAsk: {
+      afterExpeditionSends: 1,
+      delayAfterSendMs: 3 * SECOND_MS,
+      reAskAfterSends: 3,
+      maxAsks: 2,
+    },
+
+    // How late is too late. A timer that fires long after its moment (a
+    // laptop lid closed overnight, a frozen tab thawed days later) has
+    // nothing useful left to say, so `dueNotifications` drops anything
+    // older than this rather than buzzing about it.
+    //
+    // ROUND-2I REVIEW FIX: this replaces `outbox: { horizonMs, maxEntries }`
+    // and `periodicSyncMinIntervalMs`. Both described the Tier-2 outbox and
+    // periodic-sync path this round cut, and NOTHING read either — exactly
+    // the dead-knob shape the comment above already calls out for
+    // `timerSlopMs`/`maxClausesPerNotification`. This one is read on every
+    // recompute (core/notifications/index.ts).
+    staleAfterMs: 24 * HOUR_MS,
+  },
+
   /** New saves are seeded with 3 Berries so the guided first Feed works
    * (§6.3). Item counts, not a cost bundle — Berries are food (inventory),
    * not a resource, so ResourceBundle deliberately does not apply here. */

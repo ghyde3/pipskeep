@@ -96,6 +96,21 @@ import { createBreedingView } from "../ui/breeding";
 // the only wiring the app needs; every call site was already in place.
 import { initSound } from "./sound";
 import { mountSoundToggle } from "../ui/soundToggle";
+// Round 2I (docs/notifications-bible.md §3/§5) — the earned permission
+// ask and the "Tap on the shoulder" settings sheet. Same parallel-module,
+// static-import pattern as everything above: each owns all of its own
+// DOM + CSS and mounts nothing until main.ts says where. Preferences are
+// device-local (bible §8), loaded once here through the SAME IndexedDB
+// seam `initSound` uses for `pref-sound` — no save-schema bump.
+import { initNotificationPrefs } from "../ui/notificationPrefs";
+// Round 2I scheduling half (docs/notifications-bible.md §2.3): arm on
+// hide, recompute on wake, deliver through the notify() seam.
+import { initPushNotifications } from "./push";
+import { createNotificationAskFlow } from "../ui/notificationAsk";
+import {
+  createNotificationSettingsSheet,
+  notificationsNookRow,
+} from "../ui/notificationSettings";
 import { OffsetClock } from "./appClock";
 import { routeBoot } from "./bootRoute";
 import { initPersistence, loadPipskeep, openSaveStore } from "./persistence";
@@ -272,6 +287,36 @@ async function startGame(
   const persistence = await initPersistence(store, clock, {
     saveStore,
     preloaded: loaded,
+  });
+
+  // --- Notifications (round 2I, docs/notifications-bible.md §3/§5/§8) ---
+  // Preferences are device-local (own IndexedDB key, same seam as
+  // pref-sound) — loaded once here, same async pattern as sound above.
+  const notifyPrefsCtl = await initNotificationPrefs(saveStore);
+
+  // `notifySettings` is declared as a `const` below and referenced from
+  // `notificationAsk`'s `setPrefs` closure — safe (the closure only RUNS
+  // after both exist), the same forward-reference-through-closure trick
+  // the Nook menu's own rows use throughout this file.
+  const notificationAsk = createNotificationAskFlow({
+    mount: document.body,
+    getPrefs: () => notifyPrefsCtl.get(),
+    setPrefs: (next) => {
+      notifyPrefsCtl.set(next);
+      notifySettings.refresh();
+    },
+    isOnboardingActive: () => !store.getState().onboarding.completed,
+  });
+
+  const notifySettings = createNotificationSettingsSheet({
+    mount: document.body,
+    getPrefs: () => notifyPrefsCtl.get(),
+    setPrefs: (next) => {
+      notifyPrefsCtl.set(next);
+      notifySettings.refresh();
+    },
+    getPermissionState: () => notificationAsk.permissionState(),
+    onRequestAsk: () => notificationAsk.showManually(),
   });
 
   // --- Pixi world ---
@@ -490,6 +535,10 @@ async function startGame(
       pipLevelView.close();
       breedingView.close();
       memorialView.closeLineageBoard();
+      // Round 2I's settings sheet joins the same routine (it is reached
+      // via `onOpenNotifications` below, not this switch, but it must
+      // still yield to any OTHER destination the player picks instead).
+      notifySettings.close();
       if (id === "album") pipdexView.open();
       else if (id === "meadow") sanctuaryView.open();
       else if (id === "today") dailies.open();
@@ -502,6 +551,21 @@ async function startGame(
     // free either way.
     onSetQuietKeep: (on) => {
       store.dispatch({ type: "SET_QUIET_KEEP", on, at: clock.now() });
+    },
+    // ROUND 2I (bible §5.1) — "Tap on the shoulder": a DESTINATION below
+    // Quiet Keep, not a switch, so it goes through the SAME one-surface-
+    // at-a-time routine `onPick` enforces above rather than toggling in
+    // place.
+    getNotifyRow: () => notificationsNookRow(notifyPrefsCtl.get(), notificationAsk.permissionState()),
+    onOpenNotifications: () => {
+      ui.closeSurfaces();
+      pipdexView.close();
+      sanctuaryView.close();
+      dailies.close();
+      pipLevelView.close();
+      breedingView.close();
+      memorialView.closeLineageBoard();
+      notifySettings.open();
     },
   });
 
@@ -591,6 +655,15 @@ async function startGame(
           kind: "info",
           message: `${pip.name} trotted off to the ${expeditionName(expeditionId)} — back in ${formatDurationShort(durationMs)}!`,
         });
+        // Round 2I (bible §3.2): the earned-ask's ONE trigger. The module
+        // decides for itself whether this send actually qualifies (first
+        // ever / re-ask window / already resolved / onboarding active) —
+        // every successful send is reported, unconditionally.
+        notificationAsk.onExpeditionSent({
+          pipName: pip.name,
+          biomeName: expeditionName(expeditionId),
+          durationMs,
+        });
       }
     }
 
@@ -622,6 +695,43 @@ async function startGame(
       saveStore,
       persistence,
     });
+  }
+
+  // --- Web Push scheduling (round 2I, docs/notifications-bible.md §2) ---
+  // THE CALL THAT MAKES THE ROUND REAL. Everything upstream of this line —
+  // src/core/notifications/ (plan + budget + ledger) and src/app/push.ts's
+  // Tier-1 scheduler — is inert without it; a catalogue that is computed
+  // and never delivered would have been the eighth dead feature.
+  //
+  // Deliberately LAST in boot: it attaches a `visibilitychange` listener,
+  // and the ones registered before it (persistence's save flush,
+  // ticker.ts's loop pause) must run first so that on hide the state is
+  // already flushed and the loop already stopped before we derive due
+  // moments from it.
+  //
+  // Every dependency is read live, never captured: `getState` returns
+  // whatever the store holds at wake time (the bible's "never trust the
+  // armed payload"), and `getPrefs` reads the same in-memory prefs object
+  // the settings sheet mutates, so toggling a type off cancels its next
+  // notification with no plumbing in between.
+  const pushNotifications = initPushNotifications({
+    clock,
+    getState: () => store.getState(),
+    getPrefs: () => notifyPrefsCtl.get(),
+    getDayOffsetMs: () => store.getState().dayOffsetMs,
+    serviceWorker:
+      typeof navigator !== "undefined" && "serviceWorker" in navigator
+        ? navigator.serviceWorker
+        : null,
+    ledgerStore: saveStore,
+  });
+  // Dev-only escape hatch for the manual gate: the honest way to see a
+  // notification is to hide the tab and wait, but a five-minute wait per
+  // attempt makes the flow untestable by hand. Never referenced in
+  // production (`import.meta.env.DEV` is replaced with `false` and the
+  // branch is eliminated).
+  if (import.meta.env.DEV) {
+    (window as unknown as { pkPush?: unknown }).pkPush = pushNotifications;
   }
 
   // --- Loops ---

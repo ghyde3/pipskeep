@@ -56,7 +56,18 @@ export default defineConfig({
         // cold offline launch still has the full game (spec §1
         // "network-independent gameplay").
         globPatterns: ["**/*.{js,css,html,svg,png,webmanifest}"],
+        // ...except our own notification handler, which is IMPORTED by
+        // the service worker rather than fetched by the page. Precaching
+        // it would cache a service-worker script as if it were a page
+        // asset (round 2I, docs/notifications-bible.md §7.3).
+        globIgnores: ["pk-notify-sw.js"],
         navigateFallback: "index.html",
+        // Round 2I: pull `notificationclick` into the EXISTING service
+        // worker. Not a second SW, no strategy change, no new dependency
+        // — `generateSW`, the manifest, the precache globs and
+        // `navigateFallback` are all untouched (bible §7.3, and the
+        // owner's "no second service worker" decision).
+        importScripts: ["pk-notify-sw.js"],
       },
     }),
   ],

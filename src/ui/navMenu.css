@@ -214,8 +214,13 @@
 
 /* ROUND 2H — the Quiet Keep switch (shield six). A footer control, not a
    destination: separated by a hairline so it never reads as a fourth
-   place to go. State is carried by the tick mark, not only by colour. */
-.pk-nav-quiet {
+   place to go. State is carried by the tick mark, not only by colour.
+   ROUND 2I extends the same hairline treatment to the "Tap on the
+   shoulder" row (`.pk-nav-footer-row`, navMenu.ts) directly below it — a
+   destination rather than a switch, but still footer chrome, not a
+   fourth place to go. */
+.pk-nav-quiet,
+.pk-nav-footer-row {
   border-top: 1px solid rgba(61, 74, 61, 0.12);
   margin-top: 4px;
 }

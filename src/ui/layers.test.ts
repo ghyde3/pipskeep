@@ -188,6 +188,16 @@ const LADDER: readonly Rung[] = [
     why: "the Today sheet",
   },
   {
+    layer: "dailies-sheet",
+    file: "notificationSettings.css",
+    selector: ".pk-notify-wrap--open",
+    z: 21,
+    why:
+      "ROUND 2I: the \"Tap on the shoulder\" settings sheet — a peer of the " +
+      "Today sheet, both Nook destinations `main.ts`'s `onPick` never opens together",
+    peer: true,
+  },
+  {
     layer: "screen",
     file: "pipdex.css",
     selector: ".pk-pipdex-wrap--open",
@@ -337,6 +347,17 @@ const LADDER: readonly Rung[] = [
     selector: ".pk-confetti",
     z: 60,
     why: "celebration particles, over everything but onboarding",
+  },
+  {
+    layer: "notify-ask",
+    file: "notificationAsk.css",
+    selector: ".pk-ask-wrap--open",
+    z: 65,
+    why:
+      "ROUND 2I: the earned-ask card (bible §3) and its iOS Home-Screen " +
+      "substitute (§3.5) — a one-time, earned interstitial that outranks every " +
+      "ordinary screen/sheet, but stays below onboarding (70), which can never " +
+      "be active when this fires (bible §3.2 defers to the next qualifying send)",
   },
   {
     layer: "onboarding",
