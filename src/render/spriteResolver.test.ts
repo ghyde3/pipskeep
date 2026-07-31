@@ -33,8 +33,11 @@ const {
   JITTER_MAX_MARK_PX,
   BASE_EYE_GAP_PX,
   BASE_EYE_RADIUS_PX,
+  SILHOUETTE_FRACTIONS,
   jitterStyleVars,
 } = await import("./spriteResolver");
+const { silhouetteMetrics } = await import("./pipGeometry");
+type Silhouette = "round" | "chunky" | "wide" | "tall" | "tiny";
 const { LifeStage } = await import("../core/pips/types");
 const { species } = await import("../content/species");
 const { ACCESSORY_IDS, NO_ACCESSORY_ID, accessories } = await import(
@@ -540,6 +543,182 @@ describe("accessories are worn on the RIGHT BODY PART (round 2D fix stage)", () 
       bare.destroy();
       hatted.destroy();
     }
+  });
+});
+
+describe("accessories clear the mouth/eyes on EVERY silhouette, by RECT OVERLAP (round 2K fix stage)", () => {
+  // docs/liveliness-bible.md §0.2 — the shipped guard above probes only
+  // Mosspip ("round", the silhouette with the MOST headroom) and only a
+  // single point on the mouth (its top control point, which every neck
+  // accessory correctly sits below while still covering the mouth's own
+  // PAINTED BOTTOM edge — the collision the point check is structurally
+  // blind to). This suite fixes both holes: it sweeps all five
+  // silhouettes (chunky/wide/tiny shrink `bh` by up to 28%, which is what
+  // actually squeezes the neck/shoulder zone) and rect-overlaps the
+  // accessory's real drawn bounds against the mouth's and eyes' own
+  // PAINTED bands, independently re-derived from `resolvePipSprite`'s own
+  // draw literals (mouth: `moveTo(-6, -bh·0.4) → quadraticCurveTo(0,
+  // -bh·0.36, 6, -bh·0.4)` at stroke width 2.5; eyes: ellipses of radius
+  // `(9.5 + jitter) · eyeScale` centred at `±(21 + jitter) · eyeScale`,
+  // row `-bh·0.58 + jitter`) rather than reusing `pipGeometry.ts`'s own
+  // `bodyLandmarks`/`accessoryZone` — a test that checks the
+  // implementation against itself would pass even if both were wrong the
+  // same way.
+  /**
+   * ⚠️ FIX STAGE — SEEDS, plural. This swept five silhouettes × twelve
+   * accessories against ONE fixed jitter seed, on a system whose entire
+   * point is that every individual is jittered differently: `computeJitter`
+   * varies `bodyShrinkH` (hence `bh`, hence EVERY landmark below) and the
+   * eye row, gap and radii per Pip. One seed is one Pip. The team had
+   * already added `ACCESSORY_EYE_JITTER_MARGIN_PX` out of exactly this
+   * worry and then verified the margin against the one seed it was meant
+   * to protect the others from.
+   */
+  const PROBE_SEEDS = [
+    "zero-jitter-probe",
+    "pip-1",
+    "pip-2",
+    "pip-7",
+    "pip-13",
+    "seed-116",
+    "seed-129",
+    "visitor:place-1",
+    "wanderer",
+    "a",
+  ] as const;
+  const SILHOUETTES: readonly Silhouette[] = ["round", "chunky", "wide", "tall", "tiny"];
+
+  function representativeSpecies(silhouette: Silhouette): string {
+    const found = Object.values(species).find(
+      (s) => (s.sprite.silhouette ?? "round") === silhouette,
+    );
+    if (found === undefined) {
+      throw new Error(`no species with silhouette '${silhouette}' — fixture drifted`);
+    }
+    return found.id;
+  }
+
+  interface Rect {
+    readonly x0: number;
+    readonly x1: number;
+    readonly y0: number;
+    readonly y1: number;
+  }
+
+  /** The mouth's painted band, in the anchor's local space (local = rigY +
+   * bh + 2). Half-width 6 (the stroke's endpoints) + half the 2.5px
+   * stroke; y spans from the endpoints (0.60·bh) down to the sagging
+   * control point (0.64·bh, since the control is LESS negative than the
+   * endpoints in rig space) + half the stroke. */
+  function mouthRect(bh: number): Rect {
+    return { x0: -7.25, x1: 7.25, y0: bh * 0.6 + 0.75, y1: bh * 0.62 + 3.25 };
+  }
+
+  function eyeRects(
+    bh: number,
+    eyeScale: number,
+    jitter: ReturnType<typeof computeJitter>,
+  ): readonly Rect[] {
+    const eyeRow = bh * 0.42 + 2 + jitter.eyeRowYPx;
+    const gap = (21 + jitter.eyeSpacingPx) * eyeScale;
+    const rx = (9.5 + jitter.eyeRadiusXPx) * eyeScale;
+    const ry = (9.5 + jitter.eyeRadiusYPx) * eyeScale;
+    return [-gap, gap].map((cx) => ({
+      x0: cx - rx,
+      x1: cx + rx,
+      y0: eyeRow - ry,
+      y1: eyeRow + ry,
+    }));
+  }
+
+  function overlapsRect(
+    b: { x: number; y: number; width: number; height: number },
+    r: Rect,
+  ): boolean {
+    return b.x < r.x1 && b.x + b.width > r.x0 && b.y < r.y1 && b.y + b.height > r.y0;
+  }
+
+  /**
+   * Each drawn PART's own bounds, through its own transform — not the
+   * anchor's aggregate box.
+   *
+   * The aggregate is what a single-seed sweep could afford to use, and it
+   * is wrong for multi-part accessories: the lantern is a cord and a bulb
+   * separated by most of the body, so its bounding box spans the eyes'
+   * x-range while neither painted part is anywhere near an eye. Sweeping
+   * seeds with the aggregate box reports that as a collision on
+   * round/chunky/wide — a bounding-box artifact, verified by rendering it
+   * at 4×. Measuring the parts individually is both stricter (a part
+   * cannot hide inside a sibling's box) and truer to what is painted.
+   */
+  function partBounds(
+    anchor: { children: readonly unknown[] },
+  ): readonly { x: number; y: number; width: number; height: number }[] {
+    const out: { x: number; y: number; width: number; height: number }[] = [];
+    for (const child of anchor.children as {
+      getLocalBounds(): { x: number; y: number; width: number; height: number };
+      x: number;
+      y: number;
+      scale: { x: number; y: number };
+    }[]) {
+      const b = child.getLocalBounds();
+      out.push({
+        x: child.x + b.x * child.scale.x,
+        y: child.y + b.y * child.scale.y,
+        width: b.width * child.scale.x,
+        height: b.height * child.scale.y,
+      });
+    }
+    return out;
+  }
+
+  for (const silhouette of SILHOUETTES) {
+    const speciesId = representativeSpecies(silhouette);
+    const metrics = silhouetteMetrics(silhouette);
+
+    it.each(ACCESSORY_IDS)(
+      `${silhouette} (${speciesId}) — '%s' never overlaps the mouth or an eye, on any seed`,
+      (accessoryId) => {
+        for (const seed of PROBE_SEEDS) {
+          const jitter = computeJitter(seed);
+          const bh = PIP_BODY_HEIGHT * metrics.hFrac * (1 - jitter.bodyShrinkH);
+          const sprite = resolvePipSprite(
+            genome({ speciesId, accessoryId }),
+            LifeStage.Adult,
+            undefined,
+            seed,
+          );
+          try {
+            const parts = partBounds(sprite.accessoryAnchor);
+            expect(parts.length, `${silhouette}/${accessoryId}@${seed} drew nothing`)
+              .toBeGreaterThan(0);
+            for (const bounds of parts) {
+              expect(
+                overlapsRect(bounds, mouthRect(bh)),
+                `${silhouette}/${accessoryId}@${seed} covers the mouth`,
+              ).toBe(false);
+              for (const eyeRect of eyeRects(bh, metrics.eyeScale, jitter)) {
+                expect(
+                  overlapsRect(bounds, eyeRect),
+                  `${silhouette}/${accessoryId}@${seed} covers an eye`,
+                ).toBe(false);
+              }
+            }
+          } finally {
+            sprite.destroy();
+          }
+        }
+      },
+    );
+  }
+
+  it("guards against a vacuous suite: 5 silhouettes from SILHOUETTE_FRACTIONS, and the seeds really differ", () => {
+    expect(Object.keys(SILHOUETTE_FRACTIONS).sort()).toEqual([...SILHOUETTES].sort());
+    expect(SILHOUETTES).toHaveLength(5);
+    // Seeds that all produce the same jitter would be ten copies of one
+    // test. Body shrink is the field that moves every landmark.
+    const shrinks = new Set(PROBE_SEEDS.map((s) => computeJitter(s).bodyShrinkH.toFixed(4)));
+    expect(shrinks.size).toBeGreaterThanOrEqual(PROBE_SEEDS.length - 1);
   });
 });
 

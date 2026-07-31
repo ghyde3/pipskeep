@@ -787,6 +787,15 @@ describe("deriveDoorstepModel — a trivial absence gets NO Doorstep at all", ()
     expect(
       isTrivialAbsence(summary(3 * MINUTE_MS), { ...away, expeditionLines: ["home"] }),
     ).toBe(false);
+    // ROUND 2K — and so does someone standing at the door. A three-minute
+    // absence that produced ONLY a visitor still earns a Doorstep: the
+    // caller is the news.
+    expect(
+      isTrivialAbsence(summary(3 * MINUTE_MS), {
+        ...away,
+        visitorLine: "Someone came by — Pipsqueak is still here.",
+      }),
+    ).toBe(false);
     // And so does crossing the quiet window.
     expect(isTrivialAbsence(summary(2 * 60 * MINUTE_MS), away)).toBe(false);
   });

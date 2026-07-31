@@ -97,6 +97,21 @@ import { createBreedingView } from "../ui/breeding";
 // Nook menu exactly like the Album/Long Meadow/Nursery.
 import { createCraftingView } from "../ui/crafting";
 import { setCraftTableTapHandler } from "../render/craftTap";
+// Round 2K — ATTRACTIONS' one player-facing surface (docs/liveliness-
+// bible.md §1.5). Same parallel-module, static-import pattern as
+// everything above: owns its own DOM + CSS, mounts nothing until main.ts
+// says where, and is reached ONLY by tapping the visitor in the Keep —
+// through `render/visitorTap`, its own seam, so a visitor tap can never
+// fall through to the focus view (a visitor is not your Pip).
+import { createVisitorCardView } from "../ui/visitorCard";
+import { setVisitorTapHandler } from "../render/visitorTap";
+// Round 2K — THE LIVING KEEP (bible §4.2/§4.3). Both are PURE FUNCTIONS
+// OF A NUMBER, sampled here from the ONE shared OffsetClock and pushed
+// into the scene. `core/` never learns what time it is or what the
+// weather is doing; the app layer owns Date (spec §2 rule 2), which is
+// also exactly why the debug menu's time skew moves the sky.
+import { createSkySampler } from "./skySampler";
+import { tuning as contentTuning } from "../content/tuning";
 // Round 2A sound (amends spec §12): the `sound(slotId)` seam is no longer
 // a no-op — app/audio/ synthesizes every cue procedurally. initSound is
 // the only wiring the app needs; every call site was already in place.
@@ -427,6 +442,26 @@ async function startGame(
     ui.closeSurfaces();
     craftingView.open();
   };
+  // Round 2K — the Visitor card. Created here alongside its siblings for
+  // the same "exists before initUi needs it" reason, and mounted below.
+  const visitorCard = createVisitorCardView({
+    mount: document.body,
+    clock,
+    dispatch: (a) => store.dispatch(a),
+    // The ONE secondary link the card offers at the roster cap. It is an
+    // option, never a requirement (bible §1.7) — nothing is pre-selected
+    // and no Pip is named.
+    onOpenLongMeadow: () => sanctuaryView.open(),
+  });
+  // ⚠️ THE LINE THAT MAKES THE ROUND REAL. Everything upstream of it —
+  // core/attractions' pool/schedule/trust/welcome, the six placeables, the
+  // visitor walking in from the screen edge — is inert without a way to
+  // MEET the visitor. Its own seam, never pipTap: a visitor has no needs,
+  // no job and no expedition, so it must never reach the focus view.
+  setVisitorTapHandler((placementId) => {
+    ui.closeSurfaces();
+    visitorCard.open(placementId);
+  });
   // ROUND 2J FIX STAGE — tapping the bench in the Keep opens its book
   // (economy-bible §6.3: "a recipe sheet opened from the Craft Table AND
   // from the nav menu" — only the nav route shipped). Same module-level
@@ -648,6 +683,19 @@ async function startGame(
     },
   });
 
+  // ROUND 2K — the sky sampler, called by BOTH the store subscription
+  // below and the render loop at the bottom of boot.
+  //
+  // ⚠️ FIX STAGE: the four lines that used to be inlined here now live in
+  // `app/skySampler.ts`, because a mutation swapping `clock.now()` for
+  // `Date.now()` in them passed the entire suite — disconnecting the debug
+  // time slider from the sky with nothing to say so. `main.ts` is imported
+  // by no test; `skySampler.ts` is, and `skySampler.test.ts` drives it
+  // through a skewed OffsetClock. See that module's doc for the whole
+  // argument, including the `dayOffsetMs` trap it must never fall into
+  // again.
+  const sampleSky = createSkySampler(clock, scene, () => store.getState().seed);
+
   // --- Store → scene/UI reactions ---
   let prevState = store.getState();
   scene.sync(prevState);
@@ -661,6 +709,8 @@ async function startGame(
   memorialView.sync(prevState);
   breedingView.sync(prevState);
   craftingView.sync(prevState);
+  visitorCard.sync(prevState);
+  sampleSky(); // before the first frame, so boot never flashes daytime at 2am
 
   store.subscribe((state) => {
     const prev = prevState;
@@ -680,6 +730,28 @@ async function startGame(
     memorialView.sync(state);
     breedingView.sync(state);
     craftingView.sync(state);
+    // Round 2K: the card re-renders itself from every store change, so a
+    // fed snack fills a trust pip in place and a visitor who leaves
+    // mid-card closes it rather than lying about who is outside.
+    visitorCard.sync(state);
+    // ROUND 2K — resample the sky on every store change as well as on the
+    // 1 Hz render tick. Two reasons, and the second is the load-bearing
+    // one:
+    //
+    //  1. A CATCH-UP can move the clock by hours in a single dispatch (a
+    //     debug skip, or simply returning after a night away). Waiting up
+    //     to a second to notice is a visible flash of the wrong sky at the
+    //     exact moment the player is looking hardest.
+    //  2. The render loop runs on `requestAnimationFrame`, which a
+    //     BACKGROUNDED TAB SUSPENDS ENTIRELY — 0 frames per second,
+    //     measured. Store dispatches keep arriving (the ticker's TICK, a
+    //     care action, a CATCHUP on wake), so this path is what keeps the
+    //     sky honest in the one situation where the frame loop cannot.
+    //
+    // Cheap enough to run on every dispatch: two property writes and an
+    // epsilon compare, with the background teardown gated behind
+    // `daylightChangedEnough` inside the scene.
+    sampleSky();
     watchAlerts(prev, state);
 
     if (state.lastCareOutcome !== prev.lastCareOutcome && state.lastCareOutcome !== null) {
@@ -781,7 +853,39 @@ async function startGame(
   }
 
   // --- Loops ---
+  //
+  // ROUND 2K (docs/liveliness-bible.md §4.2/§4.3) — THE SKY SAMPLER, and
+  // it is four lines because the design put all the difficulty in the
+  // purity contract instead of in the plumbing.
+  //
+  // `daylightAt` and `weatherAt` are PURE FUNCTIONS OF A NUMBER. The
+  // number is `clock.now()` — the ONE shared `OffsetClock` every other
+  // app-layer consumer of time already uses — plus 2C's `dayOffsetMs`.
+  // Three consequences, all of them acceptance criteria rather than
+  // nice-to-haves:
+  //
+  //  1. `core/` never learns what time it is. The whole feature is about
+  //     the time of day and core purity is untouched.
+  //  2. THE DEBUG TIME SLIDER MOVES THE SKY. `skew()` shifts the same
+  //     clock, so the next sample lands in a different phase — dragging
+  //     from noon to midnight turns the Keep to night. That is the QA
+  //     tool for the entire feature, and it is free.
+  //  3. Two players in different timezones see different skies from the
+  //     same save, which is correct: it is THEIR evening.
+  //
+  // Sampled at 1 Hz, not per frame. The scene's `setDaylight` does two
+  // property writes per sample and only rebuilds the background when the
+  // sky has actually moved past the epsilon (~94 times a day, measured in
+  // `daylight.test.ts`).
+  let skyTimerMs = 0;
+  const SKY_SAMPLE_MS = contentTuning.liveliness.daylight.sampleMs;
+
   app.ticker.add((ticker) => {
+    skyTimerMs += ticker.deltaMS;
+    if (skyTimerMs >= SKY_SAMPLE_MS) {
+      skyTimerMs = 0;
+      sampleSky();
+    }
     scene.update(ticker.deltaMS);
     ui.update();
   });

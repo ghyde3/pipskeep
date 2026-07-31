@@ -23,10 +23,19 @@ export type Mood = (typeof MOODS)[number];
 
 /**
  * Dialogue contexts (spec §3): the four moods + Sulking (§4.4) + Refusal
- * (§5 — whenever a Pip declines Play/Job/Expedition). Content keys its
+ * (§5 — whenever a Pip declines Play/Job/Expedition) + Greeting (round
+ * 2K, docs/liveliness-bible.md §4.5 — what a Pip says to ANOTHER PIP
+ * when the two of them stop to notice each other). Content keys its
  * dialogue pools by `personality × DialogueContext`.
+ *
+ * ⚠️ Adding a context raises the shipped dialogue minimum by
+ * `REQUIRED_LINES_PER_CONTEXT × 5 personalities` and `content/validate.ts`
+ * hard-fails an underfilled pool — spec §3 makes under-writing dialogue a
+ * spec violation, so a thin `greeting` pool breaks the build rather than
+ * shipping. That is deliberate: bible §4.5 would rather the feature ship
+ * MUTE than ship with four lines per personality.
  */
-export const DIALOGUE_CONTEXTS = [...MOODS, "sulking", "refusal"] as const;
+export const DIALOGUE_CONTEXTS = [...MOODS, "sulking", "refusal", "greeting"] as const;
 export type DialogueContext = (typeof DIALOGUE_CONTEXTS)[number];
 
 /** The slice of tuning that mood derivation reads (see tuning.mood). */

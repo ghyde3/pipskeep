@@ -632,6 +632,27 @@ export const tuning = {
     "sun-bunks": { wood: 10, fiber: 8, lodestone: 3 },
     beacon: { wood: 12, shell: 5, driftwood: 3, lodestone: 5 },
     weathervane: { wood: 10, shell: 4, driftwood: 4, lodestone: 6 },
+
+    /**
+     * ROUND 2K (docs/liveliness-bible.md §1.2/§3.2) — the six attractions,
+     * one per biome, all unlocking at tier 6 (`content/placeables.ts`,
+     * `content/keep.ts`'s new tier-6 headline). Priced so the BUILD cost
+     * itself clears `core/economy/reachability.test.ts`'s data-driven
+     * `pricedPlaceables` check (payable at tier 6, where wood/fiber/shell/
+     * driftwood/lodestone are all already obtainable) with a 3–5× margin —
+     * the bible's own table. Unlike every earlier placeable, this is also
+     * the first RECURRING cost: `attractions.restockCost` below pays out
+     * the same kind of bundle again, forever, which is what makes it the
+     * wood-heavy sink docs/economy-bible.md §5.2 named unsolvable (29
+     * wood/day at the natural six-attraction build, 58.5% of engaged
+     * tier-8+ income).
+     */
+    "clover-ring": { wood: 10, fiber: 12 },
+    "thicket-feeder": { wood: 8, fiber: 14 },
+    "sap-bucket": { wood: 18, fiber: 6 },
+    "snow-bell": { wood: 12, fiber: 10, lodestone: 2 },
+    tidewrack: { shell: 8, driftwood: 6, wood: 10 },
+    lampwell: { lodestone: 8, shell: 6, wood: 14 },
   } satisfies Readonly<Record<string, ResourceBundle>>,
 
   /**
@@ -2072,6 +2093,441 @@ export const tuning = {
     keepXpPerCraft: 8,
     firstCraftKeepXp: 25,
     pipXpPerCraft: 5,
+  },
+
+  /**
+   * ROUND 2K — ATTRACTIONS (docs/liveliness-bible.md §1–§3).
+   *
+   * `core/attractions/` reads this whole block (`AttractionsTuningSlice`)
+   * and is built and tested against it; `content/placeables.ts`'s six
+   * attraction stations and `placeableCosts` above supply the build-cost
+   * half. The UI/render passes that make a visitor and a stocked feeder
+   * VISIBLE (spec §16's standing rule) are the remaining, separately
+   * scoped work — see docs/liveliness-bible.md §7.4's visibility table.
+   *
+   * THE ONE-LINE SHAPE: an attraction is a placeable you keep stocked with
+   * feed; while it has feed it draws a wild Pip — **of a species the player
+   * has ALREADY CAUGHT**, from the biome the attraction is themed on — who
+   * lingers, can be fed, and after three fed visits can be asked to stay.
+   *
+   * THREE INVARIANTS THESE NUMBERS SERVE, none of which is a tuning value:
+   *
+   * 1. I1 — ATTRACTIONS MAY NOT ADVANCE THE ALBUM. The visitor pool is
+   *    `expeditions[biomeId].eggSpecies ∩ caught`, intersected BEFORE any
+   *    roll is consumed, so `formsSeen`/`formsCaught`/`variantsCaught`
+   *    cannot move on a welcome. This is a PARTITION, not a margin — the
+   *    same guarantee round 2H gave breeding (lifecycle bible §6.3), and
+   *    the reason no number below can trivialise the collection. An empty
+   *    pool schedules nothing and consumes ZERO rolls, so no existing RNG
+   *    cursor moves (the cursor discipline 2H's lineage seeds already use).
+   * 2. I2 — NOTHING HERE TOUCHES THE CARE ECONOMY. No value below is read
+   *    by any decay, restore, cooldown, ailment, cure or lifespan path
+   *    (2C §0.4's isolation rule). `core/pips/balance.test.ts` and
+   *    `core/keep/effects.balance.test.ts` must come out byte-identical —
+   *    which is also why NO attraction may carry a `comfort` effect
+   *    (hunger's declared budget is at EXACTLY 1.00× the cap after round
+   *    2F's Larder retune; there is no slack at all).
+   * 3. I3 — ABSENCE MAY COST A BONUS AND NOTHING ELSE. Feeders empty while
+   *    you are away; nothing is deducted on return, no trust is lost, no
+   *    visitor is lost, no counter regresses. `visitIntervalMs` is RATED
+   *    time — it rides the shipped job-catch-up path and its
+   *    `offlineRateCapMs` (16 h) clamp, so a week away is at most
+   *    `floor(16/6) = 2` visits per attraction, not 28. NO THIRD CLOCK.
+   */
+  attractions: {
+    /** Keep tier all six attractions appear on the Build sheet (bible
+     * §1.2). SIX, not seven: tier 6 lands at engaged day 3, and the
+     * earliest a Pip can be lost is `lifecycle.shields.noLossBeforeLifeMs`
+     * (3 rated days) with `firstLossGrace` making the FIRST loss never
+     * happen at all — so the third succession path arrives at the first
+     * moment it could matter. Tier 7 (engaged day 5) would arrive two days
+     * late. `content/keep.ts`'s tier-6 headline becomes "The Clover Ring —
+     * wild Pips start coming by" (it must NAME something gating at 6 —
+     * `content/keep.test.ts`). */
+    unlockKeepLevel: 6,
+
+    /**
+     * VISIT CADENCE, in RATED time (see I3). Six hours is chosen against
+     * two shipped rhythms: it is longer than every quick trip and the
+     * Simmering tick, so a visit never competes with the active loop for
+     * attention; and `16 / 6 = 2.67` means one capped absence produces two
+     * or three visits per attraction — enough that a returning player
+     * always has one waiting (see `holdLastVisitOpen`), few enough that
+     * coming home is not a crowd.
+     */
+    visitIntervalMs: 6 * HOUR_MS,
+
+    /** How long a visitor stays. 45 minutes is deliberately longer than a
+     * Meadow round trip (5 min) and a whole engaged session (~45 min), so
+     * "I'll say hello in a minute" is never punished. */
+    lingerMs: 45 * MINUTE_MS,
+
+    /**
+     * How many visitors may be present at once. TWO, for three reasons:
+     * the render cost (a visitor is a full Pip rig — 11–16 display objects,
+     * measured, bible §5.1); the cast strip has room for two dashed chips
+     * and not six; and a Keep where you cannot pick out your OWN Pips at a
+     * glance has stopped being your Keep.
+     */
+    maxConcurrentVisitors: 2,
+
+    /**
+     * ⚠️ THE KINDNESS THAT MAKES I3 TRUE RATHER THAN MERELY CLAIMED
+     * (bible §1.6). On return, the most recent scheduled visit per
+     * attraction is materialised with its `leavesAt` pushed to
+     * `returnAt + lingerMs`; earlier visits in the window are reported on
+     * the Doorstep and produce no state.
+     *
+     * So a returning player ALWAYS finds someone standing there. Trust is
+     * only earned by being present with the right snack — but presence is
+     * guaranteed to be POSSIBLE on every single return, so an absent
+     * player is slower, never blocked.
+     *
+     * The Doorstep copy for the ones they did not see must be pure
+     * delight — "Busy morning. Four callers, and Pipsqueak stayed
+     * longest." Never "you missed", never "they waited": nothing was lost,
+     * so nothing may be phrased as loss (`retention.copy.test.ts` gains
+     * the banned phrases).
+     */
+    holdLastVisitOpen: true,
+
+    /**
+     * FEED. One charge is spent per visit produced; an attraction at zero
+     * produces no visits and is INERT, never broken — no badge, no toast,
+     * no notification, ever (2C §0.3 bans urgency surfaces as a category).
+     * The empty state is legible in the world and on the card, which is
+     * information, not a nag.
+     *
+     * 4 charges against a 6 h cadence is exactly ONE RESTOCK PER
+     * ATTRACTION PER ENGAGED DAY — a once-a-day, one-tap ritual ("Restock
+     * all" sums the cost across every attraction), not six taps.
+     *
+     * Placing an attraction stamps it FULL (the build cost includes the
+     * first fill), so you never build a thing and watch it do nothing.
+     * Removing one refunds its remaining charges as well as its build
+     * cost — round 2J's "tuck away never destroys value" rule, already how
+     * a removed Craft Table's in-flight orders are handled.
+     */
+    stockMax: 4,
+
+    /**
+     * TRUST. Three fed visits to a welcome. Forward-only: never decays,
+     * never resets, never lost to absence, and it joins 2C §0.1's
+     * may-never-decrease table. A visitor you fed once six weeks ago comes
+     * back still remembering.
+     *
+     * A snack only counts if it is a food from THAT BIOME'S OWN loot table
+     * (the deep-biome foods — glowcap, emberloaf, frostberry, tideroll —
+     * are the scarce ones, which is most of what paces a welcome). A snack
+     * from anywhere else is accepted with a line and earns nothing:
+     * refusing a gift is not this game's tone.
+     */
+    welcomeTrust: 3,
+    trustPerSnack: 1,
+    maxSnacksPerVisit: 1,
+
+    /**
+     * ⚠️ WELCOME COSTS, by biome depth, priced in the resource that biome
+     * itself supplies — so "go to the Shore, come back, and you can keep a
+     * Tidepip" is literally true. Joins `reachability.test.ts` as
+     * `pricedAttractionWelcomes` with `payableAt = unlockKeepLevel`; at
+     * tier 6 the analytic 3 h expectation is wood ≈ 68, fiber ≈ 71,
+     * shell ≈ 23, driftwood ≈ 16, lodestone ≈ 31, so the dearest entry
+     * below clears with a 3–5× margin.
+     *
+     * A welcomed Pip enters at LEVEL 1 with no scars and generation 0 —
+     * DELIBERATELY WEAKER than both other succession paths (lineage hands
+     * over `1 + floor((parent − 1) × 0.50)`, breeding `× 0.35`). A stranger
+     * has no family history to inherit, and this stops attractions becoming
+     * the efficient way to manufacture levels. What they give that the
+     * other two cannot is a Pip UNRELATED to anyone you have — new blood
+     * for breeding, which is the quiet reason a completionist builds them.
+     */
+    welcomeCost: {
+      meadow: { wood: 12, fiber: 12 },
+      bramblewick: { wood: 12, fiber: 12 },
+      forest: { wood: 16, fiber: 14, lodestone: 2 },
+      snowdrift: { wood: 16, fiber: 14, lodestone: 2 },
+      shore: { wood: 20, shell: 8, lodestone: 4 },
+      lanterngrotto: { wood: 20, shell: 8, lodestone: 4 },
+    } satisfies Readonly<Record<string, ResourceBundle>>,
+
+    /**
+     * RESTOCK COSTS, per attraction id (bible §3.2's sink arithmetic).
+     * Joins `reachability.test.ts` as `pricedAttractionRestocks`.
+     *
+     * ⚠️ THIS IS THE FIRST RECURRING SINK IN PIPSKEEP WHOSE LARGEST
+     * COMPONENT IS WOOD — the resource economy bible §5.2 finding 3 named
+     * as unsolvable ("an engaged tier-12 player banks ~50 wood/day forever,
+     * and the only wood sinks are one-time"). Crafting is a fiber-and-
+     * lodestone sink and burns zero wood; the ladder and the catalogue are
+     * one-time.
+     *
+     * At one restock per attraction per engaged day, six attractions cost
+     * wood 29 · fiber 19 · shell 4 · driftwood 3 · lodestone 3 per day,
+     * against a measured engaged tier-8+ income of 49.6 / 54.5 / 9.0 / 6.5
+     * / 11.0 — i.e. 58.5% of the wood faucet at a build nobody has to
+     * justify. There is no cap on placing multiples (the rule 2J's
+     * craft-only Cairns already established), and the grid reaches 168
+     * tiles at tier 9: twelve attractions is 30 tiles and 58 wood/day,
+     * which EXCEEDS the faucet. The sink's ceiling is the player's own
+     * appetite for company, which is what "a sink a player WANTS" means.
+     *
+     * And it never inflates: the eleventh Clover Ring costs what the first
+     * did. No escalation, no conversion recipe, no prestige reset — 2C
+     * §0.3's banned shapes are all absent.
+     *
+     * HONEST CAVEAT, stated rather than glossed: this does NOT close the
+     * wood surplus at a normal build (~20/day still accumulates). What
+     * changes is that the free currency now buys something, which is a
+     * strictly better resting state than "the free currency buys nothing".
+     */
+    restockCost: {
+      "clover-ring": { fiber: 4, wood: 2 },
+      "thicket-feeder": { fiber: 6, wood: 3 },
+      "sap-bucket": { wood: 8, fiber: 3 },
+      "snow-bell": { wood: 6, fiber: 6, lodestone: 1 },
+      tidewrack: { wood: 4, shell: 2, driftwood: 3 },
+      lampwell: { wood: 6, shell: 2, lodestone: 2 },
+    } satisfies Readonly<Record<string, ResourceBundle>>,
+
+    /**
+     * XP for the new moments, sized against `progression.xp`'s 4-XP care
+     * atom and `lifecycle.level.xp`'s 3-XP one. Adding XP sources only ever
+     * makes the bar move MORE, which is the safe direction for
+     * `core/progression/levelCurve.test.ts`'s floors.
+     *
+     * Both repeatable rows are rate-capped by a shipped mechanism, which is
+     * the structural rule `progression.xp` encodes: `visitorFedKeepXp` is
+     * capped by the visit cadence (`maxSnacksPerVisit` 1, and six
+     * attractions produce at most 24 visits a day), and `welcomeKeepXp` is
+     * capped by the roster (there are at most 6 slots, ever).
+     */
+    visitorFedKeepXp: 6,
+    welcomeKeepXp: 60,
+    restockKeepXp: 2,
+  },
+
+  /**
+   * ROUND 2K — THE LIVING KEEP (docs/liveliness-bible.md §4).
+   *
+   * ⚠️ DESIGN-PASS BLOCK. Nothing reads these yet.
+   *
+   * ⚠️ EVERY VALUE HERE IS CONSUMED BY THE **APP AND RENDER LAYERS ONLY**.
+   * `core/` never learns what time it is and never learns the weather —
+   * `src/app/daylight.ts` and `src/app/weather.ts` are pure functions of a
+   * NUMBER, called with `appClock.now()` (the `OffsetClock`, so the debug
+   * time slider moves the sky AND the weather, which is the QA tool for the
+   * whole feature). This mirrors 2C's `SET_DAY_OFFSET` precedent exactly:
+   * the app layer owns `Date`, spec §2 rule 2.
+   *
+   * ⚠️ I4 — WEATHER HAS NO MECHANICAL EFFECT OF ANY KIND, and that is
+   * enforced by a grep test (nothing under `src/core/` may import the
+   * weather module), not by discipline. Three reasons, each sufficient:
+   * 2C §0.4's isolation rule (weather touching decay/loot would silently
+   * re-derive `balance.test.ts`'s central claim); 2H's shield one, "no
+   * hidden risk, ever" (weather raising ailment odds is risk the send-off
+   * card cannot state, and it would fire while the player was away, which
+   * is promise 2); and the player cannot control it, so it must never cost
+   * them anything. The tempting exception — "rain makes Pips cleaner" — is
+   * refused: it is a `care.*` touch, and it would make players WAIT for
+   * rain, which is a mechanic from a different genre.
+   *
+   * What weather changes instead is BEHAVIOUR: Pips run for the arch when
+   * it rains, leave footprints in snow, and bat at petals. That is worth
+   * more than the rain is, and it costs nothing extra because it rides the
+   * same wander-target branch `decorInterestChance` adds anyway.
+   */
+  liveliness: {
+    daylight: {
+      /** How often the app layer samples the ramp. 1 Hz — the sky moves
+       * continuously to the eye and costs one lerp a second. `drawBackground`
+       * is a full teardown-and-rebuild, so it is called only when the sampled
+       * tint moves past `redrawEpsilon` (~every 2 wall minutes), never per
+       * sample and never per frame. */
+      sampleMs: 1000,
+      redrawEpsilon: 0.02,
+      /** Local-hour anchors for the four phases (bible §4.2). FOUR, not
+       * three (three cannot express dawn AND dusk, and dusk is the best
+       * moment in any cosy game) and not five (a placeholder-art game
+       * cannot draw five distinguishable skies). DAY IS BYTE-IDENTICAL TO
+       * WHAT SHIPS TODAY — `content/palette.ts`'s `keepPalette` — so this
+       * round can never make the default look worse. */
+      phaseStartHour: { dawn: 5, day: 8, dusk: 17, night: 20 },
+      /**
+       * ⚠️ THE NIGHT ALPHA IS A LEGIBILITY NUMBER, NOT A TASTE ONE. The
+       * tint is ONE full-screen overlay above `world`, so it multiplies the
+       * ground and the Pips together and contrast RATIOS are preserved —
+       * which is what `content/palette.test.ts` actually pins (body-vs-
+       * ground ≥ 1.95 / 1.76). The build stage must nonetheless re-run that
+       * suite against the night-composited colours and report the worst
+       * pairing. If any pairing drops below the shipped floor, THIS NUMBER
+       * COMES DOWN — never the floor. Pale-on-pale has bitten this project
+       * twice (cloudwisp/snowcap on Frostpip; the Album's collapsed
+       * portraits).
+       *
+       * And no phase ever blocks, dims or delays an interaction. Night is a
+       * look.
+       *
+       * ⚠️ FIX STAGE — dawn 0.10 → 0.18 and dusk 0.14 → 0.20, and the
+       * guard this comment DEMANDED now exists (`palette.test.ts`'s
+       * "starter legibility SURVIVES the daylight tint at every phase").
+       *
+       * The finding: a full-day pixel sweep showed the sky travelling
+       * #EFE9DF → #A29096 → #3A4970 while the ground sat at #A8D492 →
+       * #A6C489, essentially unmoved. A saturated mauve dusk sky sat
+       * directly above a spring-green lawn with a hard seam between them —
+       * "the sky layer was replaced, not the light changed". Night at 0.22
+       * was the ONLY phase whose ground moved enough to read, which is
+       * exactly why night was the one phase that looked right.
+       *
+       * The ceiling on these numbers is no longer taste. Writing the guard
+       * revealed that the OUTLINE contrast — the thing that actually
+       * carries a cartoon silhouette, and the one WCAG-anchored bar this
+       * project holds at 3 : 1 — falls through 3.0 at roughly dawn 0.21 /
+       * dusk 0.22 / night 0.33. Every value here sits under its own limit
+       * with margin, and the test fails if a future retune pushes past it.
+       * The comment below was already right; it just had nothing enforcing
+       * it. Now it does, so THIS NUMBER comes down and the floor never
+       * does.
+       */
+      overlayAlpha: { dawn: 0.18, day: 0, dusk: 0.2, night: 0.22 },
+      /** Night behaviour, and the cheapest "the world noticed" beats there
+       * are: an Idle Pip is 3× likelier to settle than to walk, blinks
+       * stretch, and anything with a `lantern`/`flame` motif fades a glow in
+       * over 8 s at the Day→Dusk flip. The lantern one is the best beat in
+       * the section BECAUSE the thing that notices the time is a thing the
+       * player built. */
+      nightSettleBias: 3,
+      nightBlinkMultiplier: 1.6,
+      lanternFadeMs: 8000,
+    },
+
+    weather: {
+      /** One weather per window, DERIVED and never stored:
+       * `pick(weights, fnv1a(`${saveSeed}|${floor(now / windowMs)}`))`.
+       * Zero GameState fields, zero RNG cursors, zero migration cost, and
+       * deterministic across reloads — the render-local-fixed-seed rule
+       * `render/keepScene.ts` and `render/particles.ts` already establish
+       * for cosmetic randomness. 3 h is short enough that a session can see
+       * a change and long enough that it is never strobing. */
+      windowMs: 3 * HOUR_MS,
+      /** Passed as a PARAMETER to `weatherAt`, which is the named (unused)
+       * seam for 2C's annually-recurring events to bias a season later.
+       * Snow is rare on purpose: the Keep is a green meadow. */
+      weights: { clear: 58, overcast: 22, rain: 14, snow: 4, petalfall: 2 },
+      /** Particle counts — the FIRST thing §5.4's cut order sacrifices, and
+       * the behaviour stays when they go (Pips running for the arch is 80%
+       * of the delight at 0% of the particle cost). */
+      /**
+       * ⚠️ CUT BY THE FIX STAGE (bible §5.4 step 3), from 40/30/20.
+       *
+       * Two findings pointed the same way. The object budget was breached
+       * — 346 measured against a 310 gate — and §5.4 names weather
+       * particles as the third thing to cut, *keeping the behaviour*
+       * (Pips running for the arch is 80% of the delight at 0% of the
+       * particle cost). Independently, a design pass found the streaks
+       * unreadable at 375px: "~1×8px pale blue-grey diagonal at very low
+       * contrast… reads as dust, dead pixels or render artifacts rather
+       * than as life."
+       *
+       * Forty illegible streaks are strictly worse than six legible ones,
+       * so the survivors are drawn longer, thicker and more opaque
+       * (`drawMote`). Fewer and bolder — never more and fainter. The
+       * arithmetic that landed on six is enforced, not asserted, by
+       * `app/perfBudget.test.ts`.
+       */
+      particleCount: { rain: 6, snow: 6, petalfall: 5 },
+    },
+
+    ambience: {
+      /**
+       * ⚠️ THE HIGHEST DELIGHT-PER-FRAME-COST ITEM IN THE ROUND, and it
+       * costs ZERO new display objects: when an Idle Pip picks a wander
+       * target it may pick a PLACED ITEM'S tile instead of a free one, then
+       * plays a ~2 s interaction chosen by that item's `icon.motif` — a
+       * field all 45 catalogue items already carry. Sixteen motifs cover
+       * the whole catalogue with no new content authoring, and every future
+       * item inherits an interaction the moment it is given an icon.
+       *
+       * This is what retroactively pays off round 2F's 45 build items: the
+       * answer to "why did I build that" becomes "because someone sits on
+       * it".
+       */
+      decorInterestChance: 0.22,
+      decorInteractionMs: 2000,
+
+      /**
+       * Pip↔Pip greetings — the second-cheapest and second-best thing here.
+       * Two Idle actors within `greetRadiusTiles`, both idle ≥ 1.5 s, past
+       * a per-pair cooldown: they stop, face each other, one emotes, and
+       * `greetSpeakChance` of the time one SPEAKS.
+       *
+       * ⚠️ CONTENT COST, named because spec §3 makes under-writing dialogue
+       * a spec violation: a NEW `greeting` context is 5 personalities × 8
+       * lines = 40 lines, raising the shipped minimum from 240 to 280.
+       * `content/validate.ts`'s per-context minimum must be extended to
+       * cover it, so a thin pool fails the build rather than shipping.
+       * Chaotic's 20% wrong-emote chance is that personality's whole
+       * contract (spec §4.2) and is funnier here than anywhere it currently
+       * fires.
+       */
+      greetRadiusTiles: 1.4,
+      greetIdleMs: 1500,
+      greetCooldownMs: 60000,
+      greetSpeakChance: 0.35,
+      greetChaoticWrongEmoteChance: 0.2,
+
+      /** Flitters: butterflies by day, moths at dusk, FIREFLIES AT NIGHT
+       * (which is most of why night is worth having). One Graphics each on
+       * a sine path.
+       *
+       * ⚠️ CUT BY THE FIX STAGE (bible §5.4 step 2) from 3/3/5, and drawn
+       * larger to compensate — the same design pass that found the rain
+       * illegible found a flitter to be "a ~4×6px pink rounded tick with
+       * no visible wing motion". Three big fireflies read as fireflies;
+       * five small ones read as dust. */
+      flitterCount: { day: 2, dusk: 2, night: 3 },
+
+      /** Dawn/dusk shadow skew — two float writes per actor per frame, and
+       * the single cheapest thing that makes light read as REAL rather than
+       * as a filter. */
+      shadowSkewMax: 0.35,
+      shadowStretchMax: 0.5,
+    },
+
+    /**
+     * ⚠️ THE FRAME BUDGET, AND IT IS MEASURED (bible §5).
+     *
+     * Baseline, taken against the real modules in a real Chromium on the
+     * shipped tree: the spec §1 scenario (5 animated Pips + 30 decorations)
+     * is **239 display objects** — 148 Graphics, 91 Containers, max depth 6
+     * (background 4, gridOverlay 2, world 189, ghost 1, particles 41,
+     * flash 1). One Pip sprite is 11 objects plain and 16 shiny+patterned+
+     * accessorised, which is exactly what a visitor costs.
+     *
+     * Worst realistic composite (night + rain + 2 shiny visitors + 6
+     * attractions + all ambience) is +63 persistent → 302, +26%. That is
+     * over the +20% I would have liked, and the two features responsible
+     * are the two that must not be cut — so the object count is a LEADING
+     * INDICATOR and the gate is measured frame time:
+     *
+     *   avg fps ≥ 58 · p95 ≤ 20 ms · frames > 50 ms = 0 · objects ≤ 310
+     *   under Chrome DevTools 4× CPU throttle.
+     *
+     * ⚠️ `?perf` MUST BE EXTENDED or this whole budget is theatre —
+     * measuring ambience with a harness that renders none of it is exactly
+     * the failure spec §16 v1.3 keeps naming. `src/app/perfState.ts` gains
+     * a `?perf=ambience` scenario: the shipped 5+30, plus 4 attractions and
+     * 2 visitors (one shiny, accessorised, on the `wide` silhouette — the
+     * most expensive Pip the game can draw), forced to Night + Rain.
+     *
+     * CUT ORDER IF BREACHED: skybirds → flitters → weather PARTICLES (keep
+     * the behaviour) → shadow skew → lantern fade → daylight interpolation
+     * (degrade to four discrete steps). NEVER CUT: decoration interest,
+     * greetings, visitors, attraction sprites.
+     */
+    perfBudget: { maxSceneObjects: 310, minAvgFps: 58, maxP95FrameMs: 20 },
   },
 
   /** New saves are seeded with 3 Berries so the guided first Feed works

@@ -20,6 +20,7 @@
 import { fnv1a } from "../core/rng";
 import { species as contentSpecies } from "../content/species";
 import type { SpeciesId } from "../content/species";
+import type { AccessorySlot } from "../content/accessories";
 
 /** Piplings render at 0.7 scale (spec task/§11 placeholder standard). */
 export const PIPLING_SCALE = 0.7;
@@ -316,6 +317,254 @@ export function jitterStyleVars(seed: string): Readonly<Record<string, string>> 
     // Percent of body height, as a bare number (`calc(… * 1%)` at the
     // use site) — the eye row's own `top` is already a percentage.
     "--pk-jeye-dy": ((j.eyeRowYPx / PIP_BODY_HEIGHT) * 100).toFixed(3),
+  };
+}
+
+/**
+ * ROUND 2K FIX STAGE (docs/liveliness-bible.md §6.1) — the landmark table
+ * every accessory zone below is derived from, and nothing else. Every
+ * number here is copied from the SAME literals `resolvePipSprite` draws
+ * the face with (mouth at `-bh * 0.4` in rig space, i.e. `bh * 0.6 + 2` in
+ * this anchor-local space where local = rigY + bh + 2; a 2.5px stroke
+ * plus the curve's control point sagging toward the feet by `0.04 * bh`
+ * puts the mouth's PAINTED lower edge — the edge a neck accessory
+ * actually has to clear — at `bh * 0.62 + 2 + 1.25`), so a future change
+ * to the face moves the zones too, instead of silently re-opening the
+ * round-2D/2K collision.
+ */
+export interface BodyLandmarks {
+  /** The anchor's own origin sits this far above the drawn body (local
+   * px) — see `resolvePipSprite`'s `headTopY = -bh - 2`. */
+  readonly bodyTop: number;
+  readonly eyeRow: number;
+  readonly eyeRadius: number;
+  /** The mouth's painted LOWER edge — the thing a neck/shoulder accessory
+   * must clear, not the control point a point-containment check would
+   * probe (docs/liveliness-bible.md §0.2 finding 1). */
+  readonly faceBottom: number;
+  readonly feet: number;
+}
+
+export function bodyLandmarks(bh: number, eyeScale: number): BodyLandmarks {
+  return {
+    bodyTop: 2,
+    eyeRow: bh * 0.42 + 2,
+    eyeRadius: BASE_EYE_RADIUS_PX * eyeScale,
+    faceBottom: bh * 0.62 + 2 + 1.25,
+    feet: bh,
+  };
+}
+
+/** Clearance kept between an accessory's zone and the landmark it must
+ * not touch (the mouth, the eyes, the crown). Same role as `computeJitter`'s
+ * shrink-only budgets: a small, named, testable margin rather than "zero". */
+export const ACCESSORY_ZONE_PAD_PX = 2;
+
+/** How much further the PAINTED eye can reach, beyond `bodyLandmarks`'
+ * un-jittered `eyeRow`/`eyeRadius`, at `computeJitter`'s own documented
+ * extremes (`JITTER_MAX_EYE_ROW_PX` down the row, `JITTER_MAX_EYE_RADIUS_PX`
+ * out the radius) — folded into every zone bound that borders the eyes
+ * (`crown`'s floor, `side`'s ceiling) so the fixed PROBE_SEED used in
+ * `spriteResolver.test.ts` isn't the only seed the zone is actually safe
+ * for. Without this, a "side" accessory (no `ACCESSORY_ZONE_PAD_PX` of its
+ * own — a cord legitimately starts AT the eye row) that just clears the
+ * UN-jittered eye can still land on the eye of a Pip whose jitter rolled
+ * the eye row down and the radius up. */
+export const ACCESSORY_EYE_JITTER_MARGIN_PX =
+  JITTER_MAX_EYE_ROW_PX + JITTER_MAX_EYE_RADIUS_PX;
+
+/** The worst-case (max jitter) horizontal reach of an eye's OUTER edge
+ * from the body's centre line, at a given `eyeScale` — what a `side`
+ * accessory hanging level with the eyes has to clear laterally instead
+ * of vertically. */
+export function eyeOuterReachPx(eyeScale: number): number {
+  return (
+    (BASE_EYE_GAP_PX + JITTER_MAX_EYE_SPACING_PX + BASE_EYE_RADIUS_PX + JITTER_MAX_EYE_RADIUS_PX) *
+    eyeScale
+  );
+}
+
+/** A hanging `side` accessory needs at least this much clear flank width
+ * (beyond the eye's own worst-case reach) to read as "beside the body"
+ * rather than "on top of the eye" — roughly the lantern bulb's own
+ * radius plus a pad, the only accessory that currently uses this slot. */
+const MIN_SIDE_LATERAL_CLEARANCE_PX = 12;
+
+/** The vertical band (anchor-local px) a slot may occupy. Only the
+ * vertical axis is a hard limit here — bible §6.1.1's lateral bands are a
+ * geometry the existing per-accessory x-offsets already satisfy, and are
+ * asserted directly against the drawn bounds in `spriteResolver.test.ts`
+ * rather than re-derived as a second number to keep in sync. */
+export interface AccessoryZone {
+  readonly top: number;
+  readonly bottom: number;
+}
+
+/**
+ * ROUND 2K FIX STAGE — one shared zone table, so `drawAccessory` (the
+ * Pixi surface) and any DOM surface that wants the same band read off the
+ * SAME landmarks instead of hand-picked fractions of `bh` that drift out
+ * of sync with the face the moment a silhouette shrinks it (bible §0.2 /
+ * §6.1.1's root-cause finding: absolute-pixel shapes hung off a
+ * proportionally-scaled anchor, on a body whose height varies 28% across
+ * the five silhouettes).
+ *
+ * `crown` has no upper bound (a tall hat is fine) — only a floor
+ * (`bodyTop`, "touching, never floating") and a ceiling on how far DOWN it
+ * may reach (clear of the eyes). `side` may start as high as the eye row
+ * (a cord can reach up the flank) and run all the way to the feet — BUT
+ * only on a silhouette wide enough (`bw`) to clear the eye's own
+ * worst-case reach with `MIN_SIDE_LATERAL_CLEARANCE_PX` to spare; a
+ * narrow silhouette ("tall"'s 0.8 wFrac, "tiny"'s 0.78) doesn't have that
+ * flank room at ANY x, since the eyes sit at a fixed absolute offset
+ * while the body narrows around them, so `side` falls back to the same
+ * "below the face entirely" band `neck`/`shoulder` use. Every other slot
+ * sits strictly below the mouth's painted lower edge and strictly above
+ * the feet.
+ */
+export function accessoryZone(
+  slot: AccessorySlot,
+  bh: number,
+  bw: number,
+  eyeScale: number,
+): AccessoryZone {
+  const lm = bodyLandmarks(bh, eyeScale);
+  const belowFace = {
+    top: lm.faceBottom + ACCESSORY_ZONE_PAD_PX,
+    bottom: lm.feet - ACCESSORY_ZONE_PAD_PX,
+  };
+  if (slot === "crown") {
+    return {
+      top: -Infinity,
+      bottom: Math.max(
+        lm.bodyTop,
+        lm.eyeRow - lm.eyeRadius - ACCESSORY_ZONE_PAD_PX - ACCESSORY_EYE_JITTER_MARGIN_PX,
+      ),
+    };
+  }
+  if (slot === "side") {
+    const lateralClearance = bw / 2 - eyeOuterReachPx(eyeScale) - ACCESSORY_ZONE_PAD_PX;
+    if (lateralClearance >= MIN_SIDE_LATERAL_CLEARANCE_PX) {
+      return {
+        top: lm.eyeRow - lm.eyeRadius - ACCESSORY_EYE_JITTER_MARGIN_PX,
+        bottom: lm.feet - ACCESSORY_ZONE_PAD_PX,
+      };
+    }
+    // Not enough flank room beside the eyes on this silhouette — the only
+    // safe band left is below the whole face, same as `neck`/`shoulder`.
+    return {
+      top: Math.max(
+        belowFace.top,
+        lm.eyeRow + lm.eyeRadius + ACCESSORY_EYE_JITTER_MARGIN_PX,
+      ),
+      bottom: belowFace.bottom,
+    };
+  }
+  // "neck" and "shoulder": below the mouth, above the feet.
+  return belowFace;
+}
+
+// ---------------------------------------------------------------------------
+// ⚠️ FIX STAGE — THE SAME BAND, FOR THE TWO DOM PORTRAIT SURFACES
+// (docs/liveliness-bible.md §6.1.1(c), the half of the anchor scheme that
+// was specified and then never written).
+// ---------------------------------------------------------------------------
+
+/**
+ * The Pixi half of §6.1.1 landed and works; the DOM half did not, and a
+ * live sweep of 12 accessories × 5 silhouettes × 3 portrait surfaces found
+ * 36 collisions — the scarf, the bowtie and the ember-bead drawn across
+ * the mouth on EVERY silhouette, reading as a gag and a tongue. Root
+ * cause, exactly as predicted: the stylesheets hung percentage-sized
+ * shapes off `min-height` PIXEL floors, on a blob whose height varies 28%
+ * across silhouettes and 3.5× across portrait boxes (a 26px cast chip to a
+ * 100px focus portrait). At 26px a `min-height: 3px` mouth is 11% of the
+ * body; at 100px it is 3%. Nothing authored against one is right for the
+ * other.
+ *
+ * So the DOM landmarks below are PURE FRACTIONS — no pixel floors — and
+ * both stylesheets are aligned to them. That is the fix: not "move the
+ * scarf down 4%", which would re-break at the next box size.
+ *
+ * Why these fractions are not `bodyLandmarks`' own: the DOM portraits
+ * always authored a different (higher, rounder, more chibi) face than the
+ * Pixi rig — eyes at 30% against Pixi's 42%. Copying the Pixi numbers
+ * would move every DOM Pip's face, which is a redesign, not a fix. What
+ * matters, and what was missing, is that ONE table now defines the band
+ * for both DOM surfaces and that the band is derived from the mouth
+ * rather than guessed beside it. `portraitPatterns.test.ts` measures the
+ * painted result against these numbers, so they cannot drift from the
+ * stylesheets in silence.
+ */
+export const PORTRAIT_EYE_TOP_PCT = 30;
+
+/** The mouth's top edge and depth, as fractions of portrait-body height.
+ * Both stylesheets' `.pk-*-mouth` rules are authored from these two
+ * numbers and nothing else. */
+export const PORTRAIT_MOUTH_TOP_PCT = 50;
+export const PORTRAIT_MOUTH_HEIGHT_PCT = 8;
+
+/** The mouth's painted lower edge — the landmark a neck accessory has to
+ * clear. The stroke itself (1.6–2 px, a border-width, which CSS cannot
+ * express proportionally) is absorbed by the pad below rather than
+ * pretended away. */
+export const PORTRAIT_MOUTH_BOTTOM_PCT = PORTRAIT_MOUTH_TOP_PCT + PORTRAIT_MOUTH_HEIGHT_PCT;
+
+/** Clearance kept between a zone and the landmark it must not touch —
+ * `ACCESSORY_ZONE_PAD_PX` (2 px on a 98 px body) expressed as the fraction
+ * it actually is, rounded up to 3 so that on the SMALLEST portrait box (a
+ * 26 px cast chip, where 1% is a quarter of a pixel) it still leaves room
+ * for the shared `drop-shadow` contour every accessory carries. */
+export const ACCESSORY_ZONE_PAD_PCT = 3;
+
+/**
+ * ⚠️ THE EXPORT §6.1.1(c) ASKED FOR AND THE ROUND SHIPPED WITHOUT.
+ * `grep ACCESSORY_ZONE_PCT src/` returned nothing; the guard that was
+ * supposed to measure it did not exist either, which is why 36 collisions
+ * shipped green.
+ *
+ * `ui/pipdex.ts` and `ui/focusView.ts` write these onto the accessory node
+ * as `--pk-acc-zone-top` / `--pk-acc-zone-bottom`, and each stylesheet
+ * positions its OWN independently-authored shapes inside that band. The
+ * three-implementations pattern `portraitPatterns.test.ts` guards is
+ * preserved exactly — only the BAND is shared, which is what was already
+ * true of `AccessorySlot` itself and was never enforced.
+ */
+export const ACCESSORY_ZONE_PCT: Readonly<
+  Record<AccessorySlot, { readonly top: number; readonly bottom: number }>
+> = {
+  // A hat may overhang the crown (no upper bound — that is what makes it
+  // a hat), but must stop clear of the eyes.
+  crown: { top: -20, bottom: PORTRAIT_EYE_TOP_PCT - ACCESSORY_ZONE_PAD_PCT },
+  // Everything worn on the body sits strictly below the painted mouth and
+  // strictly above the feet. `side` gets the same conservative band as
+  // `neck`/`shoulder` here: the Pixi rig can hang a lantern beside the eyes
+  // because a 118 px-wide body has flank room to spare, and a 44 px cast
+  // chip does not.
+  neck: {
+    top: PORTRAIT_MOUTH_BOTTOM_PCT + ACCESSORY_ZONE_PAD_PCT,
+    bottom: 100 - ACCESSORY_ZONE_PAD_PCT,
+  },
+  shoulder: {
+    top: PORTRAIT_MOUTH_BOTTOM_PCT + ACCESSORY_ZONE_PAD_PCT,
+    bottom: 100 - ACCESSORY_ZONE_PAD_PCT,
+  },
+  side: {
+    top: PORTRAIT_MOUTH_BOTTOM_PCT + ACCESSORY_ZONE_PAD_PCT,
+    bottom: 100 - ACCESSORY_ZONE_PAD_PCT,
+  },
+};
+
+/** The two custom properties a DOM portrait writes on its accessory node,
+ * so both surfaces spell them the same way and the guard has one place to
+ * read them from. */
+export function accessoryZoneStyleVars(
+  slot: AccessorySlot,
+): Readonly<Record<string, string>> {
+  const zone = ACCESSORY_ZONE_PCT[slot];
+  return {
+    "--pk-acc-zone-top": `${zone.top}%`,
+    "--pk-acc-zone-bottom": `${zone.bottom}%`,
   };
 }
 

@@ -26,6 +26,7 @@ import { isSulking } from "../core/pips/machine";
 import { expeditions as contentExpeditions } from "../content/expeditions";
 import { HOUR_MS, MINUTE_MS, tuning as contentTuning } from "../content/tuning";
 import { EGG_READY_TAG } from "../core/eggs";
+import { ATTRACTION_VISIT_TAG } from "../core/attractions";
 import { sound } from "../app/sound";
 
 /** Absences shorter than this get no sheet ("more than a few minutes"). */
@@ -60,6 +61,20 @@ export interface AwaySheetModel {
   readonly lootLine: string | null;
   /** The 12h rate-cap note, or null when the cap never engaged. */
   readonly cappedLine: string | null;
+  /**
+   * ROUND 2K (docs/liveliness-bible.md §1.6) — "Busy morning. Four
+   * callers, and Pipsqueak stayed longest." Null when nothing visited.
+   *
+   * ⚠️ THE TONE RULE IS THE POINT, and §1.6 states it as a prohibition:
+   * NEVER "you missed them", NEVER "they waited for you", NEVER "came
+   * while you were away". Nothing was lost — the held-open rule means the
+   * most recent visit per attraction is materialised with its `leavesAt`
+   * extended to `returnAt + lingerMs`, so whoever the line names is
+   * STANDING IN THE KEEP when the sheet closes. Phrasing a gift as a loss
+   * would be the meanest sentence in the game, and 2C's never-punish-
+   * absence guardrail forbids it outright.
+   */
+  readonly visitorLine: string | null;
 }
 
 /** The slices of GameState the derivation reads (GameState satisfies
@@ -71,6 +86,9 @@ export interface AwaySheetModel {
 export interface AwaySheetStateView {
   readonly pips: Readonly<Record<string, PipState | undefined>>;
   readonly pendingReveals: readonly unknown[];
+  /** ROUND 2K — whoever is standing there NOW. Optional so every
+   * pre-2K fixture in the suite stays valid with the field absent. */
+  readonly visitors?: Readonly<Record<string, { readonly name: string } | undefined>>;
 }
 
 export interface AwaySheetContent {
@@ -192,7 +210,40 @@ export function deriveAwaySheet(
     eggLine,
     lootLine,
     cappedLine,
+    visitorLine: deriveVisitorLine(summary, state),
   };
+}
+
+/**
+ * ROUND 2K (docs/liveliness-bible.md §1.6) — the callers line.
+ *
+ * Counts the visit events the catch-up pass fired, and names whoever is
+ * STILL STANDING THERE. Exported so `awaySheet.test.ts` can pin the exact
+ * words, which matters more here than anywhere else in the sheet:
+ * `retention.copy.test.ts`'s banned-phrase regex covers "missed
+ * them"/"waited for you"/"came and went", and this is the one function
+ * that could produce them.
+ */
+export function deriveVisitorLine(
+  summary: CatchupSummary,
+  state: AwaySheetStateView,
+): string | null {
+  let callers = 0;
+  for (const event of summary.events) {
+    if (event.kind === "custom" && event.tag === ATTRACTION_VISIT_TAG) callers++;
+  }
+  if (callers === 0) return null;
+  // Whoever is here NOW — the held-open rule guarantees at least one, per
+  // attraction, on every single return.
+  const names = Object.values(state.visitors ?? {})
+    .filter((v): v is { name: string } => v !== undefined)
+    .map((v) => v.name);
+  const busy = callers === 1 ? "Someone came by." : `Busy morning. ${callers} callers.`;
+  const longest = names[0];
+  if (longest === undefined) return busy;
+  return callers === 1
+    ? `Someone came by — ${longest} is still here.`
+    : `Busy morning. ${callers} callers, and ${longest} stayed longest.`;
 }
 
 // ---------------------------------------------------------------------------
@@ -293,6 +344,12 @@ export function createAwaySheet(deps: AwaySheetDeps): AwaySheet {
         storyLines.push({ icon: "🧭", text });
       }
       if (model.eggLine !== null) storyLines.push({ icon: "🥚", text: model.eggLine });
+      // ROUND 2K — above the loot tease: whoever is standing outside is
+      // the more surprising news, and unlike the pouches they are already
+      // here rather than waiting to be opened.
+      if (model.visitorLine !== null) {
+        storyLines.push({ icon: "🌿", text: model.visitorLine });
+      }
       if (model.lootLine !== null) storyLines.push({ icon: "🎁", text: model.lootLine });
       if (model.cappedLine !== null) {
         storyLines.push({ icon: "⏳", text: model.cappedLine });

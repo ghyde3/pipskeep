@@ -59,6 +59,19 @@ const FORBIDDEN =
 /** A countdown by any other name: a number sitting next to "left". */
 const COUNTDOWN_SHAPED = /\bleft\b[^.]*\d|\d[^.]*\bleft\b/i;
 
+/**
+ * ROUND 2K (docs/liveliness-bible.md §1.6) — THE ABSENCE-AS-LOSS BAN.
+ *
+ * Visitors are the first thing in the game that HAPPENS while the player
+ * is away and is still there when they get back. The held-open rule
+ * guarantees it: the most recent scheduled visit per attraction is
+ * materialised with its `leavesAt` extended to `returnAt + lingerMs`, so
+ * nothing was ever missed. Copy that says otherwise would invent a loss
+ * the mechanic deliberately does not have — which is exactly what 2C's
+ * never-punish-absence guardrail exists to stop.
+ */
+const ABSENCE_AS_LOSS = /missed (them|him|her|it|you)|waited for you|came and went|while you were out/i;
+
 const DAY_MS = contentTuning.retention.dayMs;
 
 // ---------------------------------------------------------------------------
@@ -213,6 +226,10 @@ const STREAK_SHAPES: readonly { readonly label: string; readonly value: StreakSt
 function check(source: string, text: string): void {
   expect(FORBIDDEN.test(text), `${source}: "${text}"`).toBe(false);
   expect(COUNTDOWN_SHAPED.test(text), `${source} reads as a countdown: "${text}"`).toBe(false);
+  expect(
+    ABSENCE_AS_LOSS.test(text),
+    `${source} phrases an absence as a loss: "${text}"`,
+  ).toBe(false);
 }
 
 // ---------------------------------------------------------------------------

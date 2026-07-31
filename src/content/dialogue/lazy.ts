@@ -91,4 +91,20 @@ export const lazy: DialoguePool = {
     "Hard pass. Soft cushion.",
     "I gave it real thought. The thought napped.",
   ],
+  /**
+   * ROUND 2K (docs/liveliness-bible.md §4.5) — PIP TO PIP, not Pip to
+   * player. Two Pips who stop within a tile and a half of each other
+   * turn, face, emote, and 35% of the time one of them says one of
+   * these. The audience is the OTHER Pip; the player is overhearing.
+   */
+  greeting: [
+    "Oh. You're vertical. Bold.",
+    "Hi. I'd stand to greet you but we both know how that ends.",
+    "Good to see you. Don't make it a whole thing.",
+    "You walked all the way over here? For me? Lie down.",
+    "Hello. I've been saving this exact amount of energy for you.",
+    "Ah, company. Perfect. Now neither of us has to move.",
+    "Hey. Wanna do nothing together? It's better with two.",
+    "You're warm. I'm staying. This is a greeting AND a decision.",
+  ],
 };

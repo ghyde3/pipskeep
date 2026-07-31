@@ -55,12 +55,54 @@ describe("placeableSprites — every catalog item has real art", () => {
     // Poultice Shelf — on top of the 45 items round 2F's bible §5 named.
     // ROUND 2J (docs/economy-bible.md §3.1) adds one more — the Craft Table
     // — and its FIX STAGE adds the five craft-only keepsakes (§4.4), which
-    // are decorations you cannot buy. Round 2F's brown-crate lesson applies
-    // to them exactly as much: each has its own drawing above.
-    expect(placeables.length).toBe(15);
+    // are decorations you cannot buy. ROUND 2K (docs/liveliness-bible.md
+    // §1.2) adds the six attractions, one per biome. Round 2F's brown-crate
+    // lesson applies to every one of them: each has its own drawing above.
+    expect(placeables.length).toBe(21);
     expect(decorations.length).toBe(37);
     expect(decorations.filter((d) => d.craftOnly === true).length).toBe(5);
-    expect(drawableItemIds().length).toBe(52);
+    expect(drawableItemIds().length).toBe(58);
+  });
+
+  /**
+   * ROUND 2K — the six attractions are the round's whole premise ("what you
+   * build shapes who visits"), so each must be visually distinct from the
+   * others AND from every shipped item. `drawableItemIds` proves they are
+   * not the fallback crate; this proves they are not each other, by
+   * asserting the six draw calls produce six different geometry payloads.
+   */
+  it("each of the six attractions draws its own distinct shape", async () => {
+    const { resolvePlaceableSprite } = await import("./placeableSprites");
+    const attractionIds = placeables
+      .filter((p) => p.effects?.some((e) => e.kind === "attraction") === true)
+      .map((p) => p.id);
+    expect(attractionIds).toEqual([
+      "clover-ring",
+      "thicket-feeder",
+      "sap-bucket",
+      "snow-bell",
+      "tidewrack",
+      "lampwell",
+    ]);
+    const signatures = new Set<string>();
+    for (const id of attractionIds) {
+      const def = placeables.find((p) => p.id === id);
+      const sprite = resolvePlaceableSprite(id, def?.footprint ?? { w: 1, h: 1 }, 40, 24);
+      // Every drawing is a `Graphics` tree under `wrap`; its serialized
+      // instruction count + bounds is a cheap, stable fingerprint.
+      const b = sprite.wrap.getLocalBounds();
+      signatures.add(
+        [
+          sprite.wrap.children.length,
+          Math.round(b.x),
+          Math.round(b.y),
+          Math.round(b.width),
+          Math.round(b.height),
+        ].join(":"),
+      );
+      sprite.destroy();
+    }
+    expect(signatures.size).toBe(6);
   });
 });
 

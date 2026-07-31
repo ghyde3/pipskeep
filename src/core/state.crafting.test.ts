@@ -135,6 +135,9 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
     lastLevelUp: null,
     crafts: {},
     lastCraftOutcome: null,
+    visitors: {},
+    attractionStock: {},
+    attractionSchedule: {},
     ...overrides,
   };
 }

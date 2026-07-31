@@ -761,6 +761,33 @@ export const MIGRATIONS: Readonly<Record<number, MigrationStep>> = {
     out["state"] = { ...state, crafts: {} };
     return out;
   },
+
+  /**
+   * v11 → v12 (round 2K — docs/liveliness-bible.md §1/§7.1, save schema):
+   * backfill `state.visitors`, `state.attractionStock` and
+   * `state.attractionSchedule` to `{}`. Nobody could have built an
+   * attraction before this round shipped (they unlock at Keep tier 6, and
+   * the placeable itself did not exist), so an empty book is the only
+   * honest value — the SAME "existing saves must not gain impossible
+   * things" rule `MIGRATIONS[10]`'s `crafts` backfill honors. This never
+   * grants a visitor, a charge, or a schedule the player never earned.
+   * `state.lastVisitorOutcome` is OPTIONAL (same `lineageEggs`/
+   * `lastCraftOutcome` precedent) and needs no migration at all — absent
+   * simply stays absent. `rngState["visitors"]` needs no shape change
+   * either (a plain `Record<string, number>`, absent-key-≡-0).
+   */
+  11: (blob) => {
+    const out: Record<string, unknown> = { ...blob, schemaVersion: 12 };
+    const state = blob["state"];
+    if (!isPlainRecord(state)) return out;
+    out["state"] = {
+      ...state,
+      visitors: {},
+      attractionStock: {},
+      attractionSchedule: {},
+    };
+    return out;
+  },
 };
 
 export type MigrateResult =

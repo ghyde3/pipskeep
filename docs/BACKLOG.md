@@ -68,6 +68,9 @@ Unfenced by §16 v1.6. The Keep-upgrade registry has carried `effect: "attractio
 
 ## Known defects awaiting a polish pass
 
+> ⚠️ **This section goes stale fast.** Twice now a round has been briefed from findings that later fix stages had already closed, wasting design effort re-solving solved problems. **Re-verify every entry against the running code before acting on it.**
+
+
 - **Accessory placement (round 2D).** Several of the 12 accessories render on the wrong body part: the scarf sits across the mouth rather than the neck, and the round's identity audit also reported the lantern over an eye and the bowtie/ember bead on the belly. Head accessories can also collide with the species sprout and float detached above the crown with inconsistent z-order. Visible on the starter-pick screen — the first thing a new player sees. Fix in `render/spriteResolver.ts`'s `drawAccessory` plus the two DOM portrait stylesheets, keeping `portraitPatterns.test.ts` parity green.
 - **Jitter is near-invisible.** Under ~1 CSS px at Keep scale and applied on one surface of seven. Either make it perceptible or cut it — an imperceptible feature is a dead one.
 - **The cure ceiling is unguarded (round 2J).** The round named `crafting.balance.test.ts` as the guard for its own invariant — that crafting moves the survival *floor*, not the *rate* — and never created it. The arithmetic was verified by hand in `docs/economy-bible.md` §4 but is pinned by nothing, so a later tuning change can breach it silently.

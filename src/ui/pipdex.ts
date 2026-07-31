@@ -51,7 +51,11 @@ import type { SpeciesDef } from "../content/species";
 // for the same content-bible §1.4 axis this file draws in DOM instead of
 // Pixi, so it is reused rather than re-declared.
 import type { Silhouette } from "../render/pipGeometry";
-import { SILHOUETTE_FRACTIONS, jitterStyleVars } from "../render/pipGeometry";
+import {
+  SILHOUETTE_FRACTIONS,
+  accessoryZoneStyleVars,
+  jitterStyleVars,
+} from "../render/pipGeometry";
 import { EXPEDITION_IDS, expeditions } from "../content/expeditions";
 import type { ExpeditionId } from "../content/expeditions";
 import { foods } from "../content/foods";
@@ -625,6 +629,14 @@ export function buildPortraitEl(
         "--pk-acc-secondary",
         accessoryDef.secondaryColor ?? accessoryDef.primaryColor,
       );
+      // ⚠️ FIX STAGE (bible §6.1.1(c)) — the SHARED band, from the same
+      // table `ui/focusView.ts` reads. Every neck/shoulder/side rule in
+      // pipdex.css positions itself from `--pk-acc-zone-top` instead of a
+      // hand-picked percentage, which is how the scarf came to be drawn
+      // across the mouth on all five silhouettes.
+      for (const [name, value] of Object.entries(accessoryZoneStyleVars(accessoryDef.slot))) {
+        accessory.style.setProperty(name, value);
+      }
       accessory.setAttribute("aria-hidden", "true");
       accessory.title = accessoryDef.name;
     }

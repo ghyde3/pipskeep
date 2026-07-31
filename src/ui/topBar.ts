@@ -66,6 +66,15 @@ import {
 import { personalities } from "../content/personalities";
 import type { PersonalityId } from "../content/personalities";
 import { sound } from "../app/sound";
+// ROUND 2K (docs/liveliness-bible.md §7.4's "A visitor is present" row) —
+// the cast strip is THE ONLY ROSTER LIST ON SCREEN 100% OF THE TIME, so a
+// visitor that appears nowhere on it is a visitor the player only finds
+// by chance. The chip carries a DASHED ring: the tell that this one is
+// not yours. Its tap goes out through the scene's own visitor seam, the
+// same seam a tap on the Pip itself uses, so both routes land on the
+// same card with no second code path.
+import { visitorIsPresent } from "../core/attractions";
+import { emitVisitorTap } from "../render/visitorTap";
 
 /** Bar color-shift thresholds (task spec: < 40 warn/care, < 15 danger/urgent). */
 const WARN_BELOW = 40;
@@ -412,6 +421,72 @@ export function createTopBar(deps: TopBarDeps): TopBar {
   const chipRegistry = new Map<string, CastChipRefs>();
   let lastStructuralKey = "";
 
+  // --- ROUND 2K: the visitor chips (docs/liveliness-bible.md §7.4) ------
+  //
+  // ⚠️ THE CAST STRIP IS THE ONLY ROSTER LIST ON SCREEN 100% OF THE TIME.
+  // A visitor that appears nowhere on it is one the player finds only by
+  // happening to look at the right corner of the Keep — which is the
+  // "visible on one surface is not visible" failure spec §16 v1.7 names.
+  //
+  // The chip is deliberately NOT a `.pk-castchip`: it carries a dashed
+  // ring, it never takes the active state, and tapping it never changes
+  // `activePipId`. It is a doorbell, not a roster entry.
+  const visitorChipEls = new Map<string, HTMLButtonElement>();
+  let lastVisitorKey = "";
+
+  function buildVisitorChip(
+    placementId: string,
+    record: { name: string; speciesId: string; genome: { palette: string; pattern: string; shiny: boolean; accessoryId?: string | null } },
+  ): HTMLButtonElement {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "pk-visitorchip";
+    button.setAttribute(
+      "aria-label",
+      `${record.name} is visiting — say hello`,
+    );
+    button.title = `${record.name} is visiting`;
+    const portrait = buildPortraitEl(
+      {
+        speciesId: record.speciesId,
+        paletteId: record.genome.palette,
+        pattern: record.genome.pattern,
+        shiny: record.genome.shiny,
+        accessoryId: record.genome.accessoryId ?? null,
+        // The SAME seed `render/keepScene.ts` and `ui/visitorCard.ts` use,
+        // so the chip, the card and the Pip in the Keep are one individual.
+        jitterSeed: `visitor:${placementId}`,
+      },
+      "chip",
+    );
+    button.appendChild(portrait);
+    button.addEventListener("click", () => {
+      sound("ui.tap");
+      emitVisitorTap(placementId);
+    });
+    return button;
+  }
+
+  function syncVisitorChips(state: GameState): void {
+    const records = state.visitors ?? {};
+    const present: [string, (typeof records)[string]][] = [];
+    for (const [placementId, record] of Object.entries(records)) {
+      if (!visitorIsPresent(record, state.lastTickAt)) continue;
+      if (state.keep.placements[placementId] === undefined) continue;
+      present.push([placementId, record]);
+    }
+    const key = present.map(([pid, r]) => `${pid}:${r.name}:${r.speciesId}`).join("~");
+    if (key === lastVisitorKey) return;
+    lastVisitorKey = key;
+    for (const el of visitorChipEls.values()) el.remove();
+    visitorChipEls.clear();
+    for (const [placementId, record] of present) {
+      const chip = buildVisitorChip(placementId, record);
+      visitorChipEls.set(placementId, chip);
+      castRow.appendChild(chip);
+    }
+  }
+
   return {
     el,
 
@@ -467,6 +542,12 @@ export function createTopBar(deps: TopBarDeps): TopBar {
           castRow.appendChild(revealChip);
         }
       }
+
+      // ROUND 2K — the visitor chips. Also pinned OUTSIDE `.pk-cast`, for
+      // the same reason the reveal chip is: someone dropping by must never
+      // reflow the player's own roster. Rebuilt off their own key so a
+      // visitor arriving does not rebuild the whole cast strip.
+      syncVisitorChips(state);
 
       // Live per-pip updates — every sync call, independent of the rebuild
       // above (see module doc).

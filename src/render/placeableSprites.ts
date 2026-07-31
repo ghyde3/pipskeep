@@ -1877,6 +1877,277 @@ const drawWayhomeLantern: DrawFn = (wrap, w, h, tileW) => {
   wrap.addChild(g);
 };
 
+// ---------------------------------------------------------------------------
+// ROUND 2K — THE SIX ATTRACTIONS (docs/liveliness-bible.md §1.2)
+// ---------------------------------------------------------------------------
+//
+// Six placeables that draw wild Pips. Every one of them needs its OWN
+// drawing for the same reason round 2F's twenty-one crates did: an
+// attraction is a thing you look at while you wait for someone to turn up,
+// and six identical brown boxes would make "what you build shapes who
+// visits" — the round's whole premise — invisible on the only surface that
+// matters.
+//
+// Each carries a FEED WELL: the bowl/dish/basket the charges live in, drawn
+// as a distinct shape at a known local point so `keepScene.ts`'s stock ring
+// (`syncAttractionStock`) can sit on it and the empty state reads in the
+// world, not only on a card (bible §7.4's visibility table, stock row).
+// The scene fades the well's contents with the charge count; these
+// functions draw the FULL state, which is what a Build-sheet preview and a
+// freshly placed attraction both want.
+
+/** meadow · 2×2 · a low ring of clover with a hollowed feed stone. */
+const drawCloverRing: DrawFn = (wrap, w, h, tileW) => {
+  ground(wrap, w * 0.9);
+  const g = new Graphics();
+  const u = w * 0.5;
+  // The ring itself: trodden earth path with clover crowding both edges.
+  g.ellipse(0, -u * 0.3, u * 0.76, u * 0.36).stroke({
+    width: Math.max(2.5, u * 0.09),
+    color: tone.soil,
+    alpha: 0.35,
+  });
+  for (let i = 0; i < 14; i++) {
+    const a = (i / 14) * Math.PI * 2;
+    const cx = Math.cos(a) * u * 0.78;
+    const cy = -u * 0.3 + Math.sin(a) * u * 0.37;
+    // Three-leaf clover: three little circles round a stem point.
+    for (const la of [-2.2, -0.95, 0.3]) {
+      g.circle(cx + Math.cos(la) * u * 0.06, cy + Math.sin(la) * u * 0.05, u * 0.055).fill({
+        color: i % 3 === 0 ? tone.mossDark : tone.clover,
+        alpha: 0.95,
+      });
+    }
+  }
+  // The feed stone at the ring's centre — a shallow dish of seed.
+  g.ellipse(0, -u * 0.26, u * 0.3, u * 0.15)
+    .fill(tone.pebble)
+    .stroke({ width: Math.max(1.2, u * 0.02), color: tone.pebbleDark, alpha: 0.5 });
+  g.ellipse(0, -u * 0.29, u * 0.21, u * 0.1).fill(tone.soil);
+  for (const [sx, sy] of [
+    [-u * 0.09, -u * 0.3],
+    [u * 0.02, -u * 0.33],
+    [u * 0.1, -u * 0.27],
+  ] as const) {
+    g.ellipse(sx, sy, u * 0.045, u * 0.03).fill(tone.fiber);
+  }
+  // One white clover flower, because someone has to be the tallest.
+  g.moveTo(u * 0.5, -u * 0.44)
+    .quadraticCurveTo(u * 0.54, -u * 0.62, u * 0.52, -u * 0.74)
+    .stroke({ width: Math.max(1, tileW * 0.02), color: tone.mossDark });
+  g.circle(u * 0.52, -u * 0.78, u * 0.08).fill(tone.pillow);
+  wrap.addChild(g);
+};
+
+/** bramblewick · 1×1 · a wicker basket wedged into the hedge. */
+const drawThicketFeeder: DrawFn = (wrap, w, h, tileW) => {
+  ground(wrap, w * 0.7);
+  const g = new Graphics();
+  const u = w * 0.5;
+  const bh = tileW * 0.75;
+  const stroke = Math.max(1.2, u * 0.045);
+  // The hedge it is wedged into.
+  g.ellipse(0, -bh * 0.5, u * 0.72, bh * 0.55).fill(tone.thornGreenDark);
+  g.ellipse(-u * 0.16, -bh * 0.66, u * 0.44, bh * 0.34).fill(tone.thornGreen);
+  // A couple of brambles poking out.
+  for (const [bx, by] of [
+    [-u * 0.6, -bh * 0.72],
+    [u * 0.58, -bh * 0.58],
+  ] as const) {
+    g.moveTo(bx * 0.6, by * 0.7)
+      .quadraticCurveTo(bx, by, bx * 1.15, by * 1.25)
+      .stroke({ width: stroke * 0.7, color: tone.thornGreenDark });
+    g.circle(bx * 1.15, by * 1.25, u * 0.05).fill(tone.berryRed);
+  }
+  // The basket: woven bowl with a handle, tipped slightly toward us.
+  g.ellipse(0, -bh * 0.34, u * 0.42, u * 0.2).fill(tone.wickerDark);
+  g.moveTo(-u * 0.42, -bh * 0.34)
+    .lineTo(-u * 0.3, -bh * 0.02)
+    .lineTo(u * 0.3, -bh * 0.02)
+    .lineTo(u * 0.42, -bh * 0.34)
+    .closePath()
+    .fill(tone.wicker)
+    .stroke({ width: stroke, color: tone.wickerDark, alpha: 0.7 });
+  for (const wy of [0.1, 0.22] as const) {
+    g.moveTo(-u * 0.4 + wy * u * 0.3, -bh * (0.34 - wy))
+      .lineTo(u * 0.4 - wy * u * 0.3, -bh * (0.34 - wy))
+      .stroke({ width: stroke * 0.6, color: tone.wickerDark, alpha: 0.5 });
+  }
+  // Feed heaped above the rim.
+  g.ellipse(0, -bh * 0.38, u * 0.34, u * 0.14).fill(tone.hay);
+  g.ellipse(-u * 0.1, -bh * 0.44, u * 0.14, u * 0.08).fill(tone.hayDark);
+  // Handle.
+  g.ellipse(0, -bh * 0.36, u * 0.42, u * 0.44).stroke({
+    width: stroke * 0.9,
+    color: tone.wickerDark,
+    alpha: 0.85,
+  });
+  wrap.addChild(g);
+};
+
+/** forest · 1×1 · a tapped trunk dripping into a bucket. */
+const drawSapBucket: DrawFn = (wrap, w, h, tileW) => {
+  ground(wrap, w * 0.7);
+  const g = new Graphics();
+  const u = w * 0.5;
+  const bh = tileW * 1.0;
+  const stroke = Math.max(1.2, u * 0.04);
+  // A cut section of trunk it hangs from.
+  g.roundRect(-u * 0.62, -bh * 1.05, u * 0.44, bh * 1.05, u * 0.06)
+    .fill(tone.wood)
+    .stroke({ width: stroke, color: tone.woodDark, alpha: 0.6 });
+  g.moveTo(-u * 0.5, -bh * 0.95)
+    .lineTo(-u * 0.5, -bh * 0.16)
+    .stroke({ width: stroke * 0.7, color: tone.woodDark, alpha: 0.4 });
+  // The spile, and a bead of sap on it.
+  g.roundRect(-u * 0.2, -bh * 0.66, u * 0.24, u * 0.09, u * 0.03).fill(tone.woodDark);
+  g.circle(u * 0.02, -bh * 0.58, u * 0.05).fill({ color: tone.gold, alpha: 0.9 });
+  // The bucket.
+  g.moveTo(-u * 0.26, -bh * 0.48)
+    .lineTo(-u * 0.18, -bh * 0.04)
+    .lineTo(u * 0.34, -bh * 0.04)
+    .lineTo(u * 0.42, -bh * 0.48)
+    .closePath()
+    .fill(tone.metal)
+    .stroke({ width: stroke, color: tone.charcoal, alpha: 0.55 });
+  g.moveTo(-u * 0.24, -bh * 0.36)
+    .lineTo(u * 0.4, -bh * 0.36)
+    .stroke({ width: stroke * 0.7, color: tone.charcoal, alpha: 0.35 });
+  // Sap surface, catching the light.
+  g.ellipse(u * 0.08, -bh * 0.48, u * 0.34, u * 0.14).fill(tone.gold);
+  g.ellipse(u * 0.0, -bh * 0.5, u * 0.14, u * 0.06).fill({ color: 0xffffff, alpha: 0.45 });
+  wrap.addChild(g);
+};
+
+/** snowdrift · 1×1 · a bell on a frosted post over a seed tray. */
+const drawSnowBell: DrawFn = (wrap, w, h, tileW) => {
+  ground(wrap, w * 0.65);
+  const g = new Graphics();
+  const u = w * 0.5;
+  const bh = tileW * 1.25;
+  const stroke = Math.max(1.3, u * 0.045);
+  // Post with a cap of snow.
+  g.roundRect(-u * 0.07, -bh, u * 0.14, bh, u * 0.04)
+    .fill(tone.woodDark)
+    .stroke({ width: stroke * 0.6, color: tone.charcoal, alpha: 0.4 });
+  // Cross arm.
+  g.moveTo(-u * 0.04, -bh * 0.96)
+    .lineTo(u * 0.46, -bh * 0.96)
+    .stroke({ width: stroke, color: tone.woodDark });
+  g.ellipse(u * 0.2, -bh * 1.0, u * 0.3, u * 0.07).fill(tone.snow);
+  // The bell.
+  g.moveTo(u * 0.22, -bh * 0.9)
+    .quadraticCurveTo(u * 0.1, -bh * 0.62, u * 0.06, -bh * 0.52)
+    .lineTo(u * 0.62, -bh * 0.52)
+    .quadraticCurveTo(u * 0.58, -bh * 0.62, u * 0.46, -bh * 0.9)
+    .closePath()
+    .fill(tone.gold)
+    .stroke({ width: stroke * 0.8, color: tone.woodDark, alpha: 0.5 });
+  g.ellipse(u * 0.34, -bh * 0.52, u * 0.28, u * 0.07).fill(tone.lodestoneSheen);
+  g.circle(u * 0.34, -bh * 0.46, u * 0.07).fill(tone.metal);
+  // Frost sparkle on the bell's shoulder.
+  g.circle(u * 0.22, -bh * 0.76, u * 0.045).fill({ color: 0xffffff, alpha: 0.7 });
+  // The seed tray at the foot — this is the feed well.
+  g.ellipse(-u * 0.24, -u * 0.14, u * 0.36, u * 0.17)
+    .fill(tone.ice)
+    .stroke({ width: stroke * 0.7, color: tone.iceDeep, alpha: 0.6 });
+  g.ellipse(-u * 0.24, -u * 0.17, u * 0.26, u * 0.11).fill(tone.snowShade);
+  for (const [sx, sy] of [
+    [-u * 0.32, -u * 0.19],
+    [-u * 0.2, -u * 0.22],
+    [-u * 0.14, -u * 0.15],
+  ] as const) {
+    g.ellipse(sx, sy, u * 0.04, u * 0.028).fill(tone.hay);
+  }
+  wrap.addChild(g);
+};
+
+/** shore · 2×2 · everything the tide left, arranged on purpose. */
+const drawTidewrack: DrawFn = (wrap, w, h, tileW) => {
+  ground(wrap, w * 0.92);
+  const g = new Graphics();
+  const u = w * 0.5;
+  const stroke = Math.max(1.2, u * 0.03);
+  // A crescent of damp sand holding the arrangement.
+  g.ellipse(0, -u * 0.24, u * 0.8, u * 0.34).fill({ color: tone.stoneWarm, alpha: 0.5 });
+  // Two crossed driftwood spars — the armature.
+  for (const [x1, y1, x2, y2] of [
+    [-u * 0.72, -u * 0.12, u * 0.3, -u * 0.66],
+    [-u * 0.3, -u * 0.68, u * 0.74, -u * 0.16],
+  ] as const) {
+    g.moveTo(x1, y1)
+      .lineTo(x2, y2)
+      .stroke({ width: Math.max(3, u * 0.1), color: tone.driftDark, cap: "round" });
+    g.moveTo(x1, y1 - u * 0.02)
+      .lineTo(x2, y2 - u * 0.02)
+      .stroke({ width: Math.max(1.5, u * 0.04), color: tone.driftLight, alpha: 0.7, cap: "round" });
+  }
+  // Netting slung between them.
+  for (let i = 1; i < 5; i++) {
+    const t = i / 5;
+    g.moveTo(-u * 0.72 + t * u * 1.02, -u * 0.12 - t * u * 0.54)
+      .lineTo(-u * 0.3 + t * u * 1.04, -u * 0.68 + t * u * 0.52)
+      .stroke({ width: stroke * 0.7, color: tone.netTwine, alpha: 0.55 });
+  }
+  // Shells strung along the spars, in the shore's own three tones.
+  const shells = [tone.shellPink, tone.shellBlue, tone.shellCream] as const;
+  for (let i = 0; i < 7; i++) {
+    const t = (i + 0.5) / 7;
+    const sx = -u * 0.66 + t * u * 1.32;
+    const sy = -u * 0.5 + Math.sin(t * Math.PI) * -u * 0.16;
+    g.ellipse(sx, sy, u * 0.09, u * 0.07).fill(shells[i % 3] ?? tone.shellCream);
+    g.ellipse(sx - u * 0.02, sy - u * 0.02, u * 0.035, u * 0.025).fill({
+      color: 0xffffff,
+      alpha: 0.5,
+    });
+  }
+  // The feed well: a big upturned scallop holding tide-scraps.
+  g.ellipse(-u * 0.06, -u * 0.2, u * 0.32, u * 0.17)
+    .fill(tone.shellCream)
+    .stroke({ width: stroke, color: tone.pebbleDark, alpha: 0.4 });
+  g.ellipse(-u * 0.06, -u * 0.24, u * 0.23, u * 0.11).fill({ color: tone.water, alpha: 0.85 });
+  g.ellipse(-u * 0.12, -u * 0.26, u * 0.1, u * 0.05).fill({ color: 0xffffff, alpha: 0.4 });
+  wrap.addChild(g);
+};
+
+/** lanterngrotto · 2×2 · a dish of glowstone kept lit at the Keep's edge. */
+const drawLampwell: DrawFn = (wrap, w, h, tileW) => {
+  ground(wrap, w * 0.85);
+  const g = new Graphics();
+  const u = w * 0.5;
+  const bh = tileW * 0.9;
+  const stroke = Math.max(1.4, u * 0.035);
+  // The glow, wide and cool — a Lanterngrotto colour, not a hearth one.
+  g.circle(0, -bh * 0.78, u * 0.66).fill({ color: tone.glowCool, alpha: 0.14 });
+  g.circle(0, -bh * 0.78, u * 0.44).fill({ color: tone.glowCool, alpha: 0.2 });
+  // A short well of stacked stone.
+  g.roundRect(-u * 0.4, -bh * 0.62, u * 0.8, bh * 0.62, u * 0.07)
+    .fill(tone.lodestone)
+    .stroke({ width: stroke, color: tone.lodestoneDark, alpha: 0.65 });
+  for (const ry of [0.2, 0.42] as const) {
+    g.moveTo(-u * 0.4, -bh * ry)
+      .lineTo(u * 0.4, -bh * ry)
+      .stroke({ width: stroke * 0.6, color: tone.lodestoneDark, alpha: 0.45 });
+  }
+  // The dish on top — the feed well, brimming with glowstone.
+  g.ellipse(0, -bh * 0.66, u * 0.48, u * 0.2)
+    .fill(tone.lodestoneSheen)
+    .stroke({ width: stroke * 0.8, color: tone.lodestoneDark, alpha: 0.5 });
+  g.ellipse(0, -bh * 0.7, u * 0.37, u * 0.15).fill(tone.glowCoolDeep);
+  g.ellipse(0, -bh * 0.72, u * 0.26, u * 0.1).fill(tone.glowCool);
+  g.ellipse(-u * 0.06, -bh * 0.74, u * 0.12, u * 0.05).fill({ color: 0xffffff, alpha: 0.6 });
+  // Three motes lifting off it.
+  for (const [mx, my, r] of [
+    [-u * 0.26, -bh * 0.98, u * 0.05],
+    [u * 0.08, -bh * 1.14, u * 0.04],
+    [u * 0.3, -bh * 0.92, u * 0.035],
+  ] as const) {
+    g.circle(mx, my, r * 2.6).fill({ color: tone.glowCool, alpha: 0.22 });
+    g.circle(mx, my, r).fill({ color: 0xffffff, alpha: 0.85 });
+  }
+  wrap.addChild(g);
+};
+
 /** Unknown item id — a friendly placeholder crate, never a crash. */
 const drawFallbackCrate: DrawFn = (wrap, w, h, tileW) => {
   ground(wrap, w);
@@ -1965,6 +2236,16 @@ const RESOLVERS: Readonly<Record<string, { draw: DrawFn; flat: boolean }>> = {
   "chime-rail": { draw: drawChimeRail, flat: false },
   "compass-rose": { draw: drawCompassRose, flat: true },
   "wayhome-lantern": { draw: drawWayhomeLantern, flat: false },
+  // ROUND 2K (docs/liveliness-bible.md §1.2) — the six attractions. NONE is
+  // flat: a visitor loiters AT its attraction, so the thing needs to read as
+  // an object in the world with a Pip standing next to it, and the wander
+  // grid must route round it the way it routes round a Food Bowl.
+  "clover-ring": { draw: drawCloverRing, flat: false },
+  "thicket-feeder": { draw: drawThicketFeeder, flat: false },
+  "sap-bucket": { draw: drawSapBucket, flat: false },
+  "snow-bell": { draw: drawSnowBell, flat: false },
+  tidewrack: { draw: drawTidewrack, flat: false },
+  lampwell: { draw: drawLampwell, flat: false },
 };
 
 /** Every item id this module can draw for real (i.e. NOT the fallback

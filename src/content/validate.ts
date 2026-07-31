@@ -170,6 +170,21 @@ function checkBuildingEffect(
   if (effect.kind === "job" && !(effect.jobId in content.jobs)) {
     errors.push(`${label}: job effect references unknown job "${effect.jobId}"`);
   }
+  // ROUND 2K (docs/liveliness-bible.md §1.1/§1.3) — an attraction's whole
+  // identity IS its biome affinity: `biomeId` selects the species pool
+  // `core/attractions`' `visitorPool()` draws from (`eggSpecies ∩ caught`).
+  // Missing or unresolvable is the same silent-failure shape as an unknown
+  // job or need above — the card would have nothing to name and the
+  // schedule would never fire, with nothing anywhere to say why.
+  if (effect.kind === "attraction") {
+    if (effect.biomeId.trim().length === 0) {
+      errors.push(`${label}: attraction effect has no biome/species affinity`);
+    } else if (!(effect.biomeId in content.expeditions)) {
+      errors.push(
+        `${label}: attraction effect names unknown biome "${effect.biomeId}" — no species pool exists there`,
+      );
+    }
+  }
 }
 
 /** A catalog item's `icon` (progression bible §4.2) must name a motif (and,

@@ -27,7 +27,19 @@
 
 import { Application } from "pixi.js";
 import { createKeepScene } from "../render/keepScene";
-import { buildPerfState, PERF_DECORATION_COUNT, PERF_PIP_COUNT } from "./perfState";
+import {
+  buildAmbiencePerfState,
+  buildPerfState,
+  PERF_ATTRACTION_LAYOUT,
+  PERF_DECORATION_COUNT,
+  PERF_PIP_COUNT,
+} from "./perfState";
+// ROUND 2K (docs/liveliness-bible.md §5.3) — the ambience scenario forces
+// the two things the player cannot turn off to their WORST values, so the
+// number the harness reports is the number a real night-time player in
+// the rain would get, not a best case.
+import { daylightAt } from "./daylight";
+import { weatherAt } from "./weather";
 import { createFrameStats, SPIKE_THRESHOLD_MS } from "./perfStats";
 
 /** Unique needle for the prod-bundle tree-shake check (`grep dist/`). */
@@ -37,7 +49,7 @@ export const PERF_MODE_MARKER = "pipskeep-perf-mode";
  * harness needs no interval timer of its own. */
 const HUD_REFRESH_FRAMES = 30;
 
-function buildHud(): { root: HTMLElement; readout: HTMLElement } {
+function buildHud(): { root: HTMLElement; readout: HTMLElement; objectsEl: HTMLElement } {
   const root = document.createElement("div");
   root.dataset["marker"] = PERF_MODE_MARKER;
   root.style.cssText = [
@@ -61,8 +73,13 @@ function buildHud(): { root: HTMLElement; readout: HTMLElement } {
   const readout = document.createElement("div");
   readout.textContent = "warming up…";
 
-  root.append(title, readout);
-  return { root, readout };
+  // ROUND 2K — the object count sits above the frame numbers because it
+  // is the one line that explains a bad one.
+  const objectsEl = document.createElement("div");
+  objectsEl.textContent = "objects    …";
+
+  root.append(title, objectsEl, readout);
+  return { root, readout, objectsEl };
 }
 
 /** Boot the perf scene in place of the real game. Never returns to the
@@ -90,9 +107,40 @@ export async function startPerfMode(): Promise<void> {
     scene.resize(window.innerWidth, window.innerHeight);
   });
 
+  // ROUND 2K — `?perf=ambience` measures the round's own worst case.
+  // Anything else (including a bare `?perf`) is the shipped spec §1
+  // scenario, byte-identical to what it measured before this round, so
+  // the two runs are comparable.
+  const ambienceScenario =
+    new URLSearchParams(window.location.search).get("perf") === "ambience";
+
   // The whole scenario in one sync — state never changes afterwards;
   // everything that moves from here on is scene-local animation.
-  scene.sync(buildPerfState());
+  const perfState = ambienceScenario ? buildAmbiencePerfState() : buildPerfState();
+  scene.sync(perfState);
+
+  if (ambienceScenario) {
+    // Forced, not sampled: the harness must not report a healthy number
+    // just because it happened to run at noon in clear weather.
+    //
+    // 02:00 local is deep night (the 0.22 overlay, the moon, the night
+    // flitter count); a weather window is searched for the first one that
+    // rolls RAIN, which is the heaviest emitter in the table (40 streaks)
+    // and the one that also sends every Pip pathing for shelter.
+    const nightMs = new Date(2026, 6, 31, 2, 0, 0, 0).getTime();
+    scene.setDaylight(daylightAt(nightMs));
+    const windowMs = 3 * 60 * 60 * 1000;
+    let rain = weatherAt(perfState.seed, nightMs);
+    for (let i = 0; i < 512 && rain.kind !== "rain"; i++) {
+      rain = weatherAt(perfState.seed, nightMs + i * windowMs);
+    }
+    scene.setWeather(rain);
+    console.info(
+      `PipsKeep perf mode: AMBIENCE scenario — night + ${rain.kind}, ` +
+        `${PERF_ATTRACTION_LAYOUT.length} attractions, 2 visitors (one shiny + accessorised).`,
+    );
+  }
+
   app.ticker.add((ticker) => {
     scene.update(ticker.deltaMS);
   });
@@ -122,8 +170,32 @@ export async function startPerfMode(): Promise<void> {
   };
   requestAnimationFrame(loop);
 
+  // ROUND 2K — the object count, printed rather than guessed. Bible §5.2
+  // treats it as a LEADING INDICATOR (the gate is measured frame time),
+  // but a count that moves by 60 between runs is worth seeing.
+  const objects = countDisplayObjects(scene.view as unknown as { children?: unknown[] });
   console.info(
-    `PipsKeep perf mode: budget scenario live (${PERF_PIP_COUNT} pips + ${PERF_DECORATION_COUNT} decorations). ` +
+    `PipsKeep perf mode: ${ambienceScenario ? "AMBIENCE" : "budget"} scenario live ` +
+      `(${PERF_PIP_COUNT} pips + ${PERF_DECORATION_COUNT} decorations` +
+      `${ambienceScenario ? " + 4 attractions + 2 visitors, night + rain" : ""}). ` +
+      `${objects} display objects. ` +
       "For the spec §1 phone profile, enable Chrome DevTools 4x CPU throttle.",
   );
+  hud.objectsEl.textContent = `objects    ${objects}`;
+}
+
+/**
+ * ROUND 2K — recursive display-object count for the HUD readout.
+ *
+ * Deliberately duck-typed on `children` rather than importing Pixi's
+ * `Container`: this file is dev-only and tree-shaken from production
+ * (pinned by the `PERF_MODE_MARKER` grep), and the count is a diagnostic,
+ * not a contract.
+ */
+function countDisplayObjects(node: { children?: unknown[] }): number {
+  let n = 1;
+  for (const child of node.children ?? []) {
+    n += countDisplayObjects(child as { children?: unknown[] });
+  }
+  return n;
 }

@@ -95,7 +95,33 @@ export type BuildingEffect =
    * ever reach: `buildingCraftSpeedMultiplier` had no caller and always
    * defaulted to 1.
    */
-  | { readonly kind: "craftSpeed"; readonly multiplier: number };
+  | { readonly kind: "craftSpeed"; readonly multiplier: number }
+  /**
+   * ROUND 2K (docs/liveliness-bible.md §1.1) — DRAWS WILD PIPS to the Keep.
+   * Purely descriptive here, exactly like `job`: `core/attractions/` owns
+   * the visit schedule and reads the registry through its own structural
+   * view (`AttractionEffectLike`), deliberately independent of this union
+   * so it activates the instant this member lands, with zero code changes
+   * on the core side (already shipped and tested against injected
+   * content).
+   *
+   * `biomeId` is a `content/expeditions.ts` id: the visitor pool is that
+   * biome's `eggSpecies` INTERSECTED WITH the species the player has
+   * already caught (I1 — attractions can never advance the Album; the
+   * partition is enforced in `core/attractions`, not here). Must be
+   * non-empty and must resolve to a real expedition — `content/validate.ts`
+   * checks both, because an attraction with neither schedules nothing and
+   * leaves no card able to say why.
+   *
+   * This member DISCHARGES the spec §12 seam that used to live as
+   * `content/keep.ts`'s `KeepUpgradeEffect` "attraction" no-op arm
+   * (deleted in this same patch): a capability that lives in the same
+   * vocabulary as `job`/`comfort`/`remedy`/`longevity` gets the Build
+   * sheet card, the icon badge and `resolveKeepEffects` aggregation for
+   * free, which a one-entry upgrade registry never could. See
+   * `content/placeables.ts`'s six attraction stations.
+   */
+  | { readonly kind: "attraction"; readonly biomeId: string };
 
 /**
  * ✅ ROUND 2J FIX STAGE — THE ROUND 2H NOTE THAT USED TO LIVE HERE IS

@@ -243,7 +243,11 @@ describe("Mood + dialogue-context vocabulary (spec §3/§4.3)", () => {
     expect(MOODS).toEqual(["beaming", "content", "grumpy", "miserable"]);
   });
 
-  it("exposes exactly the 6 dialogue contexts: 4 moods + sulking + refusal", () => {
+  it("exposes exactly the 7 contexts: 4 moods + sulking + refusal + greeting", () => {
+    // ROUND 2K (docs/liveliness-bible.md §4.5) — `greeting` is the only
+    // context whose audience is another PIP rather than the player. It
+    // is last on purpose: appending keeps every existing pool's identity
+    // and every `lineId` (`personality/context/index`) stable.
     expect(DIALOGUE_CONTEXTS).toEqual([
       "beaming",
       "content",
@@ -251,6 +255,7 @@ describe("Mood + dialogue-context vocabulary (spec §3/§4.3)", () => {
       "miserable",
       "sulking",
       "refusal",
+      "greeting",
     ]);
   });
 

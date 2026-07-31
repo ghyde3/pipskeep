@@ -491,14 +491,21 @@
    the reason three different accessories were all reported as "sitting
    where a mouth would be". It is also plain parity: this surface claims
    to be the same Pip as the Keep's. */
+/* ⚠️ ROUND 2K FIX STAGE — `min-height: 3px` was deleted, and it is the
+   whole bug. On the 26px cast chip that floor made the mouth 11% of the
+   body; on the 100px focus portrait, 3%. Every accessory authored to
+   "clear the mouth" therefore cleared it at exactly one size. The mouth
+   is now a pure fraction (`PORTRAIT_MOUTH_TOP_PCT` / `_HEIGHT_PCT` in
+   render/pipGeometry.ts), so `ACCESSORY_ZONE_PCT` can be a real table
+   instead of a hopeful one. The 1.6px stroke is the one absolute term
+   left; `ACCESSORY_ZONE_PAD_PCT` is sized to swallow it. */
 .pk-pipdex-mouth {
   position: absolute;
   top: 50%;
   left: 50%;
   width: 18%;
   min-width: 8px;
-  height: 7%;
-  min-height: 3px;
+  height: 8%;
   transform: translateX(-50%);
   border-bottom: 1.6px solid var(--pk-outline, #847aa8);
   border-radius: 0 0 60% 60%;
@@ -564,6 +571,18 @@
 .pk-pipdex-accessory {
   position: absolute;
   pointer-events: none;
+  /* ⚠️ ROUND 2K FIX STAGE — THE SHARED BAND (bible §6.1.1(c)).
+     `--pk-acc-zone-top`/`--pk-acc-zone-bottom` are written inline by
+     `pipdex.ts` from `render/pipGeometry.ts`'s `ACCESSORY_ZONE_PCT`, keyed
+     off the accessory's OWN slot — so a `neck` item is handed the
+     below-the-mouth band and a `crown` item the above-the-eyes one, from
+     the same table `ui/focusView.ts` reads. The fallbacks are the neck
+     band, i.e. the safe one: an accessory whose slot somehow never
+     arrives lands below the face rather than across it.
+     `+1.6px` is this surface's own mouth STROKE, which a proportional
+     table cannot know about and which no percentage can express. */
+  --pk-acc-top: calc(var(--pk-acc-zone-top, 60%) + 1.6px);
+  --pk-acc-bottom: var(--pk-acc-zone-bottom, 98%);
   /* Same reasoning as ui.css's `.pk-portrait-accessory` — a pale
      accessory (cloudwisp, snowcap, flower) needs definition regardless of
      which body palette it happens to land on. Two stacked shadows, not
@@ -583,13 +602,15 @@
    family drops ~5% of body height, exactly as `CROWN_TUCK_PX` does on
    the Pixi surface. */
 
+/* ⚠️ ROUND 2K FIX STAGE — `min-height: 7px` deleted. On the 26px cast chip
+   it made the leaf 27% of the whole body and dropped its rotated corner
+   onto the eye row. */
 .pk-pipdex-accessory--leafcap {
   top: 1%;
   left: 50%;
   width: 34%;
   height: 16%;
   min-width: 14px;
-  min-height: 7px;
   transform: translateX(-50%) rotate(-16deg);
   background: var(--pk-acc-primary, #5ba05a);
   border-radius: 65% 65% 65% 8%;
@@ -606,27 +627,40 @@
   opacity: 0.75;
 }
 
+/* ⚠️ ROUND 2K FIX STAGE — the worst case of the round's root cause, and
+   worth reading as the example. The flower was a 5px disc with its four
+   petals hung off it as PIXEL box-shadow offsets (±6px across, −2px up,
+   +5px down). Box-shadow offsets cannot be percentages, so the whole
+   flower was ~9.4px tall on every portrait ever drawn: 10% of the
+   92px Album detail and 35% of the 26px cast chip, where it landed on the
+   eyes. Measured proof it never scaled: its painted band came out
+   IDENTICAL ([-1.0, 11.0]) at two different portrait sizes.
+
+   The petals are radial-gradients inside a proportionally-sized box now,
+   so the whole head scales with the Pip. Same five-petal-and-a-centre
+   read; nothing else about it changes. */
 .pk-pipdex-accessory--flower {
-  top: 3%;
+  top: 2%;
   left: 50%;
-  width: 9%;
-  height: 9%;
-  min-width: 5px;
-  min-height: 5px;
-  border-radius: 50%;
+  width: 26%;
+  height: 15%;
+  min-width: 12px;
   transform: translateX(-50%);
-  background: var(--pk-acc-primary, #f2a6c4);
-  box-shadow:
-    -6px -2px 0 0 var(--pk-acc-primary, #f2a6c4),
-    6px -2px 0 0 var(--pk-acc-primary, #f2a6c4),
-    -3.5px 5px 0 0 var(--pk-acc-primary, #f2a6c4),
-    3.5px 5px 0 0 var(--pk-acc-primary, #f2a6c4);
+  background:
+    radial-gradient(circle at 22% 32%, var(--pk-acc-primary, #f2a6c4) 47%, transparent 49%),
+    radial-gradient(circle at 78% 32%, var(--pk-acc-primary, #f2a6c4) 47%, transparent 49%),
+    radial-gradient(circle at 30% 84%, var(--pk-acc-primary, #f2a6c4) 45%, transparent 47%),
+    radial-gradient(circle at 70% 84%, var(--pk-acc-primary, #f2a6c4) 45%, transparent 47%);
 }
 
 .pk-pipdex-accessory--flower::after {
   content: "";
   position: absolute;
-  inset: 0;
+  top: 28%;
+  left: 50%;
+  width: 42%;
+  height: 44%;
+  transform: translateX(-50%);
   border-radius: 50%;
   background: var(--pk-acc-secondary, #f7d24a);
 }
@@ -788,36 +822,40 @@
   border-radius: 2px;
 }
 
-/* --- Neck accessories: BELOW the mouth (`.pk-pipdex-mouth`, ~50%),
-   across the top of the belly. ---
-   ROUND 2D FIX STAGE: the scarf sat at 60% and the bowtie/ember bead in
-   the mid-50s, which on a face with no drawn mouth landed exactly where
-   a mouth reads — the scarf came across as a gag, the bowtie and the
-   bead as a mouth. Adding the mouth defines the face; moving these below
-   it makes them read as worn. Mirrors `NECK_Y_FRAC` on the Pixi
-   surface. */
+/* --- Neck accessories: BELOW the mouth. ---
+   ⚠️ ROUND 2K FIX STAGE. Round 2D moved these to hand-picked percentages
+   (59%/60%/63%) chosen against ONE portrait size, and a live sweep found
+   all three drawn across the mouth on all five silhouettes at BOTH DOM
+   sizes — the scarf covering 54% of the mouth on `wide`, the ember-bead
+   82%, reading as a gag and a tongue respectively. They now hang off
+   `--pk-acc-top` (the shared band, see `.pk-pipdex-accessory` above), and
+   the `min-height` PIXEL floors are gone: a floor is what made a shape
+   authored on the 92px detail portrait 3× too tall on the 26px cast
+   chip. */
 
 .pk-pipdex-accessory--scarf {
-  top: 59%;
+  top: var(--pk-acc-top);
   left: 50%;
   width: 54%;
   height: 11%;
   min-width: 22px;
-  min-height: 6px;
   transform: translateX(-50%);
   background: var(--pk-acc-primary, #d9683c);
   border-radius: 6px 6px 8px 8px;
 }
 
 /* The KNOT, sitting ON the band — what turns a horizontal bar into a
-   worn scarf rather than a stripe painted on the belly. */
+   worn scarf rather than a stripe painted on the belly. It used to start
+   at `-18%`, i.e. ABOVE the band it is supposed to sit in, which is how a
+   scarf positioned below the mouth still painted across it. It now grows
+   downward only. */
 .pk-pipdex-accessory--scarf::before {
   content: "";
   position: absolute;
-  top: -18%;
+  top: 0;
   left: 58%;
   width: 22%;
-  height: 136%;
+  height: 118%;
   min-width: 6px;
   border-radius: 45%;
   background: var(--pk-acc-secondary, #b84f2b);
@@ -838,12 +876,11 @@
 }
 
 .pk-pipdex-accessory--bowtie {
-  top: 60%;
+  top: var(--pk-acc-top);
   left: 50%;
   width: 34%;
   height: 14%;
   min-width: 16px;
-  min-height: 8px;
   transform: translateX(-50%);
 }
 
@@ -867,13 +904,19 @@
   clip-path: polygon(0 0, 0 100%, 100% 50%);
 }
 
+/* The bead hangs from a cord, and the CORD is the topmost painted pixel —
+   so the element is offset by exactly the height the cord reaches above
+   it (`0.55 × the bead's own height`, from the `::before` below), which
+   puts the top of the CORD, not the top of the bead, on the band. The
+   shipped rule anchored the bead and let the cord ride up into the mouth;
+   that is why the ember-bead read as a tongue. */
 .pk-pipdex-accessory--emberbead {
-  top: 63%;
+  --pk-bead-h: 10%;
+  top: calc(var(--pk-acc-top) + 0.55 * var(--pk-bead-h));
   left: 50%;
   width: 10%;
-  height: 10%;
+  height: var(--pk-bead-h);
   min-width: 5px;
-  min-height: 5px;
   transform: translateX(-50%);
   border-radius: 50%;
   background: var(--pk-acc-primary, #ff7a3c);
@@ -898,46 +941,59 @@
   opacity: 0.8;
 }
 
-/* --- Shoulder / side accessories: out on a flank, BELOW the blush
-   (~44-52%) so they never land on the cheek, and clear of the eye row. --- */
+/* --- Shoulder / side accessories: out on a flank, in the SAME band as
+   the neck items (below the painted mouth) and clear of the eye row. ---
+   ⚠️ ROUND 2K FIX STAGE: the shell pauldron sat at 58% and clipped the
+   right eye on `wide`; the lantern sat at 40% with a bulb pinned to a
+   `min-height: 12px`, which on the 26px cast chip is 45% of the whole
+   body — the single worst case of the authored-in-pixels root cause in
+   either stylesheet. Both are proportional and band-anchored now. */
 
+/* Rotated by 20°, so its painted box reaches ~14% of its own size ABOVE
+   the element's top edge. The offset below is exactly that, computed from
+   the same `--pk-shell-h` the height uses, so the ROTATED bounds — not
+   the unrotated ones — are what lands on the band. */
 .pk-pipdex-accessory--shellpauldron {
-  top: 58%;
+  --pk-shell-h: 20%;
+  top: calc(var(--pk-acc-top) + 0.15 * var(--pk-shell-h));
   left: 72%;
   width: 20%;
-  height: 20%;
+  height: var(--pk-shell-h);
   min-width: 11px;
-  min-height: 11px;
   border-radius: 50% 50% 50% 0;
   background: var(--pk-acc-primary, #f0d6b8);
   border: 1px solid var(--pk-acc-secondary, #d9a878);
   transform: rotate(-20deg);
 }
 
+/* The element is the BULB (the thing that needs a legible size); the cord
+   is a `::before` reaching up from it to the band's top edge. Authored
+   this way round so every dimension can be a fraction of body height —
+   the previous shape made the cord the element and the bulb a pixel
+   constant, which is unscalable by construction. */
 .pk-pipdex-accessory--lantern {
-  top: 40%;
-  left: 78%;
-  width: 2px;
-  height: 16%;
-  min-height: 8px;
-  background: #5a4a30;
-  border-radius: 1px;
-}
-
-.pk-pipdex-accessory--lantern::after {
-  content: "";
-  position: absolute;
-  top: 90%;
-  left: 50%;
+  --pk-lantern-cord: 10%;
+  top: calc(var(--pk-acc-top) + var(--pk-lantern-cord));
+  left: 74%;
   width: 22%;
-  height: 22%;
-  min-width: 11px;
-  min-height: 12px;
-  transform: translateX(-50%);
+  height: 15%;
+  min-width: 9px;
   background: var(--pk-acc-primary, #f7c948);
   border: 1.2px solid var(--pk-acc-secondary, #8a6a3a);
   border-radius: 3px;
   box-shadow: 0 0 5px 1px rgba(247, 201, 72, 0.55);
+}
+
+.pk-pipdex-accessory--lantern::before {
+  content: "";
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  width: 2px;
+  height: 66%;
+  transform: translateX(-50%);
+  background: #5a4a30;
+  border-radius: 1px;
 }
 
 /* Pattern overlays (content-bible §1.5), matching ui.css's

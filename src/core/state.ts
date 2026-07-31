@@ -219,6 +219,35 @@ import type {
 } from "./crafting";
 import { spend } from "./economy";
 import type { ResourceBundle } from "./economy";
+// ROUND 2K (docs/liveliness-bible.md §1-§3) — ATTRACTIONS. `core/attractions`
+// owns the pool/schedule/roll/settle logic and the three visit-card
+// actions; this file composes it against the real GameState/GameAction —
+// the same division of labour jobs/crafting/breeding already use. Visit
+// scheduling is threaded into TICK (`processAttractionVisits`) and CATCHUP
+// (`collectAttractionCatchupEvents` + `settleAttractionVisits`, the same
+// collect-then-settle shape `core/keep/jobs.ts`'s `firedJobTicks` uses);
+// `PLACE_ITEM`/`REMOVE_ITEM` stamp/clear the per-placement stock/schedule/
+// visitor slices via `initialAttractionStockFor`/`clearAttractionState`/
+// `refundForRemainingStock`.
+import {
+  clearAttractionState,
+  collectAttractionCatchupEvents,
+  feedVisitor,
+  initialAttractionStockFor,
+  processAttractionVisits,
+  refundForRemainingStock,
+  restockAttraction,
+  settleAttractionVisits,
+  welcomeVisitor,
+} from "./attractions";
+import type {
+  AttractionScheduleByPlacement,
+  AttractionStockByPlacement,
+  AttractionVisitTick,
+  CaughtPredicate,
+  VisitorOutcome,
+  VisitorsByPlacement,
+} from "./attractions";
 // ROUND 2C — RETENTION (docs/retention-bible.md §1/§2, orchestrator
 // ruling: build the Album + the Long Meadow so a 14-form collection is
 // reachable without ever deleting a Pip, content-bible §9 risk 7).
@@ -575,6 +604,34 @@ export interface GameState {
    * fixture in the suite stays valid with the field simply absent.
    */
   readonly settings?: GameSettings;
+  /**
+   * ROUND 2K (docs/liveliness-bible.md §1, save schema v12) — ATTRACTIONS.
+   * `visitors` is the one live/most-recent VisitorRecord per attraction
+   * placement (bible §1.5 — persists between visits; cleared on a welcome
+   * or the placement's removal). `attractionStock` is remaining feed
+   * charges per placement (0..`stockMax`). `attractionSchedule` is the
+   * per-placement due-tick baseline (mirrors `JobAssignment.
+   * lastProducedAt`) — the next visit is due at `baseline +
+   * visitIntervalMs`; an attraction whose pool is empty leaves this
+   * untouched (I1: inert, not merely unlucky).
+   *
+   * OPTIONAL, same `undefined ≡ {}` precedent `crafts` (round 2J)
+   * established: `MIGRATIONS[11]` backfills all three to `{}` for every
+   * pre-v12 save (nobody could have built an attraction before this round
+   * shipped), and `fromSaveBlob` deep-validates and always sets them —
+   * but the TYPE stays optional so the thousands of hand-built `GameState`
+   * fixtures across `core/`/`ui/` that predate this round need no edits.
+   * `createNewGame` sets all three explicitly regardless. Read via
+   * `visitorsOf`/`attractionStockOf`/`attractionScheduleOf` (or the
+   * combined `withAttractions`), the same `craftsOf`/`withCrafts` pattern.
+   */
+  readonly visitors?: VisitorsByPlacement;
+  readonly attractionStock?: AttractionStockByPlacement;
+  readonly attractionSchedule?: AttractionScheduleByPlacement;
+  /** Outcome of the most recent FEED_VISITOR / WELCOME_VISITOR /
+   * RESTOCK_ATTRACTION (bible §1.5/§1.7/§1.4) — parked like every other
+   * `last*Outcome` echo. OPTIONAL for the same reason as `visitors` above. */
+  readonly lastVisitorOutcome?: VisitorOutcome | null;
 }
 
 /**
@@ -858,7 +915,26 @@ export type GameAction =
    * Pure: no time, no rng, and (deliberately) no `at` — a display-name
    * edit is not a timed or randomized event.
    */
-  | { readonly type: "RENAME_PIP"; readonly pipId: PipId; readonly name: string };
+  | { readonly type: "RENAME_PIP"; readonly pipId: PipId; readonly name: string }
+  /** ROUND 2K (docs/liveliness-bible.md §1.5) — "Offer a snack" to the
+   * visitor currently at `placementId`. Always consumes the item when
+   * owned (an actual gift); only a biome-correct snack not already fed
+   * this visit moves trust — never refused for being "the wrong" food
+   * (`core/attractions`'s `feedVisitor`). */
+  | {
+      readonly type: "FEED_VISITOR";
+      readonly placementId: PlacementId;
+      readonly foodId: string;
+      readonly at: number;
+    }
+  /** ROUND 2K (docs/liveliness-bible.md §1.7) — "Ask them to stay":
+   * welcomes the visitor at `placementId` into the roster once
+   * `welcomeTrust` is reached. Refused warmly (state unchanged) at the
+   * roster cap — the visitor keeps calling, forever (never a wall). */
+  | { readonly type: "WELCOME_VISITOR"; readonly placementId: PlacementId; readonly at: number }
+  /** ROUND 2K (docs/liveliness-bible.md §1.4) — refill one attraction to
+   * `stockMax` for its flat, never-inflating restock cost. */
+  | { readonly type: "RESTOCK_ATTRACTION"; readonly placementId: PlacementId; readonly at: number };
 
 /**
  * Starter hunger (spec §10.1: "Hunger bar is visibly at ~60" so the
@@ -1341,6 +1417,12 @@ export function createNewGame(
     // been made.
     crafts: {},
     lastCraftOutcome: null,
+    // ROUND 2K: no attraction exists yet (they unlock at tier 6) — every
+    // slice starts empty, nothing has ever visited.
+    visitors: {},
+    attractionStock: {},
+    attractionSchedule: {},
+    lastVisitorOutcome: null,
   };
 }
 
@@ -1424,6 +1506,63 @@ function craftingContentFor(state: GameState): { readonly buildingCraftSpeedMult
 function withCrafts<S extends GameState>(state: S): S & { crafts: CraftsByStation } {
   if (state.crafts !== undefined) return state as S & { crafts: CraftsByStation };
   return { ...state, crafts: {} };
+}
+
+/** `state.visitors`/`attractionStock`/`attractionSchedule` default to `{}`
+ * (round 2K — all three OPTIONAL, see `GameState`'s own doc comment). The
+ * one place every reducer arm below reads them, so the default is
+ * applied consistently. */
+function visitorsOf(state: GameState): VisitorsByPlacement {
+  return state.visitors ?? {};
+}
+function attractionStockOf(state: GameState): AttractionStockByPlacement {
+  return state.attractionStock ?? {};
+}
+function attractionScheduleOf(state: GameState): AttractionScheduleByPlacement {
+  return state.attractionSchedule ?? {};
+}
+
+/** `state` with all three attraction slices GUARANTEED present, for
+ * handing to `core/attractions`'s `S extends AttractionStateSlice`-generic
+ * functions — the same `withCrafts` pattern immediately above. Returns
+ * `state` BY REFERENCE whenever all three are already defined (true for
+ * every game created by `createNewGame` or migrated to v12+). */
+function withAttractions<S extends GameState>(
+  state: S,
+): S & {
+  visitors: VisitorsByPlacement;
+  attractionStock: AttractionStockByPlacement;
+  attractionSchedule: AttractionScheduleByPlacement;
+} {
+  if (
+    state.visitors !== undefined &&
+    state.attractionStock !== undefined &&
+    state.attractionSchedule !== undefined
+  ) {
+    return state as S & {
+      visitors: VisitorsByPlacement;
+      attractionStock: AttractionStockByPlacement;
+      attractionSchedule: AttractionScheduleByPlacement;
+    };
+  }
+  return {
+    ...state,
+    visitors: visitorsOf(state),
+    attractionStock: attractionStockOf(state),
+    attractionSchedule: attractionScheduleOf(state),
+  };
+}
+
+/** The caught-species predicate `core/attractions`'s I1 guardrail needs
+ * (`visitorPool`/`collectAttractionCatchupEvents`/`processAttractionVisits`
+ * all take this as a plain function so that module never imports
+ * `core/pipdex` directly — mirrors `core/progression/pity.ts`'s own
+ * "stays free of any Album import" rule). Pipdex is untouched by anything
+ * inside a single TICK/CATCHUP dispatch (only ACKNOWLEDGE_REVEAL/
+ * HATCH_EGG ever mutate it, both player-actioned), so building this once
+ * from the pre-dispatch state is safe for the whole pass. */
+function caughtPredicate(state: GameState): CaughtPredicate {
+  return (speciesId: string) => state.pipdex.entries[speciesId]?.caughtAt != null;
 }
 
 /**
@@ -2142,6 +2281,30 @@ function applyKeepXpForAction(
         gained += rosterUpgradeXp(contentTuning);
       }
       break;
+    // ROUND 2K (docs/liveliness-bible.md §1, tuning.attractions'
+    // `visitorFedKeepXp`/`welcomeKeepXp`/`restockKeepXp`) — each keyed off
+    // `lastVisitorOutcome`'s own discriminated `action` tag, the same
+    // "trust the outcome, never re-validate legality" boundary every
+    // other row here already uses.
+    case "FEED_VISITOR":
+      if (
+        next.lastVisitorOutcome?.action === "feedVisitor" &&
+        next.lastVisitorOutcome.ok &&
+        next.lastVisitorOutcome.trustGained
+      ) {
+        gained += contentTuning.attractions.visitorFedKeepXp;
+      }
+      break;
+    case "WELCOME_VISITOR":
+      if (next.lastVisitorOutcome?.action === "welcomeVisitor" && next.lastVisitorOutcome.ok) {
+        gained += contentTuning.attractions.welcomeKeepXp;
+      }
+      break;
+    case "RESTOCK_ATTRACTION":
+      if (next.lastVisitorOutcome?.action === "restockAttraction" && next.lastVisitorOutcome.ok) {
+        gained += contentTuning.attractions.restockKeepXp;
+      }
+      break;
     case "CLAIM_STREAK_REWARD":
       // `rewardedForDay` is the base reducer's own idempotence key (a
       // repeat claim for the same day returns `state` unchanged).
@@ -2703,6 +2866,12 @@ export const STREAK_VISIT_ACTION_TYPES: ReadonlySet<GameAction["type"]> = new Se
   // count — never TICK/CATCHUP, which settle completions automatically.
   "ENQUEUE_CRAFT",
   "CANCEL_CRAFT",
+  // ROUND 2K: feeding/welcoming/restocking are deliberate caretaking
+  // sessions at the Keep, the same "player showed up" shape as a care
+  // action or a Build-mode session.
+  "FEED_VISITOR",
+  "WELCOME_VISITOR",
+  "RESTOCK_ATTRACTION",
 ]);
 
 /**
@@ -2873,6 +3042,28 @@ function baseReducer(state: GameState, action: GameAction): GameState {
         pips: awardCraftCompletionPipXp(craftSettle.state.pips, craftSettle.completions),
         lastCraftCompletions: craftSettle.completions,
       };
+      // ROUND 2K (docs/liveliness-bible.md §1.5) — live attraction visits:
+      // every stocked attraction's due ticks collapse into one materialised
+      // visit, rolled/reused through the SAME settlement catch-up uses
+      // (`returnAt = action.at` — a live dispatch IS the return moment). I2:
+      // touches only `attractionStock`/`attractionSchedule`/`visitors`/
+      // `rngState`, nothing needs/care-economy shaped.
+      // ⚠️ FIX STAGE — `accessoryIds` is NOT optional decoration here. Omit
+      // it and `rollFreshVisitor` falls back to `content.accessoryIds ?? []`,
+      // `pickAccessory` returns `null` on an empty pool, and EVERY welcomed
+      // visitor is bare while every egg-hatched Pip wears one 75% of the
+      // time — a visibly second-class citizen, and the exact seam-fed-by-
+      // nobody defect this project has shipped nine times. Cursor-safe for
+      // the same reason the egg path records at `accessoryIds:
+      // ACCESSORY_ROLL_POOL` below: `pickAccessory` consumes its roll
+      // whether the pool is empty or not, so no RNG parity changes.
+      ticked = processAttractionVisits(
+        withAttractions(ticked),
+        action.at,
+        caughtPredicate(ticked),
+        collectUsedNames(ticked),
+        { accessoryIds: ACCESSORY_ROLL_POOL },
+      );
       // ROUND 2C: mastery/streak/event loot bonus AND the mastery/event
       // egg-chance bonus, both resolved per returning pip (see
       // resolveLootBonusChanceFor / resolveEggChanceFor's doc comments for
@@ -3362,7 +3553,22 @@ function baseReducer(state: GameState, action: GameAction): GameState {
       // DIRECTLY inside `apply` (recipes are deterministic, no rng
       // cursor to keep chronological, see `core/crafting`'s module doc),
       // so the adapter needs `inventory`/`keepsakes` too.
-      type CatchupAdapter = EggCatchupState & JobCatchupState & CraftCatchupState;
+      // ROUND 2K — attraction visit scheduling rides this SAME pass (I3:
+      // "no third clock"). `isCaught`/`usedNames` are snapshotted once
+      // from the pre-dispatch state — pipdex and every Pip's name are
+      // untouched by anything a CATCHUP pass itself does (only
+      // ACKNOWLEDGE_REVEAL/HATCH_EGG ever mutate either, both
+      // player-actioned), so this is safe for the whole pass.
+      const isCaught = caughtPredicate(state);
+      const usedNamesForCatchup = collectUsedNames(state);
+      type CatchupAdapter = EggCatchupState &
+        JobCatchupState &
+        CraftCatchupState & {
+          readonly keep: KeepState;
+          readonly attractionStock: AttractionStockByPlacement;
+          readonly attractionSchedule: AttractionScheduleByPlacement;
+          readonly firedAttractionVisits: readonly AttractionVisitTick[];
+        };
       const adapter: CatchupAdapter = {
         pips: list,
         eggs: eggsAtStart,
@@ -3372,6 +3578,10 @@ function baseReducer(state: GameState, action: GameAction): GameState {
         inventory: state.inventory,
         keepsakes: state.keepsakes,
         firedCraftCompletions: [] as readonly CraftCompletion[],
+        keep: state.keep,
+        attractionStock: attractionStockOf(state),
+        attractionSchedule: attractionScheduleOf(state),
+        firedAttractionVisits: [] as readonly AttractionVisitTick[],
       };
       // ROUND 2F (progression bible §3.2) — same building-effects
       // resolution as the live TICK path, computed once against
@@ -3393,6 +3603,7 @@ function baseReducer(state: GameState, action: GameAction): GameState {
           ...collectEggCatchupEvents(s, windowStart, windowEnd),
           ...collectJobCatchupEvents(s, windowStart, windowEnd),
           ...collectCraftCatchupEvents(s, windowStart, windowEnd, contentTuning, craftContent),
+          ...collectAttractionCatchupEvents(s, windowStart, windowEnd, isCaught),
         ],
         keepComfort,
       );
@@ -3456,6 +3667,12 @@ function baseReducer(state: GameState, action: GameAction): GameState {
         lastCraftCompletions: result.state.firedCraftCompletions,
         lastTickAt: Math.max(state.lastTickAt, action.now),
         lastCatchup: result.summary,
+        // ROUND 2K — `attractionStock`/`attractionSchedule` after every
+        // fired due-tick's deterministic advance (module doc); `visitors`
+        // is filled in below by `settleAttractionVisits`, once, in fired
+        // order (the roll/reuse step the generic engine cannot do inline).
+        attractionStock: result.state.attractionStock,
+        attractionSchedule: result.state.attractionSchedule,
       };
       // Roll the production that actually fired, in fired (chronological)
       // order — the same order the live path uses, so the "job" cursor
@@ -3474,6 +3691,24 @@ function baseReducer(state: GameState, action: GameAction): GameState {
           next.keep,
         ),
       };
+      // ROUND 2K (docs/liveliness-bible.md §1.6) — settle every fired
+      // attraction visit AFTER the pass, in fired (chronological) order,
+      // exactly like `settleJobTicks` above. `returnAt = action.now` is
+      // THE HELD-OPEN RULE: whichever visit is materialised per attraction
+      // gets `leavesAt` extended to `action.now + lingerMs`, so a returning
+      // player always finds someone freshly arrived.
+      // `accessoryIds`: see the live path's note in TICK above — a visitor
+      // materialised on the catch-up path must be as fully dressed as one
+      // materialised live, or coming home from an absence produces the bare
+      // ones.
+      next = settleAttractionVisits(
+        withAttractions(next),
+        result.state.firedAttractionVisits,
+        action.now,
+        isCaught,
+        usedNamesForCatchup,
+        { accessoryIds: ACCESSORY_ROLL_POOL },
+      );
       // Loot for returns that fired during the pass, rolled AFTER the
       // pass in summary-event order — which is chronological across ALL
       // pips, so the "expedition-loot" cursor advances in true return
@@ -3607,11 +3842,31 @@ function baseReducer(state: GameState, action: GameAction): GameState {
       // Build sheet greys unaffordable cards with the same canAfford).
       const paid = spend(state.resources, PLACEMENT_ITEM_COSTS[action.itemId] ?? {});
       if (!paid.ok) return state;
+      // ROUND 2K (docs/liveliness-bible.md §1.4) — an attraction stamps
+      // FULL the instant it is placed (the build cost already includes
+      // the first fill), and its schedule baseline seeds to NOW — the
+      // first visit is due one `visitIntervalMs` later, the same "wait
+      // one interval for the first tick" convention `core/keep/jobs.ts`'s
+      // `assignedAt` uses. `undefined` for every other placeable/
+      // decoration (the common case) — nothing below fires.
+      const attractionInit = initialAttractionStockFor(action.itemId, action.at);
       return {
         ...state,
         keep: result.keep,
         resources: paid.resources,
         nextPlacementNumber: state.nextPlacementNumber + 1,
+        ...(attractionInit !== undefined
+          ? {
+              attractionStock: {
+                ...attractionStockOf(state),
+                [placementId]: attractionInit.stock,
+              },
+              attractionSchedule: {
+                ...attractionScheduleOf(state),
+                [placementId]: attractionInit.scheduleAt,
+              },
+            }
+          : {}),
       };
     }
 
@@ -3667,8 +3922,65 @@ function baseReducer(state: GameState, action: GameAction): GameState {
       // queued recipe, in full. Same "tuck away never destroys value"
       // rule the placement cost refund above already honors.
       next = refundCraftsAtStation(withCrafts(next), action.placementId);
+      // ROUND 2K (docs/liveliness-bible.md §1.4/§1.5) — an attraction
+      // ALSO refunds its remaining feed charges (on top of the ordinary
+      // build-cost refund above — "tuck away never destroys value" for
+      // stock too), and its visitor record/stock/schedule are cleared: the
+      // next attraction placed on this tile starts fresh (bible §1.5,
+      // "the next visit rolls a fresh one"). `{}` for every non-attraction
+      // placement (the common case) — nothing below fires.
+      const remainingStock = attractionStockOf(state)[action.placementId] ?? 0;
+      if (remainingStock > 0) {
+        next = {
+          ...next,
+          resources: mergeCounts(
+            next.resources,
+            refundForRemainingStock(removed.itemId, remainingStock),
+          ),
+        };
+      }
+      next = clearAttractionState(withAttractions(next), action.placementId);
       // Defensive sweep for entries unassign could not heal (pip gone).
       return { ...next, jobs: reconcileJobs(next.jobs, next.pips, next.keep) };
+    }
+
+    case "FEED_VISITOR": {
+      const { state: next, outcome } = feedVisitor(
+        withAttractions(state),
+        action.placementId,
+        action.foodId,
+        action.at,
+      );
+      return { ...next, lastVisitorOutcome: outcome };
+    }
+
+    case "WELCOME_VISITOR": {
+      // Ids are minted here (`pip-<n>`), mirroring HATCH_EGG/BREED_PIPS —
+      // core/attractions never guesses at id allocation (spec §2 rule 5).
+      const rosterCap = rosterCapFor(state);
+      const newPipId: PipId = `pip-${state.nextPipNumber}`;
+      const { state: welcomed, outcome } = welcomeVisitor(
+        withAttractions(state),
+        action.placementId,
+        newPipId,
+        action.at,
+        rosterCap,
+      );
+      if (!outcome.ok) return { ...state, lastVisitorOutcome: outcome };
+      return {
+        ...welcomed,
+        nextPipNumber: state.nextPipNumber + 1,
+        lastVisitorOutcome: outcome,
+      };
+    }
+
+    case "RESTOCK_ATTRACTION": {
+      const { state: next, outcome } = restockAttraction(
+        withAttractions(state),
+        action.placementId,
+        action.at,
+      );
+      return { ...next, lastVisitorOutcome: outcome };
     }
 
     case "PURCHASE_KEEP_LEVEL": {

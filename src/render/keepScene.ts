@@ -102,6 +102,27 @@ import {
 import type { BlockingItemView, FootprintView, GridLayout } from "./gridLayout";
 import { isFlatItem, resolvePlaceableSprite } from "./placeableSprites";
 import type { PlaceableSprite } from "./placeableSprites";
+// ROUND 2K — THE LIVING KEEP (docs/liveliness-bible.md §4).
+//
+// ⚠️ THE PURITY CONTRACT IS INTACT AND THIS IMPORT IS THE PROOF SHAPE:
+// `app/daylight` and `app/weather` are PURE FUNCTIONS OF A NUMBER. The
+// scene never calls them — `app/main.ts` samples them from the ONE
+// injected `OffsetClock` and pushes the result in through `setDaylight`/
+// `setWeather`. That is what makes the debug time slider move the sky
+// (bible §4.2's acceptance criterion), and it is why this file imports
+// only the TYPES plus `mixHex`'s colour maths. Same render→app direction
+// `sound` already established above.
+import { daylightChangedEnough, mixHex } from "../app/daylight";
+import type { DaylightSample } from "../app/daylight";
+import { invitesPlay, leavesFootprints, seeksShelter } from "../app/weather";
+import type { WeatherSample } from "../app/weather";
+import { createAmbience } from "./ambience";
+import type { AmbienceLayer } from "./ambience";
+import { emitVisitorTap } from "./visitorTap";
+import { attractionBiomeIdFor, visitorIsPresent } from "../core/attractions";
+import type { VisitorRecord } from "../core/attractions";
+import { createPipFromGenome } from "../core/pips/genome";
+import { tuning as contentTuning } from "../content/tuning";
 
 export interface KeepScene {
   readonly view: Container;
@@ -142,6 +163,32 @@ export interface KeepScene {
    * ceremony is mid-flight. Idempotent while one is queued or marching.
    */
   playParade(): void;
+  /**
+   * ROUND 2K (docs/liveliness-bible.md §4.2) — push the current sky.
+   *
+   * Called by `app/main.ts` at `tuning.liveliness.daylight.sampleMs`
+   * (1 Hz) with `daylightAt(appClock.now(), state.dayOffsetMs)`. The
+   * scene NEVER asks what time it is; it is told. That is the whole
+   * reason the debug time slider turns the Keep to night — and the
+   * reason `core/` purity is untouched by a feature whose entire subject
+   * is the time of day.
+   *
+   * Cheap to call every second: the full-screen tint and the actors'
+   * shadow skew update every time, and `drawBackground` (a teardown and
+   * rebuild) fires only when `daylightChangedEnough` says the sky has
+   * actually moved — ~94 times a day, measured.
+   */
+  setDaylight(sample: DaylightSample): void;
+  /**
+   * ROUND 2K (docs/liveliness-bible.md §4.3) — push the current weather.
+   *
+   * ⚠️ MOOD ONLY (invariant I4). This changes particles, the sky's
+   * saturation, and where an idle Pip chooses to stand. It changes NO
+   * need, NO decay rate, NO loot table, NO risk, and no Pip's
+   * eligibility for anything. `app/weather.test.ts` greps `core/` to
+   * keep that true.
+   */
+  setWeather(sample: WeatherSample): void;
 }
 
 /** Pip-voiced refusals get the shake + line; structural blocks (cooldown,
@@ -294,11 +341,45 @@ export function createKeepScene(width: number, height: number): KeepScene {
   const world = new Container();
   world.sortableChildren = true;
   const ghostLayer = new Container();
+  /**
+   * ROUND 2K (docs/liveliness-bible.md §4.2) — THE DAYLIGHT OVERLAY.
+   *
+   * ONE full-screen Graphics whose tint and alpha ride the ramp. It sits
+   * ABOVE `world` deliberately: tinting above the scene multiplies the
+   * ground and the Pips TOGETHER, so contrast RATIOS survive — which is
+   * what `content/palette.test.ts` actually pins (body-vs-ground ≥ 1.95 /
+   * 1.76). Recolouring the ground instead would have darkened the
+   * backdrop while leaving the Pips bright, which is the pale-on-pale
+   * failure that has bitten this project twice.
+   *
+   * It sits BELOW `fxAbove` and the ambience layer on purpose too: at
+   * night the fireflies and the care-moment hearts should GLOW over the
+   * dark, not be dimmed into it.
+   *
+   * Never interactive — every tap must fall through to the world.
+   */
+  const daylightOverlay = new Graphics();
+  daylightOverlay.alpha = 0;
+  daylightOverlay.eventMode = "none";
   const fxAbove = new ParticleSystem(jitter);
   /** Evolution white-out. */
   const flashG = new Graphics();
   flashG.alpha = 0;
-  view.addChild(background, gridOverlay, world, ghostLayer, fxAbove.view, flashG);
+  const ambience: AmbienceLayer = createAmbience({
+    width,
+    height,
+    groundTop: Math.max(40, height * 0.3),
+  });
+  view.addChild(
+    background,
+    gridOverlay,
+    world,
+    ghostLayer,
+    daylightOverlay,
+    ambience.view,
+    fxAbove.view,
+    flashG,
+  );
 
   /** Scene-wide tweens (flash, ceremony timeline, placeable drops) —
    * never cleared by actor sprite rebuilds. */
@@ -319,10 +400,30 @@ export function createKeepScene(width: number, height: number): KeepScene {
   /** Depth tiebreak counter (stable y-sorting via creation order). */
   let seqCounter = 0;
 
+  /**
+   * ROUND 2K — the current sky and weather, as pushed in by main.ts.
+   *
+   * Both start at their no-op values so a scene that is NEVER told (every
+   * existing test, and the first frame before the first sample lands)
+   * renders EXACTLY what shipped before this round: `day` is
+   * byte-identical to `keepPalette` and `clear` costs nothing. This
+   * round cannot make the default look worse, and the default is what an
+   * un-wired scene draws.
+   */
+  let daylight: DaylightSample | null = null;
+  let weather: WeatherSample | null = null;
+  /** The sample `drawBackground` last painted — the redraw-threshold
+   * comparison lives in `app/daylight.daylightChangedEnough`, and this is
+   * the "a" it compares against. */
+  let paintedDaylight: DaylightSample | null = null;
+
   const pipScale = (): number =>
     Math.min(0.92, Math.max(0.34, (layout.tileW * 1.35) / PIP_BODY_WIDTH));
   const eggScale = (): number =>
     Math.min(1.1, Math.max(0.6, layout.tileW / 60));
+
+  /** Shorthand — round 2K reads this slice on nearly every frame. */
+  const tuningAmbience = contentTuning.liveliness.ambience;
 
   function dustPoof(x: number, y: number, scale = 1): void {
     fxAbove.burst({
@@ -354,15 +455,44 @@ export function createKeepScene(width: number, height: number): KeepScene {
     const gridW = layout.cols * layout.tileW;
 
     const g = new Graphics();
-    // Sky: soft pastel bands above the meadow.
-    g.rect(0, 0, w, gridTop * 0.55).fill(keepPalette.skyTop);
-    g.rect(0, gridTop * 0.55, w, gridTop * 0.3).fill("#dff0ef");
-    g.rect(0, gridTop * 0.85, w, h - gridTop * 0.85).fill(keepPalette.skyBottom);
-    // Sun glow.
-    g.circle(w * 0.78, gridTop * 0.34, Math.min(w, h) * 0.12).fill({
-      color: keepPalette.sunGlow,
-      alpha: 0.7,
-    });
+    // ROUND 2K (bible §4.2) — the three shipped sky bands and the sun
+    // glow now read off the daylight ramp. With no sample pushed in
+    // (`sky` falls back to the literals below) this is byte-identical to
+    // what shipped before the round, and `daylightAt`'s `day` anchor IS
+    // `keepPalette`, so it stays byte-identical at midday too.
+    const sky = daylight;
+    const desat = weather?.desaturate ?? 0;
+    // Overcast pulls the sky toward its own grey rather than toward
+    // white — a desaturated pastel, not a washed-out one.
+    const dull = (hex: string): string => (desat > 0 ? mixHex(hex, "#c3cbd0", desat * 3) : hex);
+    g.rect(0, 0, w, gridTop * 0.55).fill(dull(sky?.skyTop ?? keepPalette.skyTop));
+    g.rect(0, gridTop * 0.55, w, gridTop * 0.3).fill(dull(sky?.skyMid ?? "#dff0ef"));
+    g.rect(0, gridTop * 0.85, w, h - gridTop * 0.85).fill(
+      dull(sky?.skyBottom ?? keepPalette.skyBottom),
+    );
+    // Sun glow — becomes the moon on the night anchor: a smaller, cooler
+    // disc with a soft ring around it.
+    const discX = w * (sky?.sunX ?? 0.78);
+    const discY = gridTop * ((sky?.sunY ?? 0.34) / 0.34) * 0.34;
+    const discR = Math.min(w, h) * 0.12 * (sky?.sunScale ?? 1);
+    const discAlpha = 0.7 * (weather?.sunGlowScale ?? 1);
+    if (sky?.isMoon === true) {
+      g.circle(discX, discY, discR * 1.9).fill({
+        color: sky.sunColor,
+        alpha: discAlpha * 0.16,
+      });
+      g.circle(discX, discY, discR).fill({ color: sky.sunColor, alpha: discAlpha });
+      // A crescent bite, so the moon reads as a moon and not a pale sun.
+      g.circle(discX + discR * 0.42, discY - discR * 0.3, discR * 0.86).fill({
+        color: dull(sky.skyTop),
+        alpha: 0.92,
+      });
+    } else {
+      g.circle(discX, discY, discR).fill({
+        color: sky?.sunColor ?? keepPalette.sunGlow,
+        alpha: discAlpha,
+      });
+    }
     // Far hills hugging the horizon.
     g.ellipse(w * 0.2, gridTop * 0.98, w * 0.45, gridTop * 0.22).fill(
       keepPalette.hillFar,
@@ -493,10 +623,29 @@ export function createKeepScene(width: number, height: number): KeepScene {
      * a thing you have to remember to go and check.
      */
     craftRing: Graphics | null;
+    /**
+     * ROUND 2K (docs/liveliness-bible.md §4.2) — the dusk glow, created
+     * lazily for a `lantern`/`flame`-motif item and nothing else.
+     *
+     * ⚠️ THIS IS THE BEST BEAT IN §4.2, and it is worth stating why: the
+     * thing that notices the time is a thing the PLAYER BUILT. A sky that
+     * changes on its own is scenery; a lantern that wakes up because the
+     * sun went down is the Keep responding.
+     */
+    lanternGlow: Graphics | null;
+    /**
+     * ROUND 2K (bible §1.4) — the feed-charge ring on an attraction, so
+     * an empty one reads IN THE WORLD and not only on a card. Created
+     * lazily for attractions and nothing else.
+     */
+    stockRing: Graphics | null;
   }
 
   const placeableVisuals = new Map<string, PlaceableVisual>();
   let placeablesInit = false;
+
+  /** Motifs whose items light up after dark (bible §4.2). */
+  const LANTERN_MOTIFS: ReadonlySet<string> = new Set(["lantern", "flame"]);
 
   /** Placed item ids that host a `"crafting"`-kind job — the same registry
    * scan `core/crafting` and `ui/crafting.ts` each do. A second crafting
@@ -539,6 +688,91 @@ export function createKeepScene(width: number, height: number): KeepScene {
       ring
         .arc(0, cy, r, -Math.PI / 2, -Math.PI / 2 + t * Math.PI * 2)
         .stroke({ width: Math.max(2, r * 0.16), color: 0xf6b73c, alpha: 0.95 });
+    }
+  }
+
+  /**
+   * ROUND 2K (bible §4.2) — fade every lantern-motif item's glow to the
+   * current `lanternGlow` (0 by day, 1 deep at night).
+   *
+   * Called from `setDaylight`, i.e. once a second, and it is one alpha
+   * write per lantern (≤ 6 in practice). The glow Graphics itself is
+   * built once and reused; a phase flip changes a number, never the
+   * scene graph.
+   */
+  function syncLanternGlow(): void {
+    const target = daylight?.lanternGlow ?? 0;
+    for (const v of placeableVisuals) {
+      const visual = v[1];
+      const motif = ITEM_MOTIF[visual.itemId];
+      if (motif === undefined || !LANTERN_MOTIFS.has(motif)) continue;
+      let glow = visual.lanternGlow;
+      if (glow === null) {
+        if (target <= 0.001) continue; // never built for a Keep that is always day
+        glow = new Graphics();
+        const r = layout.tileW * 0.5;
+        for (const [fraction, alpha] of [
+          [1, 0.1],
+          [0.62, 0.16],
+          [0.32, 0.26],
+        ] as const) {
+          glow.circle(0, -layout.tileH * 0.75, r * fraction).fill({
+            color: 0xffd88a,
+            alpha,
+          });
+        }
+        glow.alpha = 0;
+        // Behind the lantern's own art, so it reads as light spilling out
+        // rather than as a sticker over the top.
+        visual.sprite.wrap.addChildAt(glow, 0);
+        visual.lanternGlow = glow;
+      }
+      glow.alpha = target;
+    }
+  }
+
+  /**
+   * ROUND 2K (bible §1.4, visibility table's "Stock" row) — the feed
+   * ring on an attraction.
+   *
+   * ⚠️ AN EMPTY ATTRACTION MUST READ IN THE WORLD, not only on a card.
+   * The alternative — stock that exists only inside the item card — is
+   * the same failure mode as a visitor written to state and never drawn:
+   * the player would have to go looking for a fact the Keep already knows.
+   * Four soft pips around the item's head; the spent ones go hollow.
+   *
+   * NO BADGE, NO TOAST, NO NOTIFICATION (bible §1.8 item 8: never nag
+   * about stock). An empty attraction costs the player nothing — it just
+   * stops drawing visitors — so the surface is quiet by design.
+   */
+  function syncStockRing(v: PlaceableVisual, stock: number | null): void {
+    if (stock === null) {
+      if (v.stockRing !== null) {
+        v.stockRing.destroy();
+        v.stockRing = null;
+      }
+      return;
+    }
+    let ring = v.stockRing;
+    if (ring === null) {
+      ring = new Graphics();
+      v.sprite.wrap.addChild(ring);
+      v.stockRing = ring;
+    }
+    const max = contentTuning.attractions.stockMax;
+    const r = Math.max(2.2, layout.tileW * 0.05);
+    const gap = r * 2.9;
+    const cy = -layout.tileH * 1.45;
+    const x0 = -((max - 1) * gap) / 2;
+    ring.clear();
+    for (let i = 0; i < max; i++) {
+      const filled = i < stock;
+      ring.circle(x0 + i * gap, cy, r);
+      if (filled) {
+        ring.fill({ color: 0xf6d99b, alpha: 0.95 });
+      } else {
+        ring.fill({ color: 0x3a3a32, alpha: 0.14 });
+      }
     }
   }
 
@@ -620,6 +854,8 @@ export function createKeepScene(width: number, height: number): KeepScene {
           y: placement.y,
           dropTween: null,
           craftRing: null,
+          lanternGlow: null,
+          stockRing: null,
         };
         placeableVisuals.set(pid, v);
         world.addChild(sprite.view);
@@ -648,6 +884,13 @@ export function createKeepScene(width: number, height: number): KeepScene {
       }
       const elapsed = state.lastTickAt - order.startedAt;
       syncCraftRing(v, elapsed / order.effectiveMs);
+    }
+
+    // ROUND 2K — the attraction feed ring, refreshed on the same cadence.
+    const stock = state.attractionStock ?? {};
+    for (const [pid, v] of placeableVisuals) {
+      if (!isAttraction(v.itemId)) continue;
+      syncStockRing(v, stock[pid] ?? 0);
     }
 
     for (const [pid, v] of placeableVisuals) {
@@ -723,6 +966,47 @@ export function createKeepScene(width: number, height: number): KeepScene {
     /** Marching in the conga (position driven by updateParade). */
     parading: boolean;
     helloBubble: Container | null;
+    /**
+     * ROUND 2K (docs/liveliness-bible.md §1.5) — set on a VISITOR actor,
+     * null on every roster Pip. A visitor uses the SAME rig, the same
+     * wander, the same idle set and the same jitter as a roster Pip
+     * (which is the point — it must read as a real, individual Pip on
+     * sight), and differs only in: no selection ring, a lighter contact
+     * shadow, a drifting motif, a tap that opens the Visitor card instead
+     * of the focus view, and an arrival/exit that walks the screen edge.
+     */
+    visitor: VisitorActor | null;
+    /**
+     * ROUND 2K (bible §4.4) — THE HIGHEST DELIGHT-PER-FRAME ITEM IN THE
+     * ROUND, and it costs ZERO display objects. > 0 while the actor is
+     * mid-interaction with a placed item it walked over to look at;
+     * `decorMotif` is the item's `icon.motif`, which picks WHICH
+     * interaction plays.
+     */
+    decorHoldMs: number;
+    decorMotif: string | null;
+    /** How long this actor has been standing still and unoccupied — the
+     * greeting rule's "both idle ≥ 1.5 s" precondition (bible §4.5). */
+    idleMs: number;
+    /** > 0 while mid-greeting: stops the amble so the two actually face
+     * each other instead of drifting apart mid-hello. */
+    greetHoldMs: number;
+    /** Steps since this actor last dropped a footprint (snow only). */
+    footprintCooldownMs: number;
+  }
+
+  /** The visitor-specific half of a visitor Actor (bible §1.5). */
+  interface VisitorActor {
+    readonly placementId: string;
+    readonly itemId: string;
+    /** Where the attraction stands — what the visitor loiters around. */
+    home: { x: number; y: number };
+    /** Walking back off the edge at `leavesAt`; destroyed on arrival. */
+    leaving: boolean;
+    /** Trust as of the last sync — drives the ready-to-welcome glow. */
+    trust: number;
+    /** Motif drift timer (the "not yours" tell, bible §1.5 item 2). */
+    motifInMs: number;
   }
 
   const actors = new Map<string, Actor>();
@@ -811,7 +1095,13 @@ export function createKeepScene(width: number, height: number): KeepScene {
     return tileCenter(layout, tile.x, tile.y);
   }
 
-  function createActor(pip: PipState): Actor {
+  /**
+   * @param spawnAt ROUND 2K — override the random free-tile spawn (and
+   *   the arrival dust with it). A visitor enters from off-screen and
+   *   WALKS in; a puff of dust at the screen edge would read as something
+   *   materialising there, which is the opposite of "came a long way".
+   */
+  function createActor(pip: PipState, spawnAt?: { x: number; y: number }): Actor {
     const root = new Container();
     const ring = new Graphics();
     ring.visible = false;
@@ -819,7 +1109,7 @@ export function createKeepScene(width: number, height: number): KeepScene {
     glow.alpha = 0;
     root.addChild(ring, glow);
 
-    const pos = spawnPos(pip);
+    const pos = spawnAt ?? spawnPos(pip);
     const actor: Actor = {
       pip,
       sprite: resolveActorSprite(pip),
@@ -861,6 +1151,12 @@ export function createKeepScene(width: number, height: number): KeepScene {
       suppressRebuild: false,
       parading: false,
       helloBubble: null,
+      visitor: null,
+      decorHoldMs: 0,
+      decorMotif: null,
+      idleMs: 0,
+      greetHoldMs: 0,
+      footprintCooldownMs: 0,
     };
     attachSprite(actor);
     root.position.set(actor.x, actor.y);
@@ -868,12 +1164,15 @@ export function createKeepScene(width: number, height: number): KeepScene {
     world.addChild(root);
 
     // Arrival: a little dust + hello wiggle (alive from frame one).
-    dustPoof(actor.x, actor.y, 0.8);
-    squashStretch(actor.runner, actor.sprite.rig, {
-      amount: 0.12,
-      cycleMs: 180,
-      cycles: 2,
-    });
+    // Skipped for an off-screen spawn — see `spawnAt`'s doc.
+    if (spawnAt === undefined) {
+      dustPoof(actor.x, actor.y, 0.8);
+      squashStretch(actor.runner, actor.sprite.rig, {
+        amount: 0.12,
+        cycleMs: 180,
+        cycles: 2,
+      });
+    }
     return actor;
   }
 
@@ -1026,7 +1325,122 @@ export function createKeepScene(width: number, height: number): KeepScene {
     return false;
   }
 
+  /**
+   * ROUND 2K (bible §4.4) — the item an idle Pip wanders over to look at.
+   *
+   * ⚠️ THIS IS THE ROUND'S BEST DELIGHT-PER-FRAME-COST ITEM AND IT COSTS
+   * ZERO DISPLAY OBJECTS: one extra branch when picking a wander target,
+   * roughly once every three seconds per actor. It is also the thing that
+   * retroactively pays off round 2F's 45 build items — the answer to "why
+   * did I build that" becomes "because someone sits on it".
+   *
+   * Returns the placement to visit, or null to fall through to an
+   * ordinary free tile.
+   */
+  function pickDecorInterest(
+    state: GameState,
+  ): { pid: string; itemId: string; x: number; y: number } | null {
+    const entries = Object.entries(state.keep.placements);
+    if (entries.length === 0) return null;
+    const picked = entries[jitter.int(entries.length)];
+    if (picked === undefined) return null;
+    const [pid, placement] = picked;
+    if (ITEM_MOTIF[placement.itemId] === undefined) return null;
+    return { pid, itemId: placement.itemId, x: placement.x, y: placement.y };
+  }
+
+  /**
+   * ROUND 2K (bible §4.3) — the nearest thing to stand under when it
+   * rains: an `arch`, a `nest`, a `bench`, or a Bed.
+   *
+   * ⚠️ SHELTERING IS A BEHAVIOUR, NOT A MECHANIC (invariant I4). A
+   * sheltering Pip's needs, decay, mood, job production and expedition
+   * eligibility are byte-identical to a wandering one's — this function
+   * changes where an actor stands and nothing else. It is nonetheless the
+   * best thing in §4.3, because Pips running for the arch is worth more
+   * than the rain is.
+   */
+  const SHELTER_MOTIFS: ReadonlySet<string> = new Set(["arch", "nest", "bench"]);
+
+  function pickShelter(
+    state: GameState,
+  ): { x: number; y: number } | null {
+    let best: { x: number; y: number } | null = null;
+    for (const placement of Object.values(state.keep.placements)) {
+      const motif = ITEM_MOTIF[placement.itemId];
+      if (placement.itemId !== "bed" && (motif === undefined || !SHELTER_MOTIFS.has(motif))) {
+        continue;
+      }
+      const anchor = footprintAnchor(layout, placement.x, placement.y, footprintOf(placement.itemId));
+      if (best === null) best = { x: anchor.x, y: anchor.y };
+    }
+    return best;
+  }
+
   function pickRoamTarget(actor: Actor, state: GameState): void {
+    // ROUND 2K — a VISITOR loiters at the attraction that drew it here
+    // (bible §1.5 item 3: "not stationary and not on rails"). Same
+    // gravitation the Food Bowl already uses, keyed to its own home.
+    const visiting = actor.visitor;
+    if (visiting !== null) {
+      if (visiting.leaving) {
+        actor.target = edgePointNear({ x: actor.x, y: actor.y });
+        actor.pauseMs = 0;
+        return;
+      }
+      const homeTile = worldToTile(layout, visiting.home.x, visiting.home.y);
+      const near = pickFreeTile(jitter, layout.cols, layout.rows, blockedTiles, {
+        near: homeTile,
+        maxDist: 2,
+      });
+      if (near !== null) actor.target = tileCenter(layout, near.x, near.y);
+      actor.pauseMs = 0;
+      return;
+    }
+
+    // ROUND 2K — rain sends everyone for cover, before anything else
+    // (there is no point admiring the lantern in a downpour).
+    if (weather !== null && seeksShelter(weather.kind) && jitter.chance(0.5)) {
+      const shelter = pickShelter(state);
+      if (shelter !== null) {
+        actor.target = { x: shelter.x, y: shelter.y + layout.tileH * 0.35 };
+        actor.pauseMs = 0;
+        return;
+      }
+    }
+
+    // ⚠️ ROUND 2K FIX STAGE — petalfall's behavioural half, which was
+    // WRITTEN AND NEVER HOOKED UP. `invitesPlay` shipped as an import in
+    // this file and nothing else: `grep -c invitesPlay` returned 1, the
+    // import line. Its own doc reads "Is there something in the air worth
+    // batting at? (petalfall.)", so the beat was designed — rain's
+    // `seeksShelter` and snow's `leavesFootprints` are both wired, and
+    // petalfall alone was left inert. That is the tenth instance of this
+    // project's signature defect, in the very round whose brief was to
+    // close the ninth. `tsconfig.json` sets no `noUnusedLocals`, so
+    // nothing complained.
+    if (weather !== null && invitesPlay(weather.kind) && jitter.chance(0.35)) {
+      playPetalChase(actor);
+      return;
+    }
+
+    // ROUND 2K — decoration interest.
+    if (jitter.chance(contentTuning.liveliness.ambience.decorInterestChance)) {
+      const interest = pickDecorInterest(state);
+      if (interest !== null) {
+        const anchor = footprintAnchor(
+          layout,
+          interest.x,
+          interest.y,
+          footprintOf(interest.itemId),
+        );
+        actor.target = { x: anchor.x, y: anchor.y + layout.tileH * 0.4 };
+        actor.decorMotif = ITEM_MOTIF[interest.itemId] ?? null;
+        actor.pauseMs = 0;
+        return;
+      }
+    }
+
     const hungry = actor.pip.needs.hunger < 40;
     const bowls = hungry ? findPlacement(state, "food-bowl") : [];
     const bowl = bowls[0];
@@ -1038,6 +1452,177 @@ export function createKeepScene(width: number, height: number): KeepScene {
     });
     if (tile !== null) actor.target = tileCenter(layout, tile.x, tile.y);
     actor.pauseMs = 0;
+  }
+
+  /**
+   * ROUND 2K (bible §4.4) — the ~2 s interaction an actor plays on
+   * arriving at an item it walked over to look at. Sixteen motifs cover
+   * the entire 45-item catalogue with ZERO new content authoring, and
+   * every future item inherits one the moment it is given an icon.
+   *
+   * Every branch reuses an animation channel that already exists
+   * (`anim.y`, `anim.rot`, the squash runner, the particle pool), so the
+   * whole table costs no new objects and no new tween machinery.
+   */
+  /**
+   * ⚠️ ROUND 2K FIX STAGE — the petalfall reaction `invitesPlay` was
+   * written for and never given.
+   *
+   * A Pip stops where it is, rears up and bats at a petal going past. It
+   * costs ZERO new display objects and no new tween machinery, exactly
+   * like every branch of `playDecorInteraction` below: the hop rides
+   * `anim.y`/`anim.rot`, and the petals come out of the pooled emitter
+   * `fxAbove` using the same `keepPalette.flowerPetals` the falling motes
+   * are drawn from — so the thing the Pip swats at is visibly the thing
+   * that is falling.
+   */
+  function playPetalChase(actor: Actor): void {
+    const s = visualScale(actor);
+    actor.decorHoldMs = contentTuning.liveliness.ambience.decorInteractionMs;
+    actor.pauseMs = 0;
+    fxAbove.burst({
+      x: actor.x + 10 * actor.facing * s,
+      y: actor.y - 34 * s,
+      count: 4,
+      shape: "dot",
+      colors: [...keepPalette.flowerPetals],
+      speed: 60,
+      directionRad: -Math.PI / 2,
+      spreadRad: Math.PI * 0.9,
+      gravity: 90,
+      lifeMs: 700,
+      sizeMin: 2,
+      sizeMax: 3.6,
+    });
+    actor.runner.add({
+      durationMs: 1100,
+      ease: easeInOut,
+      onUpdate: (t) => {
+        // Two swipes: up on the toes, a little lean into each one.
+        const swipe = Math.sin(t * Math.PI * 2);
+        actor.anim.y = -Math.abs(Math.sin(t * Math.PI * 2)) * 6 * s;
+        actor.anim.rot = swipe * 0.14 * actor.facing;
+      },
+      onComplete: () => {
+        actor.anim.y = 0;
+        actor.anim.rot = 0;
+      },
+    });
+  }
+
+  function playDecorInteraction(actor: Actor, motif: string): void {
+    const s = visualScale(actor);
+    actor.decorHoldMs = contentTuning.liveliness.ambience.decorInteractionMs;
+    switch (motif) {
+      case "droplet":
+        // A splash, with two dust-blue drops.
+        fxAbove.burst({
+          x: actor.x,
+          y: actor.y,
+          count: 6,
+          shape: "dot",
+          colors: ["#bfe6ef", "#e8f6fa"],
+          speed: 90,
+          directionRad: -Math.PI / 2,
+          spreadRad: Math.PI * 0.8,
+          gravity: 260,
+          lifeMs: 520,
+          sizeMin: 2,
+          sizeMax: 3.4,
+        });
+        squashStretch(actor.runner, actor.sprite.rig, { amount: 0.2, cycleMs: 200, cycles: 2 });
+        break;
+      case "nest":
+        // Curl up for one slow breath.
+        actor.runner.add({
+          durationMs: 1600,
+          ease: easeInOut,
+          onUpdate: (t) => {
+            actor.anim.y = Math.sin(t * Math.PI) * 4 * s;
+            actor.anim.rot = Math.sin(t * Math.PI) * 0.05;
+          },
+        });
+        break;
+      case "leaf":
+        // Sniff: lean forward, ears (such as they are) first.
+        actor.runner.add({
+          durationMs: 900,
+          ease: easeInOut,
+          onUpdate: (t) => {
+            actor.anim.rot = Math.sin(t * Math.PI) * 0.16 * actor.facing;
+            actor.anim.y = Math.sin(t * Math.PI) * 3 * s;
+          },
+        });
+        break;
+      case "lantern":
+      case "flame":
+        // Sit and stare at it. The stillness IS the animation.
+        actor.runner.add({
+          durationMs: 1800,
+          ease: linear,
+          onUpdate: (t) => {
+            actor.anim.y = Math.sin(t * Math.PI * 2) * 1.2 * s;
+          },
+        });
+        break;
+      case "stone":
+        // Lean against it.
+        actor.runner.add({
+          durationMs: 1700,
+          ease: easeInOut,
+          onUpdate: (t) => {
+            actor.anim.rot = Math.sin(Math.min(1, t * 2) * Math.PI * 0.5) * 0.13 * actor.facing;
+          },
+          onComplete: () => {
+            actor.anim.rot = 0;
+          },
+        });
+        break;
+      case "post":
+        squashStretch(actor.runner, actor.sprite.rig, { amount: 0.22, cycleMs: 170, cycles: 4 });
+        break;
+      case "bowl":
+      case "basket":
+      case "pot":
+      case "bench":
+        rummage(actor);
+        break;
+      case "arch":
+        // Walk through and pause on the far side.
+        actor.runner.add({
+          durationMs: 900,
+          ease: easeInOut,
+          onUpdate: (t) => {
+            actor.anim.x = actor.facing * 18 * s * t;
+          },
+        });
+        break;
+      case "chime":
+        sound("ui.tap");
+        actor.runner.add({
+          durationMs: 700,
+          ease: easeOut,
+          onUpdate: (t) => {
+            actor.anim.x = Math.sin(t * Math.PI * 4) * 5 * (1 - t) * s;
+          },
+        });
+        break;
+      default: {
+        // shell / snowflake / spark and anything a future item invents:
+        // a small delighted hop. An unknown motif is VISIBLE, never inert.
+        actor.runner.add({
+          durationMs: 420,
+          ease: easeOut,
+          onUpdate: (t) => {
+            actor.anim.y = -Math.sin(t * Math.PI) * 16 * s;
+          },
+          onComplete: () => {
+            actor.anim.y = 0;
+          },
+        });
+        break;
+      }
+    }
   }
 
   /** One produced-item pop over the station (cosmetic — real production
@@ -1139,8 +1724,18 @@ export function createKeepScene(width: number, height: number): KeepScene {
     const idle = MOOD_IDLE[actor.mood];
 
     // --- Movement / behavior (frozen during ceremony + care moments +
-    // the conga, whose updateParade drives positions directly) ---
-    const frozen = actor.ceremony || actor.careHoldMs > 0 || actor.parading;
+    // the conga, whose updateParade drives positions directly, and — new
+    // in round 2K — while mid-interaction with a decoration or mid-hello
+    // with another Pip: both are moments, and a moment you amble away
+    // from is not a moment) ---
+    if (actor.decorHoldMs > 0) actor.decorHoldMs -= dtMs;
+    if (actor.greetHoldMs > 0) actor.greetHoldMs -= dtMs;
+    const frozen =
+      actor.ceremony ||
+      actor.careHoldMs > 0 ||
+      actor.parading ||
+      actor.decorHoldMs > 0 ||
+      actor.greetHoldMs > 0;
     if (!frozen) {
       refreshMode(actor, state);
       if (actor.target !== null) {
@@ -1148,7 +1743,19 @@ export function createKeepScene(width: number, height: number): KeepScene {
         if (arrived) {
           actor.anim.rot = 0;
           if (actor.mode === "roam") {
-            actor.pauseMs = 1400 + jitter.int(2800);
+            // ROUND 2K — arrived at something worth looking at.
+            const motif = actor.decorMotif;
+            actor.decorMotif = null;
+            if (motif !== null) {
+              playDecorInteraction(actor, motif);
+            }
+            // Night makes an Idle Pip likelier to settle than to set off
+            // again: the pause between wanders stretches (bible §4.2).
+            const nightBias =
+              daylight?.phase === "night"
+                ? contentTuning.liveliness.daylight.nightSettleBias
+                : 1;
+            actor.pauseMs = (1400 + jitter.int(2800)) * nightBias;
           } else {
             actor.seated = true;
             if (actor.mode === "work") {
@@ -1175,8 +1782,55 @@ export function createKeepScene(width: number, height: number): KeepScene {
       actor.walkBob = 0;
     }
 
+    // --- ROUND 2K: the visitor's own beats ------------------------------
+    const visiting = actor.visitor;
+    if (visiting !== null) {
+      if (visiting.leaving && actor.target === null) {
+        // Reached the edge: the visit is genuinely over. No dust poof —
+        // they walked out, they did not evaporate.
+        actors.delete(`${VISITOR_ACTOR_PREFIX}${visiting.placementId}`);
+        actor.runner.clear();
+        actor.helloBubble?.destroy({ children: true });
+        actor.sprite.destroy();
+        actor.root.removeFromParent();
+        actor.root.destroy({ children: true });
+        return;
+      }
+      // The drifting motif — keyed off the ATTRACTION's icon, so what
+      // drifts around a visitor tells you which thing drew it here.
+      visiting.motifInMs -= dtMs;
+      if (visiting.motifInMs <= 0) {
+        visiting.motifInMs = 2600 + jitter.int(2400);
+        visitorMotifPuff(actor);
+      }
+      // At full trust they carry a soft, NON-PULSING glow: "ready", never
+      // "urgent" (2C §0.3 bans urgency surfaces as a category).
+      const ready = visitorReadyToWelcome(actor);
+      const targetGlow = ready ? 0.5 : 0;
+      actor.glow.alpha += (targetGlow - actor.glow.alpha) * 0.06;
+    }
+
+    // --- ROUND 2K: snow keeps a record of where everyone went -----------
+    if (
+      weather !== null &&
+      leavesFootprints(weather.kind) &&
+      actor.target !== null &&
+      !frozen
+    ) {
+      actor.footprintCooldownMs -= dtMs;
+      if (actor.footprintCooldownMs <= 0) {
+        actor.footprintCooldownMs = 260;
+        dropFootprint(actor);
+      }
+    }
+
     // --- Idle juice (bob, blink, wiggle) --------------------------------
     const walking = actor.target !== null && !frozen;
+    // ROUND 2K — how long this actor has been standing still and
+    // unoccupied. The greeting rule's "both idle ≥ 1.5 s" precondition
+    // (bible §4.5): it stops two Pips who merely pass each other
+    // mid-stride from stopping dead to say hello.
+    actor.idleMs = walking || frozen ? 0 : actor.idleMs + dtMs;
     actor.bobPhase += (dtMs / 1000) * (resting ? 1.6 : idle.bobSpeed);
     const bobAmp = sulking ? 0.8 : resting ? 1.6 : idle.bobAmp;
     const bobY = walking
@@ -1203,7 +1857,13 @@ export function createKeepScene(width: number, height: number): KeepScene {
         actor.blinkInMs -= dtMs;
         if (actor.blinkInMs <= 0) {
           actor.blinkT = 0;
-          actor.blinkInMs = 2000 + jitter.int(2800);
+          // ROUND 2K (bible §4.2) — blinks stretch at night. A sleepy
+          // Keep is a night-time Keep, and this costs one multiply.
+          const nightBlink =
+            daylight?.phase === "night"
+              ? contentTuning.liveliness.daylight.nightBlinkMultiplier
+              : 1;
+          actor.blinkInMs = (2000 + jitter.int(2800)) * nightBlink;
         }
         actor.eyesCurrent += (eyesTarget - actor.eyesCurrent) * 0.25;
       }
@@ -1376,6 +2036,19 @@ export function createKeepScene(width: number, height: number): KeepScene {
       ? actor.slumpRot
       : Math.max(actor.slumpRot, idle.slumpRad);
     actor.sprite.rig.rotation = postureSlump + actor.anim.rot;
+    // ROUND 2K (bible §4.2) — THE SHADOW SKEW. Two float writes, and the
+    // single cheapest thing that makes the light read as REAL rather than
+    // as a colour filter over the top: at dawn the shadows fall long to
+    // the right, at dusk long to the left, and at noon they sit under
+    // everyone. `sunAngle` is -1 (hard left) .. +1 (hard right), so the
+    // shadow leans the OPPOSITE way to the light.
+    if (daylight !== null) {
+      const skew = tuningAmbience.shadowSkewMax;
+      const stretch = tuningAmbience.shadowStretchMax;
+      const lean = -daylight.sunAngle;
+      actor.sprite.shadow.x = lean * PIP_BODY_WIDTH * 0.5 * skew;
+      actor.sprite.shadow.scale.x = 1 + Math.abs(lean) * stretch;
+    }
     actor.root.position.set(actor.x, actor.y);
     actor.root.zIndex = actor.seated && actor.seatZ !== null ? actor.seatZ : actor.y;
     if (actor.helloBubble !== null && !actor.helloBubble.destroyed) {
@@ -1736,8 +2409,409 @@ export function createKeepScene(width: number, height: number): KeepScene {
     }
     for (const [id, actor] of actors) {
       if (present.has(id)) continue;
+      if (actor.visitor !== null) continue; // visitors are synced below
       actors.delete(id);
       destroyActor(actor);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // ROUND 2K — VISITORS (docs/liveliness-bible.md §1.5)
+  // -------------------------------------------------------------------------
+  //
+  // ⚠️ THIS SECTION IS THE DIFFERENCE BETWEEN THE FEATURE AND THE TENTH
+  // DEAD FEATURE. `state.visitors[placementId]` is written by
+  // `core/attractions` on every TICK and CATCHUP whether or not one line
+  // of this file exists; spec §16 v1.3's standing rule — "written to
+  // state" and "visible to the player" are SEPARATE acceptance criteria —
+  // has been earned nine times, and a visitor nobody can see would have
+  // earned it a tenth.
+  //
+  // A visitor is a full Actor: same `resolvePipSprite` rig, same jitter,
+  // same accessory, same pattern, same shininess, same wander, same idle
+  // set. That is deliberate — bible §1.5's "a real, individual, jittered,
+  // accessorised Pip on sight". It differs ONLY in the four "not yours"
+  // tells (no selection ring, lighter shadow, a drifting motif, a
+  // different card on tap) and in walking in from, and back out to, the
+  // screen edge.
+
+  /** `state.visitors` key → its actor. Lives in the same `actors` map (so
+   * it y-sorts, updates and taps identically) under a namespaced id that
+   * can never collide with a real `pip-<n>`. */
+  const VISITOR_ACTOR_PREFIX = "visitor:";
+
+  /** Every catalogue item's `icon.motif` — the field bible §4.4 keys the
+   * whole interaction table off, and which already exists on all 45
+   * shipped items, so every FUTURE item inherits an interaction the
+   * moment it is given an icon. */
+  const ITEM_MOTIF: Readonly<Record<string, string>> = (() => {
+    const out: Record<string, string> = {};
+    for (const def of [...contentPlaceables, ...contentDecorations]) {
+      out[def.id] = def.icon.motif;
+    }
+    return out;
+  })();
+
+  /** Attraction item id → the biome it draws from. Read structurally off
+   * the SAME `attraction` effect core reads, so a content pass that adds
+   * a seventh attraction needs no render change. */
+  const ATTRACTION_BIOME: Readonly<Record<string, string>> = (() => {
+    const out: Record<string, string> = {};
+    for (const def of contentPlaceables) {
+      const biomeId = attractionBiomeIdFor(def.id, { [def.id]: def });
+      if (biomeId !== undefined) out[def.id] = biomeId;
+    }
+    return out;
+  })();
+
+  const isAttraction = (itemId: string): boolean => ATTRACTION_BIOME[itemId] !== undefined;
+
+  /**
+   * A `VisitorRecord` rendered as a Pip.
+   *
+   * `createPipFromGenome` is the SAME constructor `WELCOME_VISITOR` uses,
+   * so what the player sees loitering by the Clover Ring is pixel-for-
+   * pixel the Pip they get if they ask it to stay. Building it here
+   * (rather than inventing a sprite-shaped object) is what makes that
+   * promise structural: there is no second code path to drift.
+   *
+   * The id is namespaced so it can never collide with a roster `pip-<n>`
+   * — `computeJitter` keys off the id, so a visitor's freckles are its
+   * own and stay its own across every reload.
+   */
+  function visitorPip(placementId: string, record: VisitorRecord): PipState {
+    return createPipFromGenome(record.genome, {
+      id: `${VISITOR_ACTOR_PREFIX}${placementId}`,
+      name: record.name,
+      hatchedAt: record.arrivedAt,
+      lifeStage: LifeStage.Adult,
+    });
+  }
+
+  /** The point a visitor loiters around: its attraction's anchor. */
+  function attractionAnchor(placementId: string, state: GameState): { x: number; y: number } | null {
+    const placement = state.keep.placements[placementId];
+    if (placement === undefined) return null;
+    const anchor = footprintAnchor(
+      layout,
+      placement.x,
+      placement.y,
+      footprintOf(placement.itemId),
+    );
+    return { x: anchor.x, y: anchor.y };
+  }
+
+  /** The nearest screen edge to `pos` — where a visitor walks in from and
+   * back out to (bible §1.5 items 1 and 4). */
+  function edgePointNear(pos: { x: number; y: number }): { x: number; y: number } {
+    const leftDist = pos.x;
+    const rightDist = w - pos.x;
+    const margin = layout.tileW * 1.5;
+    return leftDist <= rightDist
+      ? { x: -margin, y: pos.y }
+      : { x: w + margin, y: pos.y };
+  }
+
+  /**
+   * The drifting motif — the "not yours" tell that costs no persistent
+   * object (bible §1.5 item 2). Three slow petals for a leaf motif, snow
+   * motes for a snowflake, a faint glow for a lantern: keyed off the
+   * ATTRACTION'S own icon, so what drifts around the visitor tells you
+   * which thing drew it here.
+   */
+  function visitorMotifPuff(actor: Actor): void {
+    const v = actor.visitor;
+    if (v === null) return;
+    const motif = ITEM_MOTIF[v.itemId] ?? "leaf";
+    const colors =
+      motif === "snowflake"
+        ? ["#ffffff", "#e6f1ff"]
+        : motif === "lantern" || motif === "flame" || motif === "spark"
+          ? ["#ffe9a3", "#ffd479"]
+          : motif === "shell" || motif === "droplet"
+            ? ["#bfe6ef", "#e8f6fa"]
+            : [...keepPalette.flowerPetals];
+    const s = visualScale(actor);
+    fxAbove.burst({
+      x: actor.x + actor.facing * layout.tileW * 0.35,
+      y: actor.y + actor.sprite.headTopY * s * 0.6,
+      count: 3,
+      shape: "dot",
+      colors,
+      speed: 16,
+      directionRad: -Math.PI / 2,
+      spreadRad: Math.PI * 0.9,
+      gravity: -6,
+      lifeMs: 1500,
+      sizeMin: 2,
+      sizeMax: 3.4,
+    });
+  }
+
+  function createVisitorActor(
+    placementId: string,
+    record: VisitorRecord,
+    state: GameState,
+  ): Actor | null {
+    const home = attractionAnchor(placementId, state);
+    if (home === null) return null;
+    const placement = state.keep.placements[placementId];
+    if (placement === undefined) return null;
+
+    const pip = visitorPip(placementId, record);
+    // Spawn OFF-SCREEN at the nearest edge, then walk in. `createActor`
+    // would otherwise drop it on a random free tile with a puff of dust,
+    // which is the arrival of something that hatched, not of something
+    // that came a long way.
+    const entry = edgePointNear(home);
+    const actor = createActor(pip, { x: entry.x, y: home.y });
+    // Claim "roam" BEFORE the first `refreshMode` runs. Otherwise the
+    // mode transition from "" to "roam" would null the walk-in target on
+    // frame one and the visitor would materialise at the screen edge and
+    // stroll off to a random tile instead of heading for the thing that
+    // drew it here.
+    actor.mode = "roam";
+    actor.modeKey = "roam";
+    actor.target = { x: home.x, y: home.y + layout.tileH * 0.6 };
+    actor.pauseMs = 0;
+    actor.visitor = {
+      placementId,
+      itemId: placement.itemId,
+      home,
+      leaving: false,
+      trust: record.trust,
+      motifInMs: 1200,
+    };
+    // The four "not yours" tells. The ring is the loudest one: the
+    // selection ring means "this is the Pip you are caring for", and a
+    // visitor is emphatically not that.
+    actor.ring.visible = false;
+    actor.sprite.shadow.alpha = 0.55;
+    return actor;
+  }
+
+  /**
+   * Reconcile the visitor actors against `state.visitors`.
+   *
+   * Presence is `visitorIsPresent(record, now)` — the SAME predicate core
+   * uses, so the Pip standing in the Keep and the Visitor card's "are
+   * they here" agree by construction rather than by two clocks that
+   * mostly match. `state.lastTickAt` is the scene's "now": it is the
+   * newest timestamp the reducer has stamped, it advances on every TICK,
+   * and using it keeps the render free of any clock of its own (spec §2).
+   */
+  function syncVisitors(state: GameState): void {
+    const records = state.visitors ?? {};
+    const now = state.lastTickAt;
+    const wanted = new Set<string>();
+
+    for (const [placementId, record] of Object.entries(records)) {
+      if (!visitorIsPresent(record, now)) continue;
+      if (state.keep.placements[placementId] === undefined) continue;
+      const actorId = `${VISITOR_ACTOR_PREFIX}${placementId}`;
+      wanted.add(actorId);
+      const existing = actors.get(actorId);
+      if (existing === undefined) {
+        const actor = createVisitorActor(placementId, record, state);
+        if (actor !== null) actors.set(actorId, actor);
+        continue;
+      }
+      const v = existing.visitor;
+      if (v === null) continue;
+      // A DIFFERENT visitor at the same attraction (the old one was
+      // welcomed or the record was re-rolled): swap the whole sprite
+      // rather than mutating a stranger into another stranger.
+      if (existing.pip.name !== record.name || existing.pip.speciesId !== record.speciesId) {
+        actors.delete(actorId);
+        destroyActor(existing);
+        const actor = createVisitorActor(placementId, record, state);
+        if (actor !== null) actors.set(actorId, actor);
+        continue;
+      }
+      v.trust = record.trust;
+      const home = attractionAnchor(placementId, state);
+      if (home !== null) v.home = home;
+    }
+
+    // Anyone still on screen whose visit has ended walks back off the
+    // way they came. They are NOT snapped out of existence — leaving is
+    // a beat, and it is the beat that makes "they were really here" true.
+    for (const [id, actor] of actors) {
+      const v = actor.visitor;
+      if (v === null) continue;
+      if (wanted.has(id)) continue;
+      if (v.leaving) continue;
+      v.leaving = true;
+      actor.decorHoldMs = 0;
+      actor.greetHoldMs = 0;
+      actor.target = edgePointNear({ x: actor.x, y: actor.y });
+      actor.pauseMs = 0;
+    }
+  }
+
+  /** True while a welcome-ready visitor should carry its soft glow. */
+  function visitorReadyToWelcome(actor: Actor): boolean {
+    const v = actor.visitor;
+    if (v === null || v.leaving) return false;
+    return v.trust >= contentTuning.attractions.welcomeTrust;
+  }
+
+  // -------------------------------------------------------------------------
+  // ROUND 2K — AMBIENT BEHAVIOUR (docs/liveliness-bible.md §4.3/§4.5)
+  // -------------------------------------------------------------------------
+
+  /**
+   * One footprint in the snow: a single pooled ellipse that fades over
+   * 400 ms. It goes into `world` at a depth below every standing thing,
+   * so a Pip never walks BEHIND its own footprint.
+   */
+  function dropFootprint(actor: Actor): void {
+    const s = visualScale(actor);
+    const g = new Graphics()
+      .ellipse(0, 0, 4.5 * s, 2.4 * s)
+      .fill({ color: "#9fb4c4", alpha: 0.5 });
+    g.position.set(actor.x + (jitter.next() - 0.5) * 6, actor.y + 2);
+    g.zIndex = -99000;
+    world.addChild(g);
+    sceneRunner.add({
+      durationMs: 2200,
+      ease: linear,
+      onUpdate: (t) => {
+        if (!g.destroyed) g.alpha = 0.5 * (1 - t);
+      },
+      onComplete: () => {
+        if (!g.destroyed) g.destroy();
+      },
+    });
+  }
+
+  /**
+   * PIP ↔ PIP GREETINGS (bible §4.5) — the second-cheapest and
+   * second-best thing in the round, and one of the two the cut order
+   * says may NEVER be cut.
+   *
+   * Cost: C(n,2) squared-distance tests per frame — 15 at the spec §1
+   * roster of 6 actors, and zero persistent objects (the emote rides the
+   * existing pooled particle system; the line rides the existing speech
+   * bubble).
+   *
+   * ⚠️ Cosmetic by contract, like the conga: no dispatch, no state write,
+   * and nothing here reads a need or changes one.
+   */
+  const greetCooldowns = new Map<string, number>();
+
+  function greetPairKey(a: Actor, b: Actor): string {
+    return a.pip.id < b.pip.id ? `${a.pip.id}|${b.pip.id}` : `${b.pip.id}|${a.pip.id}`;
+  }
+
+  /** Mood → the emote a greeting Pip throws. Chaotic gets its own branch
+   * at the call site (spec §4.2: "occasionally 'helps' wrong"). */
+  const GREET_EMOTE: Readonly<Record<Mood, { colors: readonly string[]; shape: "dot" | "heart" }>> =
+    {
+      beaming: { colors: ["#ff9ec0", "#ffd0e0"], shape: "heart" },
+      content: { colors: ["#ffe9a3", "#fff6d8"], shape: "dot" },
+      grumpy: { colors: ["#c8c2b6", "#e2ddd3"], shape: "dot" },
+      miserable: { colors: ["#9aa3ad"], shape: "dot" },
+    };
+
+  function playGreeting(a: Actor, b: Actor): void {
+    // Stop and face each other — one x-flip each. This alone is most of
+    // the read: two Pips squaring up is unmistakable at a glance.
+    a.facing = b.x > a.x ? 1 : -1;
+    b.facing = a.x > b.x ? 1 : -1;
+    a.target = null;
+    b.target = null;
+    a.greetHoldMs = 1200;
+    b.greetHoldMs = 1200;
+    a.walkBob = 0;
+    b.walkBob = 0;
+
+    // One of the two emotes. Chaotic emits the WRONG one 20% of the time,
+    // which is that personality's whole contract and funnier here than
+    // anywhere else it currently fires.
+    const speaker = jitter.chance(0.5) ? a : b;
+    let mood = speaker.mood;
+    if (
+      speaker.pip.personalityId === "chaotic" &&
+      jitter.chance(tuningAmbience.greetChaoticWrongEmoteChance)
+    ) {
+      mood = jitter.pick(["beaming", "content", "grumpy", "miserable"] as const);
+    }
+    const emote = GREET_EMOTE[mood];
+    const s = visualScale(speaker);
+    fxAbove.burst({
+      x: speaker.x,
+      y: speaker.y + speaker.sprite.headTopY * s - 6,
+      count: emote.shape === "heart" ? 3 : 2,
+      shape: emote.shape,
+      colors: [...emote.colors],
+      speed: 34,
+      directionRad: -Math.PI / 2,
+      spreadRad: Math.PI * 0.5,
+      gravity: -14,
+      lifeMs: 900,
+      sizeMin: 3,
+      sizeMax: 5,
+    });
+
+    // …and sometimes one of them actually says something.
+    if (jitter.chance(tuningAmbience.greetSpeakChance)) {
+      // Keyed by PERSONALITY only, not by mood: the mood already picked
+      // the emote above, and a greeting is what this Pip is like, not how
+      // its needs happen to be doing.
+      const line = pickLineFromPools(
+        speaker.pip.personalityId,
+        "greeting",
+        undefined,
+        jitter,
+        dialoguePools,
+      );
+      if (line !== null) {
+        speaker.greetHoldMs = 2400;
+        showHelloBubble(speaker, line.text);
+      }
+    }
+    squashStretch(a.runner, a.sprite.rig, { amount: 0.12, cycleMs: 190, cycles: 2 });
+    squashStretch(b.runner, b.sprite.rig, { amount: 0.12, cycleMs: 190, cycles: 2 });
+  }
+
+  /** One pass over the actor pairs. Called once per frame from `update`. */
+  function updateGreetings(dtMs: number): void {
+    // Age every cooldown first, and forget the expired ones so the map
+    // cannot grow without bound across a long session.
+    for (const [key, remaining] of greetCooldowns) {
+      const next = remaining - dtMs;
+      if (next <= 0) greetCooldowns.delete(key);
+      else greetCooldowns.set(key, next);
+    }
+
+    const list = [...actors.values()].filter(
+      (a) =>
+        a.idleMs >= tuningAmbience.greetIdleMs &&
+        a.greetHoldMs <= 0 &&
+        a.decorHoldMs <= 0 &&
+        !a.ceremony &&
+        !a.parading &&
+        a.careHoldMs <= 0 &&
+        a.mode === "roam" &&
+        a.visitor?.leaving !== true,
+    );
+    if (list.length < 2) return;
+    const radius = tuningAmbience.greetRadiusTiles * layout.tileW;
+    const r2 = radius * radius;
+    for (let i = 0; i < list.length; i++) {
+      for (let j = i + 1; j < list.length; j++) {
+        const a = list[i] as Actor;
+        const b = list[j] as Actor;
+        const dx = a.x - b.x;
+        const dy = a.y - b.y;
+        if (dx * dx + dy * dy > r2) continue;
+        const key = greetPairKey(a, b);
+        if (greetCooldowns.has(key)) continue;
+        greetCooldowns.set(key, tuningAmbience.greetCooldownMs);
+        playGreeting(a, b);
+        return; // one hello per frame — a crowd should not all pop at once
+      }
     }
   }
 
@@ -2365,7 +3439,18 @@ export function createKeepScene(width: number, height: number): KeepScene {
     }
     if (best !== null) {
       sound("pip.tap");
-      emitPipTap(best.pip.id);
+      // ROUND 2K — a visitor is NOT your Pip: it has no needs, no job and
+      // no expedition, so its tap goes out through its own seam to the
+      // Visitor card, never to the focus view (bible §1.5). Routing this
+      // here — at the ONE place a tap becomes an identity — is what makes
+      // that separation structural rather than a branch the focus view
+      // has to remember to make.
+      const visitorTapped = best.visitor;
+      if (visitorTapped !== null) {
+        emitVisitorTap(visitorTapped.placementId);
+      } else {
+        emitPipTap(best.pip.id);
+      }
     }
   });
 
@@ -2390,6 +3475,32 @@ export function createKeepScene(width: number, height: number): KeepScene {
     drawGridOverlay();
     drawFlash();
     flashG.alpha = 0;
+    // ROUND 2K — the daylight tint covers the whole viewport (drawn
+    // white; `tint` does the colouring, so this geometry never needs to
+    // be redrawn for a colour change) and the ambient layer re-seeds its
+    // flitters for the new box.
+    daylightOverlay.clear().rect(0, 0, w, h).fill(0xffffff);
+    // ⚠️ FIX STAGE — the ambient layer is bounded to the PLOT, not to the
+    // viewport. At 1440×900 the Keep occupies about 28% of the width with
+    // flat undifferentiated green either side, and handing ambience the
+    // whole canvas put grass tufts and rain streaks out in that dead
+    // margin — level with, and immediately beside, the Feed/Clean/Play
+    // buttons. The round's stated goal is that the Keep stops looking like
+    // a diorama, and animating the empty space around it is precisely what
+    // makes it read as one.
+    //
+    // The padding collapses to zero when the plot already fills the
+    // screen, so at 375px (where the composition was fine) this is a
+    // no-op and the ambience still lands inside the scene.
+    const plotW = layout.cols * layout.tileW;
+    const pad = Math.max(0, Math.min(plotW * 0.25, (w - plotW) / 2));
+    const boxLeft = Math.max(0, layout.originX - pad);
+    ambience.view.x = boxLeft;
+    ambience.resize({
+      width: Math.min(w - boxLeft, plotW + pad * 2),
+      height: h,
+      groundTop: layout.originY,
+    });
 
     for (const [pid, v] of placeableVisuals) {
       // Tile size may have changed — rebuild the drawing at the new size.
@@ -2410,8 +3521,12 @@ export function createKeepScene(width: number, height: number): KeepScene {
         y: wasAt.y,
         dropTween: null,
         // The ring belonged to the destroyed sprite; the next `sync`
-        // redraws it from state on the new one.
+        // redraws it from state on the new one. Same for round 2K's
+        // stock ring; the lantern glow is rebuilt by the next
+        // `setDaylight` sample, at most a second later.
         craftRing: null,
+        lanternGlow: null,
+        stockRing: null,
       });
       world.addChild(next.view);
       const rebuilt = placeableVisuals.get(pid);
@@ -2456,6 +3571,10 @@ export function createKeepScene(width: number, height: number): KeepScene {
   drawGridOverlay();
   gridOverlay.visible = false;
   drawFlash();
+  // ROUND 2K — the tint geometry, once. Until `setDaylight` lands (1 s
+  // after boot at the latest) `alpha` is 0, so an un-wired scene renders
+  // exactly what shipped before this round.
+  daylightOverlay.clear().rect(0, 0, w, h).fill(0xffffff);
 
   // -------------------------------------------------------------------------
   // Public API
@@ -2474,6 +3593,11 @@ export function createKeepScene(width: number, height: number): KeepScene {
       syncPlaceables(state); // occupancy before actors pick targets
       syncEggs(state); // may queue a pendingHatchSpawn for syncActors
       syncActors(state);
+      // ROUND 2K — visitors AFTER the roster, so a welcome (which deletes
+      // the record and adds a roster Pip in the same dispatch) has
+      // already spawned the newcomer's real actor before the visitor
+      // actor is asked to leave.
+      syncVisitors(state);
     },
 
     update(dtMs: number): void {
@@ -2497,6 +3621,42 @@ export function createKeepScene(width: number, height: number): KeepScene {
       updateParade(dtMs);
       for (const actor of actors.values()) {
         updateActor(actor, dtMs, state);
+      }
+      // ROUND 2K — ambience last, so greetings see this frame's positions
+      // and the flitters draw over everything that just moved.
+      updateGreetings(dtMs);
+      ambience.update(dtMs);
+    },
+
+    setDaylight(sample: DaylightSample): void {
+      daylight = sample;
+      // The full-screen tint is free to update every sample: two property
+      // writes on one Graphics.
+      daylightOverlay.tint = sample.overlayColor;
+      daylightOverlay.alpha = sample.overlayAlpha;
+      ambience.setPhase(sample.phase);
+      syncLanternGlow();
+      // `drawBackground` is a teardown-and-rebuild of the whole
+      // background container, so it fires ONLY when the sky has actually
+      // moved past the epsilon — ~94 times a day at the 1 Hz sample rate,
+      // measured in `daylight.test.ts`, not once a second and never per
+      // frame.
+      if (daylightChangedEnough(paintedDaylight, sample)) {
+        paintedDaylight = sample;
+        drawBackground();
+      }
+    },
+
+    setWeather(sample: WeatherSample): void {
+      const changed = weather === null || weather.window !== sample.window;
+      weather = sample;
+      ambience.setWeather(sample);
+      // Overcast desaturates the sky, which lives in the background —
+      // so a window that changes the sky's look needs the same redraw
+      // the daylight ramp takes.
+      if (changed) {
+        paintedDaylight = daylight;
+        drawBackground();
       }
     },
 

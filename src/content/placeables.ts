@@ -345,4 +345,91 @@ export const placeables: readonly PlaceableDef[] = [
     unlockKeepLevel: 4,
     icon: { motif: "bench" },
   },
+
+  /**
+   * ROUND 2K — THE SIX ATTRACTIONS (docs/liveliness-bible.md §1.2). One per
+   * biome, because "what you build shapes who visits" is only a real
+   * decision if every biome has a door. Each carries exactly one
+   * `attraction` effect naming that biome's id — `core/attractions/`'s
+   * `visitorPool()` reads it as `expeditions[biomeId].eggSpecies ∩ caught`
+   * (I1: a partition, never a margin — an attraction can never advance the
+   * Album, only bring back a species the player already owns). All six
+   * unlock at tier 6 alongside the Larder and the Nest Warmer
+   * (`content/keep.ts`); costs live in `tuning.placeableCosts` like every
+   * other station's, and the recurring restock/welcome costs that make
+   * this round's wood-heavy economy sink live in `tuning.attractions`.
+   *
+   * None carries a `comfort` effect — hunger's declared budget sits at
+   * EXACTLY 1.00× `comfortReductionMax` after round 2F's Larder retune, so
+   * there is zero slack (2F's knife-edge; docs/liveliness-bible.md §6.2).
+   * An attraction is a door, not a cushion.
+   */
+  {
+    id: "clover-ring",
+    name: "Clover Ring",
+    cost: tuning.placeableCosts["clover-ring"],
+    footprint: { w: 2, h: 2 },
+    spriteRef: "placeable/clover-ring",
+    flavor: "A ring of clover nobody's allowed to cut. Word gets round.",
+    effects: [{ kind: "attraction", biomeId: "meadow" }],
+    unlockKeepLevel: 6,
+    icon: { motif: "leaf" },
+  },
+  {
+    id: "thicket-feeder",
+    name: "Thicket Feeder",
+    cost: tuning.placeableCosts["thicket-feeder"],
+    footprint: { w: 1, h: 1 },
+    spriteRef: "placeable/thicket-feeder",
+    flavor:
+      "A basket wedged in the hedge. Something eats from it every night and never says thank you.",
+    effects: [{ kind: "attraction", biomeId: "bramblewick" }],
+    unlockKeepLevel: 6,
+    icon: { motif: "basket" },
+  },
+  {
+    id: "sap-bucket",
+    name: "Sap Bucket",
+    cost: tuning.placeableCosts["sap-bucket"],
+    footprint: { w: 1, h: 1 },
+    spriteRef: "placeable/sap-bucket",
+    flavor: "Slow, sweet, and impossible to walk past. Ask anyone.",
+    effects: [{ kind: "attraction", biomeId: "forest" }],
+    unlockKeepLevel: 6,
+    icon: { motif: "bowl" },
+  },
+  {
+    id: "snow-bell",
+    name: "Snow Bell",
+    cost: tuning.placeableCosts["snow-bell"],
+    footprint: { w: 1, h: 1 },
+    spriteRef: "placeable/snow-bell",
+    flavor:
+      "It only rings when it's cold enough. Whoever comes when it does already knew what it meant.",
+    effects: [{ kind: "attraction", biomeId: "snowdrift" }],
+    unlockKeepLevel: 6,
+    icon: { motif: "chime" },
+  },
+  {
+    id: "tidewrack",
+    name: "Tidewrack",
+    cost: tuning.placeableCosts["tidewrack"],
+    footprint: { w: 2, h: 2 },
+    spriteRef: "placeable/tidewrack",
+    flavor: "Everything the tide left, arranged on purpose. It's an invitation, if you can read it.",
+    effects: [{ kind: "attraction", biomeId: "shore" }],
+    unlockKeepLevel: 6,
+    icon: { motif: "shell" },
+  },
+  {
+    id: "lampwell",
+    name: "Lampwell",
+    cost: tuning.placeableCosts["lampwell"],
+    footprint: { w: 2, h: 2 },
+    spriteRef: "placeable/lampwell",
+    flavor: "A dish of glowstone kept lit at the Keep's edge. Down in the grotto, that means welcome.",
+    effects: [{ kind: "attraction", biomeId: "lanterngrotto" }],
+    unlockKeepLevel: 6,
+    icon: { motif: "lantern" },
+  },
 ];

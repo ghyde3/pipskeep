@@ -58,6 +58,8 @@ import type { DecorSetDef } from "../content/decorSets";
 import type { BuildingEffect } from "../content/buildingEffects";
 import type { IconSpec } from "../content/icons";
 import { jobs as contentJobs } from "../content/jobs";
+import { expeditions as contentExpeditions } from "../content/expeditions";
+import type { ExpeditionId } from "../content/expeditions";
 import { foods } from "../content/foods";
 import { tuning as contentTuning } from "../content/tuning";
 import type { Tuning } from "../content/tuning";
@@ -300,6 +302,15 @@ export function describeEffect(effect: BuildingEffect): string {
       return `Every Pip in the Keep lives ${pct(effect.bonus)} longer.`;
     case "craftSpeed":
       return `Crafts finish ${pct(1 - effect.multiplier)} sooner.`;
+    // ROUND 2K — generated from the effect's own `biomeId`, exactly like
+    // every line above, so the card can never name a biome the attraction
+    // doesn't actually draw from (docs/liveliness-bible.md §7.4).
+    case "attraction": {
+      const biome = contentExpeditions[effect.biomeId as ExpeditionId];
+      return biome === undefined
+        ? "Draws wild Pips to visit, over time."
+        : `Draws wild Pips to visit, from the ${biome.name}.`;
+    }
   }
 }
 

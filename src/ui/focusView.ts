@@ -97,7 +97,11 @@ import { pipSeason } from "../core/pips/lifecycle";
 import { peekDisplayedMood } from "./topBar";
 import { sound } from "../app/sound";
 import { resolveAccessory } from "../content/accessories";
-import { SILHOUETTE_FRACTIONS, jitterStyleVars } from "../render/pipGeometry";
+import {
+  SILHOUETTE_FRACTIONS,
+  accessoryZoneStyleVars,
+  jitterStyleVars,
+} from "../render/pipGeometry";
 
 /** Bar color-shift thresholds — same readout language as the top bar. */
 const WARN_BELOW = 40;
@@ -1121,6 +1125,11 @@ export function createFocusView(deps: FocusViewDeps): FocusView {
           "--pk-acc-secondary",
           accessoryDef.secondaryColor ?? accessoryDef.primaryColor,
         );
+        // ⚠️ FIX STAGE (bible §6.1.1(c)) — the SHARED band, same table
+        // `ui/pipdex.ts` reads. See `ACCESSORY_ZONE_PCT`.
+        for (const [name, value] of Object.entries(accessoryZoneStyleVars(accessoryDef.slot))) {
+          pAccessory.style.setProperty(name, value);
+        }
         pAccessory.setAttribute("aria-hidden", "true");
         pAccessory.title = accessoryDef.name;
       }

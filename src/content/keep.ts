@@ -114,8 +114,20 @@ export const keepLevels: readonly KeepLevelDef[] = [
   {
     level: 6,
     cost: costFor(6),
-    headline: "The Larder and the Nest Warmer",
+    // ROUND 2K (docs/liveliness-bible.md §1.2) — the headline moves to the
+    // Clover Ring, and the six attractions land HERE rather than tier 7
+    // (the thinner tier, and the tempting answer) for a timing reason, not
+    // a ladder-tidiness one: the earliest a Pip can be lost is
+    // `lifecycle.shields.noLossBeforeLifeMs` (3 rated days), and tier 6
+    // lands at engaged day 3 — the third succession path (attractions,
+    // alongside lineage eggs and breeding) arrives at the first moment a
+    // loss could actually have happened. Tier 7 (engaged day 5) would be
+    // two days late. Tier 6 was already "the Keep becomes a home" tier
+    // (Larder, Nest Warmer, sets going live); creatures starting to visit
+    // is the same sentence.
+    headline: "The Clover Ring — wild Pips start coming by",
     unlocks: [
+      "the Clover Ring, and five more ways to draw visitors",
       "the Larder",
       "the Nest Warmer",
       "eggs hatch sooner",
@@ -162,11 +174,18 @@ export const keepLevels: readonly KeepLevelDef[] = [
 
 /**
  * Keep upgrade effects (spec §3 "Keep upgrades" registry). `rosterCap`
- * raises the roster cap (spec §7.4); `attraction` is the spec §12 seam
- * for the deferred Attraction buildings — a supported no-op effect id,
- * nothing more.
+ * raises the roster cap (spec §7.4).
+ *
+ * ROUND 2K (docs/liveliness-bible.md §1.1) — the spec §12 "attraction"
+ * no-op arm that used to live here is DISCHARGED, not merely occupied:
+ * the capability now lives as a real `BuildingEffect` member
+ * (`content/buildingEffects.ts`), in the same vocabulary as `job`,
+ * `comfort`, `remedy` and `longevity` — which is what gives it a Build
+ * sheet card, an icon badge and inclusion in `resolveKeepEffects` for
+ * free. A one-entry upgrade registry gave none of that. See
+ * `content/placeables.ts`'s six attraction stations.
  */
-export type KeepUpgradeEffect = "rosterCap" | "attraction";
+export type KeepUpgradeEffect = "rosterCap";
 
 export interface KeepUpgradeDef {
   id: string;

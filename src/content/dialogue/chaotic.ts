@@ -90,4 +90,20 @@ export const chaotic: DialoguePool = {
     "Ask the other me. He is also unavailable.",
     "Nope, but I admire the confidence. Keep that.",
   ],
+  /**
+   * ROUND 2K (docs/liveliness-bible.md §4.5) — PIP TO PIP, not Pip to
+   * player. Two Pips who stop within a tile and a half of each other
+   * turn, face, emote, and 35% of the time one of them says one of
+   * these. The audience is the OTHER Pip; the player is overhearing.
+   */
+  greeting: [
+    "YOU. I was JUST about to do something about you.",
+    "Hello! I have no idea what you're called and I refuse to learn.",
+    "Hi. I've decided we're allies now. You don't get a say.",
+    "Oh good, a witness.",
+    "Greetings! I have gossip. It's about a rock.",
+    "Hey! Quick — pick a number. WRONG. Anyway, hi.",
+    "Hello, fellow small creature of unclear purpose.",
+    "I saw you first. That means I win. Congratulations to me.",
+  ],
 };

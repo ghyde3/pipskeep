@@ -66,6 +66,10 @@ const BADGE_FOR_EFFECT_KIND: Readonly<Record<BuildingEffect["kind"], BadgeId>> =
   remedy: "heart",
   longevity: "heart",
   craftSpeed: "gear",
+  // ROUND 2K — a visitor arriving IS travel, the same family a faster/
+  // luckier trip already wears (docs/liveliness-bible.md §1.1: "a sixth
+  // badge id was considered and declined").
+  attraction: "boot",
 };
 
 /** The badge a catalog item's icon wears — derived from its FIRST effect,

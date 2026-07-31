@@ -86,4 +86,20 @@ export const curious: DialoguePool = {
     "My calendar says wonder o'clock. So no.",
     "Request received. Peer review says nope.",
   ],
+  /**
+   * ROUND 2K (docs/liveliness-bible.md §4.5) — PIP TO PIP, not Pip to
+   * player. Two Pips who stop within a tile and a half of each other
+   * turn, face, emote, and 35% of the time one of them says one of
+   * these. The audience is the OTHER Pip; the player is overhearing.
+   */
+  greeting: [
+    "Oh! Hello! Where have you been? Tell me everything.",
+    "Hi! Quick question. Actually eleven questions.",
+    "You smell like somewhere I haven't been yet.",
+    "Hello! Do you also think about the sky a normal amount?",
+    "Hi. I was just wondering about you and then you APPEARED.",
+    "Oh good, you. I found a thing. Come see the thing.",
+    "Hello! What's over where you were? Is it better? Is it worse?",
+    "Hi! I'm collecting facts. Do you have any on you?",
+  ],
 };

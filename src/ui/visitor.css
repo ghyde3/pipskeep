@@ -1,0 +1,267 @@
+/**
+ * The Visitor card (round 2K, docs/liveliness-bible.md §1.5) — its own
+ * file, same design vocabulary as ui.css / modals.css / sanctuary.css
+ * (never edited to get it).
+ *
+ * A SMALL SHEET, not a screen: a visitor is a passing thing and its card
+ * should feel like one. It is deliberately not the focus view — no need
+ * bars, no job row, no expedition picker — because a visitor is not your
+ * Pip and offering it those controls would imply four verbs that do not
+ * exist (see visitorCard.ts's module doc).
+ */
+
+.pk-visitor-root {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.pk-visitor-wrap {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.pk-visitor-wrap--open {
+  visibility: visible;
+  /* z 20 (`--pk-z-sheet`, pinned by src/ui/layers.test.ts) — a PEER of
+     the items sheet and the Pip focus view. It can never be open
+     alongside the focus view: both are reached by tapping something in
+     the Keep, and render/keepScene.ts's one tap dispatcher resolves a tap
+     to exactly one of them (a visitor goes out through visitorTap, a
+     roster Pip through pipTap). Same rung, mutually exclusive by
+     construction — see pipdex.css for why a tie without that guarantee
+     would be a bug rather than a shrug. */
+  z-index: 20;
+}
+
+.pk-visitor-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(61, 74, 61, 0.3);
+  opacity: 0;
+  transition: opacity 220ms ease;
+  pointer-events: auto;
+}
+
+.pk-visitor-wrap--open .pk-visitor-backdrop {
+  opacity: 1;
+}
+
+.pk-visitor-panel {
+  position: absolute;
+  left: 50%;
+  bottom: max(18px, env(safe-area-inset-bottom));
+  transform: translate(-50%, 12px);
+  width: min(360px, calc(100vw - 28px));
+  box-sizing: border-box;
+  padding: 14px 14px 16px;
+  border-radius: 20px;
+  background: #fffdf6;
+  box-shadow: 0 12px 34px rgba(48, 60, 48, 0.24);
+  pointer-events: auto;
+  opacity: 0;
+  transition:
+    opacity 200ms ease,
+    transform 200ms ease;
+}
+
+.pk-visitor-wrap--open .pk-visitor-panel {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+/* ---------- Head: portrait + who ---------- */
+
+.pk-visitor-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  position: relative;
+}
+
+.pk-visitor-who {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-top: 2px;
+}
+
+.pk-visitor-name {
+  font-size: 17px;
+  font-weight: 700;
+  color: #3f4a3a;
+  line-height: 1.2;
+}
+
+.pk-visitor-sub {
+  font-size: 13px;
+  color: #6f7a67;
+  margin-top: 2px;
+}
+
+.pk-visitor-from {
+  font-size: 12px;
+  color: #8b9483;
+  margin-top: 2px;
+  font-style: italic;
+}
+
+.pk-visitor-close {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(96, 110, 92, 0.1);
+  color: #5d6b57;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+/* ---------- Visits + the trust pips ---------- */
+
+.pk-visitor-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 9px 11px;
+  border-radius: 13px;
+  background: rgba(139, 163, 128, 0.11);
+}
+
+.pk-visitor-visits {
+  font-size: 13px;
+  color: #5d6b57;
+  font-style: italic;
+  min-width: 0;
+}
+
+.pk-visitor-trust {
+  display: flex;
+  gap: 5px;
+  flex: 0 0 auto;
+}
+
+/* The full-disclosure surface: three pips, visible from visit one,
+   whether or not any are earned yet. */
+.pk-visitor-pip {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: rgba(96, 110, 92, 0.2);
+  transition: background-color 240ms ease;
+}
+
+.pk-visitor-pip--on {
+  background: #e8a44d;
+}
+
+/* ---------- Actions ---------- */
+
+.pk-visitor-actions {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pk-visitor-btn {
+  width: 100%;
+  padding: 11px 14px;
+  border: none;
+  border-radius: 14px;
+  background: rgba(139, 163, 128, 0.18);
+  color: #40503c;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.pk-visitor-btn--primary {
+  background: #7fa96b;
+  color: #fffdf6;
+}
+
+.pk-visitor-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.pk-visitor-snacks {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 168px;
+  overflow-y: auto;
+  padding: 2px;
+}
+
+.pk-visitor-snack {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 12px;
+  border: none;
+  border-radius: 12px;
+  background: rgba(96, 110, 92, 0.08);
+  color: #40503c;
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+}
+
+/* The biome-correct snack is marked, never the others hidden: anything
+   in the satchel can be offered, because refusing a gift is not this
+   game's tone (bible §1.5). */
+.pk-visitor-snack--liked {
+  background: rgba(232, 164, 77, 0.16);
+}
+
+.pk-visitor-snack-tag {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: #a8712a;
+  font-style: italic;
+}
+
+.pk-visitor-missing {
+  font-size: 12px;
+  color: #a8712a;
+  text-align: center;
+}
+
+.pk-visitor-foot {
+  font-size: 12.5px;
+  color: #6f7a67;
+  text-align: center;
+  line-height: 1.45;
+  padding: 2px 4px 0;
+}
+
+/* The Long Meadow offer at the roster cap — a quiet secondary link, never
+   a button competing with the two real verbs. */
+.pk-visitor-link {
+  border: none;
+  background: none;
+  padding: 4px 6px 0;
+  color: #7d8a76;
+  font-size: 12px;
+  line-height: 1.45;
+  text-align: center;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pk-visitor-backdrop,
+  .pk-visitor-panel,
+  .pk-visitor-pip {
+    transition: none;
+  }
+}

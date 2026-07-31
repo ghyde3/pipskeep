@@ -460,9 +460,21 @@ describe("migrate fixtures", () => {
     // fields are all OPTIONAL — `undefined ≡` a safe default — so the
     // v8 → v9 step adds none of them; see MIGRATIONS[8]'s own doc
     // comment. Round 2J's v10 → v11 step adds `crafts` — REQUIRED,
-    // backfilled to `{}`, docs/economy-bible.md §3/`MIGRATIONS[10]`.)
+    // backfilled to `{}`, docs/economy-bible.md §3/`MIGRATIONS[10]`. Round
+    // 2K's v11 → v12 step adds `visitors`/`attractionStock`/
+    // `attractionSchedule` — REQUIRED, all backfilled to `{}`,
+    // docs/liveliness-bible.md §1/`MIGRATIONS[11]`; `lastVisitorOutcome`
+    // is OPTIONAL, same as `lastLossOutcome`, and adds nothing here.)
     const added = Object.keys(after).filter((k) => !(k in rawV6.state));
-    expect(added.sort()).toEqual(["crafts", "flair", "keepXp", "lastLevelUp"]);
+    expect(added.sort()).toEqual([
+      "attractionSchedule",
+      "attractionStock",
+      "crafts",
+      "flair",
+      "keepXp",
+      "lastLevelUp",
+      "visitors",
+    ]);
   });
 
   /**
@@ -935,6 +947,68 @@ describe("migrate error handling", () => {
     for (const input of hostile) {
       expect(() => migrate(input)).not.toThrow();
       expect(migrate(input).ok).toBe(false);
+    }
+  });
+});
+
+/**
+ * ⚠️ ROUND 2K FIX STAGE — the named step test the round did not write.
+ *
+ * Every prior round's migration has its own `describe` here ("v8 → v9 …
+ * a veteran is not punished", "v9 → v10 … INDIVIDUAL NAMES"). Round 2K's
+ * v11 → v12 got none: its only coverage was the two generic sweeps ("has
+ * a fixture for every schema version" / "has a registered step for every
+ * historical version"), which prove the step RUNS and never that it does
+ * the right thing. That is enough to catch a crash and nothing else — a
+ * step that wiped `pips` on the way past would satisfy both.
+ *
+ * The contract, from docs/liveliness-bible.md §7.1: exactly three new
+ * keys, all empty, and NOTHING a veteran already owned touched. Attractions
+ * are a thing you build, so a returning player has none — but they also
+ * have a Keep, a roster, an Album and a streak, and the round-2C guardrail
+ * (reward showing up, never punish absence) says none of it may so much as
+ * flinch when the schema moves under it.
+ */
+describe("v11 → v12 (round 2K, docs/liveliness-bible.md §7.1): attractions arrive EMPTY, and nothing else moves", () => {
+  const NEW_KEYS = ["attractionSchedule", "attractionStock", "visitors"] as const;
+
+  it("adds exactly the three attraction fields, each an empty record", () => {
+    const v11 = loadFixture(11) as { readonly state: Record<string, unknown> };
+    const after = MIGRATIONS[11]!(v11)["state"] as Record<string, unknown>;
+
+    const added = Object.keys(after).filter((k) => !(k in v11.state));
+    expect(added.sort()).toEqual([...NEW_KEYS]);
+    for (const key of NEW_KEYS) {
+      expect(after[key], `${key} should arrive empty`).toEqual({});
+    }
+  });
+
+  it("a VETERAN's save is byte-identical everywhere else — field by field", () => {
+    const v11 = loadFixture(11) as { readonly state: Record<string, unknown> };
+    // The fixture is a real veteran, not a fresh save: this asserts that,
+    // so the test cannot pass by migrating an empty state.
+    expect(Object.keys(v11.state["pips"] as object).length).toBeGreaterThan(1);
+    expect((v11.state["keep"] as { level: number }).level).toBeGreaterThan(1);
+
+    const after = MIGRATIONS[11]!(v11)["state"] as Record<string, unknown>;
+    for (const [key, before] of Object.entries(v11.state)) {
+      expect(JSON.stringify(after[key]), `v11 → v12 altered '${key}'`).toBe(
+        JSON.stringify(before),
+      );
+    }
+  });
+
+  it("an OLD save migrated all the way lands on v12 with the attractions present", () => {
+    // The whole chain, not just the one step — a step can be correct in
+    // isolation and still be skipped by the runner.
+    const result = migrate(loadFixture(11));
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.save.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
+    expect(result.fromVersion).toBe(11);
+    const state = result.save.state as unknown as Record<string, unknown>;
+    for (const key of NEW_KEYS) {
+      expect(state[key], `${key} missing after a full migrate()`).toEqual({});
     }
   });
 });

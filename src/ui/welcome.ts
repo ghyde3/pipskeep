@@ -386,6 +386,11 @@ export function isTrivialAbsence(
   if (summary.elapsedMs >= quietMs) return false;
   if (away.pips.length === 0) return false;
   if (away.expeditionLines.length > 0) return false;
+  // ROUND 2K: someone is at the door. `!= null` deliberately, not
+  // `!== null` — this predicate is called with hand-built `away` literals
+  // in the suite, and an absent field must read as "nothing happened"
+  // rather than as a caller.
+  if (away.visitorLine != null) return false;
   if (away.eggLine !== null || away.lootLine !== null || away.cappedLine !== null) {
     return false;
   }
@@ -740,6 +745,12 @@ export function createDoorstep(deps: DoorstepDeps): Doorstep {
     // §4 Homecomings — a TEASE, never the reveal's contents.
     const homecomingLines = [...model.away.expeditionLines];
     if (model.away.eggLine !== null) homecomingLines.push(model.away.eggLine);
+    // ROUND 2K (docs/liveliness-bible.md §1.6) — who called round. Placed
+    // in the homecoming section because that is where "what happened at
+    // the Keep" lives, and phrased (in `deriveVisitorLine`) so that it can
+    // never read as something the player missed: the held-open rule means
+    // whoever it names is standing outside RIGHT NOW.
+    if (model.away.visitorLine !== null) homecomingLines.push(model.away.visitorLine);
     if (model.away.lootLine !== null) homecomingLines.push(model.away.lootLine);
     if (model.away.cappedLine !== null) homecomingLines.push(model.away.cappedLine);
     if (homecomingLines.length > 0) {

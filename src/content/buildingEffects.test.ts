@@ -81,6 +81,15 @@ describe("every authored BuildingEffect strictly helps (bible §0.3/§3.1 rule 1
           expect(effect.multiplier, label).toBeGreaterThan(0);
           expect(effect.multiplier, label).toBeLessThan(1);
           break;
+        // ROUND 2K (docs/liveliness-bible.md §1.1) — an attraction's whole
+        // identity is its biome affinity; a blank one is the "strictly
+        // helps nothing" failure shape for this kind (`content/validate.ts`
+        // catches the same thing, plus an UNKNOWN biome, at the registry
+        // level — this is the defense-in-depth sign check every other kind
+        // above already gets).
+        case "attraction":
+          expect(effect.biomeId.length, label).toBeGreaterThan(0);
+          break;
       }
     });
   }

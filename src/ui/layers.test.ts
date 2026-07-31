@@ -181,6 +181,21 @@ const LADDER: readonly Rung[] = [
     peer: true,
   },
   {
+    layer: "sheet",
+    file: "visitor.css",
+    selector: ".pk-visitor-wrap--open",
+    z: 20,
+    why:
+      "ROUND 2K: the Visitor card (docs/liveliness-bible.md §1.5) — a PEER " +
+      "of the items sheet and the focus view. It can never be open " +
+      "alongside the focus view: both are reached by tapping something in " +
+      "the Keep, and render/keepScene.ts's ONE tap dispatcher resolves a " +
+      "tap to exactly one of them (a visitor leaves through visitorTap, a " +
+      "roster Pip through pipTap). Mutually exclusive by construction, " +
+      "which is what makes a tie legitimate here",
+    peer: true,
+  },
+  {
     layer: "dailies-sheet",
     file: "dailies.css",
     selector: ".pk-daily-wrap--open",

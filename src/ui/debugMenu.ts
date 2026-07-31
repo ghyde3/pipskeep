@@ -386,6 +386,15 @@ const DEBUG_STYLES = `
   background: rgba(255, 253, 246, 0.9); cursor: pointer; font-size: 16px;
   line-height: 1; padding: 0; opacity: 0.65; }
 .pk-debug-toggle:hover { opacity: 1; }
+/* ⚠️ ROUND 2K FIX STAGE — get out of the visitor card's way.
+   The wrench (34px, z 60) lands on top of the Visitor card's close button
+   (28px, z 20): measured at 375px, elementFromPoint(333, 560) returned
+   the wrench, so the X could not be tapped. The card's z-index is
+   deliberate and pinned by src/ui/layers.test.ts, and the production
+   sound toggle does NOT collide — so the thing that should move is the
+   dev affordance, which is tree-shaken out of production anyway. It also
+   makes the card easier to test, which is the point of having it. */
+body:has(.pk-visitor-wrap--open) .pk-debug-root { display: none; }
 .pk-debug-panel { position: absolute; right: 0; bottom: 40px; width: 260px;
   background: rgba(38, 46, 38, 0.94); color: #e8f0e4; border-radius: 12px;
   padding: 10px; display: flex; flex-direction: column; gap: 8px;

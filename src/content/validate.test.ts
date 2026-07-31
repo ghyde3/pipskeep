@@ -364,6 +364,36 @@ describe("broken content is caught", () => {
     );
   });
 
+  it("flags an attraction effect with no biome/species affinity (round 2K)", () => {
+    const firstPlaceable = defaultContentBundle.placeables[0]!;
+    const bundle: ContentBundle = {
+      ...defaultContentBundle,
+      placeables: [
+        { ...firstPlaceable, effects: [{ kind: "attraction", biomeId: "" }] },
+        ...defaultContentBundle.placeables.slice(1),
+      ],
+    };
+    const { errors } = collectContentIssues(bundle);
+    expect(errors).toContain(
+      `placeable "${firstPlaceable.id}": attraction effect has no biome/species affinity`,
+    );
+  });
+
+  it("flags an attraction effect naming an unknown biome/species pool (round 2K)", () => {
+    const firstPlaceable = defaultContentBundle.placeables[0]!;
+    const bundle: ContentBundle = {
+      ...defaultContentBundle,
+      placeables: [
+        { ...firstPlaceable, effects: [{ kind: "attraction", biomeId: "volcano" }] },
+        ...defaultContentBundle.placeables.slice(1),
+      ],
+    };
+    const { errors } = collectContentIssues(bundle);
+    expect(errors).toContain(
+      `placeable "${firstPlaceable.id}": attraction effect names unknown biome "volcano" — no species pool exists there`,
+    );
+  });
+
   it("flags an unknown icon motif on a decoration or placeable", () => {
     const firstDeco = defaultContentBundle.decorations[0]!;
     const firstPlaceable = defaultContentBundle.placeables[0]!;

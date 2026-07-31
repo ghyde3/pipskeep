@@ -84,7 +84,7 @@ describe("decoration registry shape (content bible §5.1, progression bible §5.
 });
 
 describe("placeable registry shape, plus the Stockpot's pricing relationship", () => {
-  it("ships fifteen registry ids: the original four, nine round-2F stations, round 2H's Poultice Shelf, and round 2J's Craft Table", () => {
+  it("ships twenty-one registry ids: the original four, nine round-2F stations, round 2H's Poultice Shelf, round 2J's Craft Table, and round 2K's six attractions", () => {
     expect(placeables.map((p) => p.id).sort()).toEqual(
       [
         "food-bowl",
@@ -102,6 +102,13 @@ describe("placeable registry shape, plus the Stockpot's pricing relationship", (
         "weathervane",
         "poultice-shelf",
         "craft-table",
+        // ROUND 2K (docs/liveliness-bible.md §1.2) — one attraction per biome.
+        "clover-ring",
+        "thicket-feeder",
+        "sap-bucket",
+        "snow-bell",
+        "tidewrack",
+        "lampwell",
       ].sort(),
     );
   });

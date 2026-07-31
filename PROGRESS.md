@@ -14,6 +14,17 @@ Phase-gate log and decision journal, per spec §13–§15. Append entries; never
 | 5 — The Keep | **gate passed** | 2026-07-29 |
 | 6 — Polish, PWA, onboarding | **gate passed** | 2026-07-29 |
 
+### Round 2K — Attractions & the living Keep — 2026-07-31 — GATE PASSED
+**3696 tests** (was 3350). Save schema v11→v12. The last round in the queue.
+
+- **Shipped:** six biome attractions that draw wild Pips (feed a visitor its biome's food on three separate visits, then "Ask them to stay"), a daylight system driven from the app-layer OffsetClock so the debug slider moves the sky, weather as pure mood, and ambient life. `effect: "attraction"` — a no-op sitting in the Keep-upgrade registry since Phase 5 — is finally wired, by *moving* it into `BuildingEffect` where it inherits cards, badges and aggregation for free.
+- **The design pass caught ME carrying stale findings — the same mistake the 2G Oracle caught.** Both "wounds" I briefed into this round were already fixed: accessory placement by round 2D's own fix stage, the Poultice Shelf and the three `longevity` placeables by 2J's. `docs/BACKLOG.md`'s "Known defects" section was written at `d3c4ca7` and never updated after those fix stages landed. **A stale finding is worse than no finding**, and I have now made this error twice.
+- **But it measured a live one my briefing missed.** The accessory guard probed ONE silhouette (Mosspip) and tested the mouth's *top* control point, while every `neck` accessory correctly sits below the mouth's top *while covering its bottom*. Accessory shapes were authored in absolute px against bodies that vary 28% in height — so the scarf overlapped the mouth by 1.83px on `chunky`, 2.38px on `tiny` and 2.76px on `wide`, against a mouth **2.5px tall in total**. The starter trio is `round`/`chunky`/`wide`, so **two of the three Pips on the first screen** could wear a scarf across the mouth. Fixed with a shared, landmark-derived `ACCESSORY_ZONE_PCT` in `render/pipGeometry.ts` consumed by all three surfaces. Verified by measurement, not by eye: mouth 59.6–67.0%, scarf 69.0–75.5%.
+- **The collection guardrail is a partition, not a margin.** `visitorPool = biome.eggSpecies ∩ caught`, intersected *before* a roll is consumed — so the expected time to a new Album page via attractions is not "slow", it is **undefined, because there is no such event**. Attractions can never substitute for expeditions as a collection route, and 2B's ~15h time-to-find table is unchanged to the last digit.
+- **The first recurring sink whose largest component is wood** — the surplus 2J named as unsolvable. 29 wood/day at a natural six-attraction build is 58.5% of the faucet; twelve attractions exceed it outright. Honestly caveated: it does not *close* the surplus at a normal build.
+- Blockers found and fixed in-round: attraction-welcomed Pips were **bare** — no accessory rolled — making visitors visibly lesser than egg-hatched Pips; and the entire skybird layer could be deleted with the suite green, including three tests with "sky" in their names.
+- Known and logged: measured object count 346 against the round's own ≤310 gate (frame time itself passes), and the `?perf` harness cannot produce fps numbers in a backgrounded automation pane — so spec §1's fps budget is verified by object count and frame time, not by a measured fps figure.
+
 ### Round 2J — Economy depth: fifth resource + crafting — 2026-07-31 — GATE PASSED (two findings left open)
 **3350 tests** (was 3138). Save schema v10→v11. No new runtime dependency.
 

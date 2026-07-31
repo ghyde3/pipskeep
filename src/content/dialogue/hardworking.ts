@@ -88,4 +88,20 @@ export const hardworking: DialoguePool = {
     "Flattered, but the answer is a firm not-today.",
     "Rescheduled to later. Later has a great track record.",
   ],
+  /**
+   * ROUND 2K (docs/liveliness-bible.md §4.5) — PIP TO PIP, not Pip to
+   * player. Two Pips who stop within a tile and a half of each other
+   * turn, face, emote, and 35% of the time one of them says one of
+   * these. The audience is the OTHER Pip; the player is overhearing.
+   */
+  greeting: [
+    "Morning. Everything's in order on my side.",
+    "Hello. You're looking well rested. Good. That matters.",
+    "Hi. Nice work out there, by the way. I noticed.",
+    "Afternoon. Say the word if you need a hand with anything.",
+    "Hello. I've left the good spot free. It's yours.",
+    "Hi. Take a proper break. That's not a suggestion, it's a greeting.",
+    "Good to see you upright and cheerful. Carry on.",
+    "Hello. Between us, this place is running rather well.",
+  ],
 };

@@ -80,6 +80,9 @@ import {
   PIPLING_SCALE,
   PIP_BODY_HEIGHT,
   PIP_BODY_WIDTH,
+  ACCESSORY_ZONE_PAD_PX,
+  accessoryZone,
+  eyeOuterReachPx,
   computeJitter,
   resolveSilhouette,
   silhouetteMetrics,
@@ -132,6 +135,17 @@ export interface PipSprite {
    * the per-genome `accessorySlots` count that used to imply otherwise
    * was dead data and is gone (spec §16 v1.7, core/pips/types.ts). */
   readonly accessoryAnchor: Container;
+  /**
+   * ROUND 2K (docs/liveliness-bible.md §4.2) — the contact shadow, exposed
+   * so `keepScene` can SKEW it with the sun's angle at dawn and dusk.
+   * Two float writes per actor per frame, and the single cheapest thing
+   * that makes the light read as REAL rather than as a colour filter.
+   *
+   * It lives outside `rig` (so care-animation squashes never lift it off
+   * the ground), which is exactly why the scene needs a direct handle
+   * rather than reaching through `view.children[0]`.
+   */
+  readonly shadow: Container;
   readonly genome: TraitGenome;
   readonly stage: LifeStage;
   /** Head top in view-local px (negative y, before view scaling) — the
@@ -263,9 +277,17 @@ function drawAccessory(
   def: AccessoryDef,
   bw: number,
   bh: number,
+  eyeScale: number,
 ): readonly Graphics[] {
   const primary = def.primaryColor;
   const secondary = def.secondaryColor ?? def.primaryColor;
+  // Every shape below is added straight to `anchor`, exactly as before
+  // round 2K (this keeps `accessoryAnchor.children` a flat list of
+  // Graphics — `setSulkTint` tints each one directly, and so does the
+  // caller's `tintable` list). The ROUND 2K FIX STAGE rescale below
+  // reuses that same flatness: it applies one shared `scale`/`y` to every
+  // part's OWN transform instead of wrapping them in a new parent, since
+  // every part is drawn from the same (0, 0) local origin already.
   const parts: Graphics[] = [];
   const add = (g: Graphics): void => {
     anchor.addChild(g);
@@ -358,7 +380,25 @@ function drawAccessory(
       // started its hook at −0.05·bh — ABOVE the crown — and put the
       // lantern body straight over the right eye, with the cord running
       // down between the eyes.
-      const x = bw * 0.4;
+      // ⚠️ FIX STAGE — `bw * 0.4` alone was not far enough out. On a
+      // full-width silhouette `accessoryZone` grants `side` the band level
+      // with the EYES (a cord may legitimately start up there), on the
+      // strength of a lateral-clearance calculation that assumes the
+      // accessory hangs at the flank. This draw put it at 0.4·bw and then
+      // hung a 10px soft glow off the left of it — reaching back inside
+      // the eye's own worst-case span. A ten-seed sweep found it on
+      // round/chunky/wide; the single fixed seed the suite used before
+      // caught none of them.
+      //
+      // Clamped between the clearance the zone already computes and the
+      // fixed 118×98 box. Narrow silhouettes (`tall`, `tiny`) never reach
+      // this branch — their zone has already dropped `side` below the face
+      // entirely, for exactly this lack of flank room.
+      const glowR = 10;
+      const x = Math.min(
+        Math.max(bw * 0.4, eyeOuterReachPx(eyeScale) + glowR + ACCESSORY_ZONE_PAD_PX),
+        PIP_BODY_WIDTH / 2 - glowR,
+      );
       const topY = bh * 0.42;
       const bodyY = bh * 0.68;
       const lantern = new Graphics()
@@ -502,11 +542,86 @@ function drawAccessory(
   // showing between the hat and the skull. Dropping the whole family by a
   // few px (rather than re-tuning seven shapes independently) makes them
   // overlap the crown and sit ON the head, and shortens the family's
-  // upward overshoot past the fixed box by the same amount.
+  // upward overshoot past the fixed box by the same amount. Crown never
+  // needs the zone-fit rescale below: its absolute-px shapes sit well
+  // clear of the eye row on every silhouette (docs/liveliness-bible.md
+  // §6.1.1 — the residual collision is a NECK/SHOULDER problem only), so
+  // this branch reproduces the pre-2K geometry exactly.
   if (def.slot === "crown") {
     for (const part of parts) part.y += CROWN_TUCK_PX;
+    return parts;
+  }
+
+  // ROUND 2K FIX STAGE — shrink-only rescale into the landmark-derived
+  // zone (bible §6.1.1): the root cause of the residual scarf/bowtie/
+  // ember-bead collision was that these shapes are authored in ABSOLUTE
+  // pixels while the anchor point they hang from (`neckY`/`shoulderY`,
+  // fractions of `bh`) shrinks by up to 28% across the five silhouettes —
+  // so the shape's own fixed height ate further and further into the
+  // shrinking gap above the feet and below the mouth. One factor, applied
+  // to every part's own transform (every part is drawn from this
+  // function's shared (0, 0) local origin, so scaling them all in place
+  // and then applying the SAME `y` offset is equivalent to scaling one
+  // parent around that origin — done this way instead so `anchor`'s
+  // children stay the flat list of real Graphics `setSulkTint`/`tintable`
+  // already expect). Shrink-only, exactly like `computeJitter`'s body
+  // factor: it can only move the drawn shape CLOSER to the zone it must
+  // fit inside, never further out of it.
+  const zone = accessoryZone(def.slot, bh, bw, eyeScale);
+  const bounds = unionLocalBounds(parts);
+  const naturalTop = bounds.y;
+  const naturalBottom = bounds.y + bounds.height;
+  const naturalH = bounds.height > 0 ? bounds.height : 1;
+  const zoneH = zone.bottom - zone.top;
+  // Correct only what's actually wrong, exactly like a clamp: a shape that
+  // ALREADY fits inside [zone.top, zone.bottom] (e.g. the lantern's cord +
+  // bulb on every silhouette but the shortest three) is left exactly where
+  // it was drawn — top-aligning it unconditionally would drag an
+  // already-safe shape UP to the zone's ceiling and push the rest of the
+  // shape (the lantern's bulb, well below its cord) into the eye it was
+  // already clearing. Only a shape too TALL for its zone gets shrunk (and
+  // only then does it make sense to top-align the shrunk result); a shape
+  // that merely starts a few px too high/low gets nudged by the minimum
+  // amount that clears the violated edge.
+  let scale = 1;
+  let dy = 0;
+  if (naturalH > zoneH) {
+    scale = zoneH / naturalH;
+    dy = zone.top - naturalTop * scale;
+  } else if (naturalTop < zone.top) {
+    dy = zone.top - naturalTop;
+  } else if (naturalBottom > zone.bottom) {
+    dy = zone.bottom - naturalBottom;
+  }
+  for (const part of parts) {
+    part.scale.set(scale);
+    part.y = part.y * scale + dy;
   }
   return parts;
+}
+
+/** The union of every part's own `getLocalBounds()` — each part is a
+ * sibling drawn from the SAME (0, 0) local origin (no part sets its own
+ * `.position` before this point except the crown tuck, handled
+ * separately), so this is the accessory's natural bounding box as a
+ * whole, without needing a throwaway wrapper Container just to ask Pixi
+ * for one number. */
+function unionLocalBounds(
+  parts: readonly Graphics[],
+): { x: number; y: number; width: number; height: number } {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const g of parts) {
+    const b = g.getLocalBounds();
+    minX = Math.min(minX, b.x);
+    minY = Math.min(minY, b.y);
+    maxX = Math.max(maxX, b.x + b.width);
+    maxY = Math.max(maxY, b.y + b.height);
+  }
+  if (!Number.isFinite(minX)) return { x: 0, y: 0, width: 0, height: 0 };
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
 }
 
 /**
@@ -804,7 +919,7 @@ export function resolvePipSprite(
   accessoryAnchor.position.set(0, headTopY);
   rig.addChild(accessoryAnchor);
   if (accessoryDef !== null) {
-    tintable.push(...drawAccessory(accessoryAnchor, accessoryDef, bw, bh));
+    tintable.push(...drawAccessory(accessoryAnchor, accessoryDef, bw, bh, eyeScale));
   }
 
   if (stage === LifeStage.Pipling) {
@@ -818,6 +933,7 @@ export function resolvePipSprite(
     genome,
     stage,
     headTopY,
+    shadow,
     setEyesOpen(openness: number): void {
       eyes.scale.y = eyeScale * Math.max(0.08, Math.min(1, openness));
     },

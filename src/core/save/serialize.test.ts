@@ -305,6 +305,38 @@ function richState(seed = SEED): GameState {
         queue: ["toastnut"],
       },
     },
+    // ROUND 2K (docs/liveliness-bible.md §1/§7.1, save schema v12) — a
+    // live visitor with real, non-trivial data (deep-validated, like
+    // `crafts` above), plus its stock/schedule slices.
+    visitors: {
+      "place-3": {
+        placementId: "place-3",
+        speciesId: "mosspip",
+        name: "Pipsqueak",
+        genome: {
+          speciesId: "mosspip",
+          palette: "fern",
+          pattern: "plain",
+          personalityId: "curious",
+          shiny: false,
+        },
+        arrivedAt: SAVED_AT - 500_000,
+        leavesAt: SAVED_AT + 2_200_000,
+        trust: 2,
+        fedThisVisit: true,
+        visits: 3,
+      },
+    },
+    attractionStock: { "place-3": 3 },
+    attractionSchedule: { "place-3": SAVED_AT - 500_000 },
+    lastVisitorOutcome: {
+      action: "feedVisitor",
+      ok: true,
+      placementId: "place-3",
+      foodId: "berry",
+      at: SAVED_AT - 500_000,
+      trustGained: true,
+    },
   };
 }
 

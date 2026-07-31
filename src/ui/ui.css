@@ -1336,12 +1336,19 @@
    resolver has always drawn a mouth and neither DOM portrait did, which
    left the face undefined below the eyes and made every neck accessory
    read as a mouth. */
+/* ⚠️ ROUND 2K FIX STAGE — the mouth is a FRACTION now (`top`/`height` from
+   `PORTRAIT_MOUTH_TOP_PCT`/`_HEIGHT_PCT` in render/pipGeometry.ts), and
+   both DOM portraits use the same two numbers. It was `top: 54%` with an
+   `8px` height, i.e. a proportional position and an absolute size on a
+   body whose height varies 28% across silhouettes — so "below the mouth"
+   meant a different place on every Pip, which is what let the ember-bead
+   cover 55% of a `wide` Pip's mouth. */
 .pk-portrait-mouth {
   position: absolute;
-  top: 54%;
+  top: 50%;
   left: 50%;
   width: 20px;
-  height: 8px;
+  height: 8%;
   transform: translateX(-50%);
   border-bottom: 2px solid;
   border-radius: 0 0 60% 60%;
@@ -1382,6 +1389,14 @@
 .pk-portrait-accessory {
   position: absolute;
   pointer-events: none;
+  /* ⚠️ ROUND 2K FIX STAGE — THE SHARED BAND (bible §6.1.1(c)). Written
+     inline by `focusView.ts` from `render/pipGeometry.ts`'s
+     `ACCESSORY_ZONE_PCT`, keyed off the accessory's own slot — the same
+     table `ui/pipdex.ts` reads, so the two DOM portraits can no longer
+     disagree about where a scarf goes. `+2px` is this surface's own mouth
+     STROKE, which a proportional table cannot know about. */
+  --pk-acc-top: calc(var(--pk-acc-zone-top, 61%) + 2px);
+  --pk-acc-bottom: var(--pk-acc-zone-bottom, 97%);
   /* A pale accessory (cloudwisp, snowcap, flower) on a similarly pale body
      needs SOME definition regardless of the exact color pairing rolled —
      the same reasoning content/palette.ts's module doc gives for the
@@ -1423,25 +1438,30 @@
   opacity: 0.75;
 }
 
+/* ⚠️ ROUND 2K FIX STAGE — petals as proportional radial-gradients rather
+   than PIXEL box-shadow offsets, so the flower scales with its wearer.
+   See pipdex.css's copy of this rule for the measurement that forced it. */
 .pk-portrait-accessory--flower {
   top: 2%;
   left: 50%;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
+  width: 24px;
+  height: 15%;
   transform: translateX(-50%);
-  background: var(--pk-acc-primary, #f2a6c4);
-  box-shadow:
-    -7px -2px 0 0 var(--pk-acc-primary, #f2a6c4),
-    7px -2px 0 0 var(--pk-acc-primary, #f2a6c4),
-    -4px 6px 0 0 var(--pk-acc-primary, #f2a6c4),
-    4px 6px 0 0 var(--pk-acc-primary, #f2a6c4);
+  background:
+    radial-gradient(circle at 22% 32%, var(--pk-acc-primary, #f2a6c4) 47%, transparent 49%),
+    radial-gradient(circle at 78% 32%, var(--pk-acc-primary, #f2a6c4) 47%, transparent 49%),
+    radial-gradient(circle at 30% 84%, var(--pk-acc-primary, #f2a6c4) 45%, transparent 47%),
+    radial-gradient(circle at 70% 84%, var(--pk-acc-primary, #f2a6c4) 45%, transparent 47%);
 }
 
 .pk-portrait-accessory--flower::after {
   content: "";
   position: absolute;
-  inset: 0;
+  top: 28%;
+  left: 50%;
+  width: 42%;
+  height: 44%;
+  transform: translateX(-50%);
   border-radius: 50%;
   background: var(--pk-acc-secondary, #f7d24a);
 }
@@ -1592,31 +1612,34 @@
   border-radius: 2px;
 }
 
-/* --- Neck accessories: BELOW the mouth (`.pk-portrait-mouth`, 54%). ---
-   ROUND 2D FIX STAGE: the scarf sat at 62% and the bowtie/ember bead in
-   the high 50s/60s, which on a face with no drawn mouth is exactly where
-   a mouth reads — the scarf came across as a gag across the mouth, the
-   bowtie and bead as mouths. Mirrors `NECK_Y_FRAC` on the Pixi
-   surface. */
+/* --- Neck accessories: BELOW the painted mouth. ---
+   ⚠️ ROUND 2K FIX STAGE: round 2D moved these to hand-picked percentages
+   with PIXEL heights, and a live sweep found the ember-bead across the
+   mouth on all five silhouettes (55% of it covered on `wide`) and the
+   scarf on three. They now hang off `--pk-acc-top` — the shared band —
+   and every dimension is a fraction of body height, so a `wide` Pip and a
+   `tall` one wear the same scarf in the same place relative to their own
+   face. */
 
 .pk-portrait-accessory--scarf {
-  top: 68%;
+  top: var(--pk-acc-top);
   left: 50%;
   width: 58%;
-  height: 11px;
+  height: 11%;
   transform: translateX(-50%);
   background: var(--pk-acc-primary, #d9683c);
   border-radius: 6px;
 }
 
-/* The KNOT — what turns a horizontal bar into a worn scarf. */
+/* The KNOT — what turns a horizontal bar into a worn scarf. Grows
+   downward only; the shipped `-2px` put it above the band. */
 .pk-portrait-accessory--scarf::before {
   content: "";
   position: absolute;
-  top: -2px;
+  top: 0;
   left: 60%;
   width: 12px;
-  height: 15px;
+  height: 130%;
   border-radius: 50%;
   background: var(--pk-acc-secondary, #b84f2b);
 }
@@ -1624,19 +1647,19 @@
 .pk-portrait-accessory--scarf::after {
   content: "";
   position: absolute;
-  top: 10px;
+  top: 96%;
   left: 61%;
   width: 9px;
-  height: 15px;
+  height: 130%;
   background: var(--pk-acc-primary, #d9683c);
   clip-path: polygon(20% 0, 80% 0, 100% 100%, 0 100%);
 }
 
 .pk-portrait-accessory--bowtie {
-  top: 70%;
+  top: var(--pk-acc-top);
   left: 50%;
   width: 22px;
-  height: 12px;
+  height: 12%;
   transform: translateX(-50%);
 }
 
@@ -1646,7 +1669,7 @@
   position: absolute;
   top: 0;
   width: 10px;
-  height: 12px;
+  height: 100%;
   background: var(--pk-acc-primary, #e0567e);
 }
 
@@ -1660,15 +1683,23 @@
   clip-path: polygon(0 0, 0 100%, 100% 50%);
 }
 
+/* The CORD is the topmost painted pixel, so the element is offset by
+   exactly the height the cord reaches above it — putting the cord, not
+   the bead, on the band. The shipped rule anchored the bead and let the
+   cord ride up into the mouth. The 6px/2px glow is now the same tight
+   1.2px rim pipdex.css already switched to: a soft glow reaching 8px past
+   the bead cannot be kept clear of anything, and it read as a dark hole
+   with a dot in it. */
 .pk-portrait-accessory--emberbead {
-  top: 70%;
+  --pk-bead-h: 9%;
+  top: calc(var(--pk-acc-top) + 0.55 * var(--pk-bead-h));
   left: 50%;
   width: 8px;
-  height: 8px;
+  height: var(--pk-bead-h);
   transform: translateX(-50%);
   border-radius: 50%;
   background: var(--pk-acc-primary, #ff7a3c);
-  box-shadow: 0 0 6px 2px var(--pk-acc-secondary, #8a3a20);
+  box-shadow: 0 0 0 1.2px var(--pk-acc-secondary, #8a3a20);
 }
 
 /* The cord — a shallow arc above the bead, so it reads as hung round the
@@ -1676,10 +1707,10 @@
 .pk-portrait-accessory--emberbead::before {
   content: "";
   position: absolute;
-  bottom: 5px;
+  bottom: 45%;
   left: 50%;
-  width: 26px;
-  height: 9px;
+  width: 300%;
+  height: 110%;
   transform: translateX(-50%);
   border: 1px solid #6b4a30;
   border-bottom: none;
@@ -1687,39 +1718,48 @@
   opacity: 0.75;
 }
 
-/* --- Shoulder / side accessories: out on a flank, BELOW the blush (46%)
-   so they never land on the cheek, and clear of the eye row. --- */
+/* --- Shoulder / side accessories: out on a flank, in the SAME band as
+   the neck items and clear of the eye row. ---
+   ⚠️ ROUND 2K FIX STAGE: the pauldron clipped the right eye on `wide`,
+   and the lantern hung a fixed-pixel bulb off a fixed-pixel cord at a
+   proportional offset. Both are fractions now. */
 
+/* Rotated 20°, so its painted box reaches ~14% of its own size above the
+   element's top edge; the offset is exactly that. */
 .pk-portrait-accessory--shellpauldron {
-  top: 60%;
+  --pk-shell-h: 16%;
+  top: calc(var(--pk-acc-top) + 0.15 * var(--pk-shell-h));
   left: 74%;
   width: 16px;
-  height: 16px;
+  height: var(--pk-shell-h);
   border-radius: 50% 50% 50% 0;
   background: var(--pk-acc-primary, #f0d6b8);
   border: 1.2px solid var(--pk-acc-secondary, #d9a878);
   transform: rotate(-20deg);
 }
 
+/* The element is the BULB; the cord is a `::before` reaching up from it to
+   the top of the band (see pipdex.css for the same restructure and why). */
 .pk-portrait-accessory--lantern {
-  top: 44%;
-  left: 79%;
-  width: 1.4px;
-  height: 14px;
-  background: #5a4a30;
-}
-
-.pk-portrait-accessory--lantern::after {
-  content: "";
-  position: absolute;
-  top: 12px;
-  left: 50%;
+  --pk-lantern-cord: 10%;
+  top: calc(var(--pk-acc-top) + var(--pk-lantern-cord));
+  left: 76%;
   width: 11px;
-  height: 12px;
-  transform: translateX(-50%);
+  height: 13%;
   background: var(--pk-acc-primary, #f7c948);
   border: 1.2px solid var(--pk-acc-secondary, #8a6a3a);
   border-radius: 3px;
+}
+
+.pk-portrait-accessory--lantern::before {
+  content: "";
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  width: 1.4px;
+  height: 77%;
+  transform: translateX(-50%);
+  background: #5a4a30;
 }
 
 /* Identity block */
@@ -2713,4 +2753,38 @@
 .pk-rename-cancel:active,
 .pk-rename-save:active {
   transform: scale(0.96);
+}
+
+/* ---------- ROUND 2K: the visitor chip (docs/liveliness-bible.md §7.4) ----
+   Pinned OUTSIDE `.pk-cast` at the cast row's right end, exactly like the
+   reveal chip and for exactly the same reason: someone dropping by must
+   never reflow the player's own roster.
+
+   THE DASHED RING IS THE TELL. A visitor is not yours — it has no needs
+   comb, it never takes the active state, and tapping it never changes
+   `activePipId`. It is a doorbell, not a roster entry. Everything else
+   about it (the portrait, the accessory, the jitter) is identical to a
+   real Pip's chip, because the visitor IS a real, individual Pip. */
+.pk-visitorchip {
+  appearance: none;
+  border: none;
+  background: none;
+  padding: 2px;
+  margin: 0 0 0 4px;
+  flex: 0 0 auto;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  box-sizing: border-box;
+  /* The one visual difference that carries the whole meaning. */
+  outline: 2px dashed rgba(232, 164, 77, 0.75);
+  outline-offset: -2px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pk-visitorchip:active {
+  transform: scale(0.94);
 }

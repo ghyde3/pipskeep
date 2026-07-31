@@ -70,8 +70,27 @@ import type { AssignExpeditionOutcome, PendingReveal } from "../expeditions";
 import type { KeepState, Placement, PlacementId } from "../keep";
 import type { JobAssignment, JobOutcome, JobsByPip } from "../keep/jobs";
 import type { CraftCompletion, CraftOrder, CraftOutcome, CraftsByStation } from "../crafting";
+import type { VisitorOutcome, VisitorRecord, VisitorsByPlacement } from "../attractions";
 
 /**
+ * v12 (round 2K — docs/liveliness-bible.md §1/§7.1, save schema): THREE
+ * new REQUIRED top-level slices — `visitors` (`PlacementId →
+ * VisitorRecord`, one live/most-recent visitor per attraction placement),
+ * `attractionStock` (`PlacementId → number`, remaining feed charges) and
+ * `attractionSchedule` (`PlacementId → number`, the per-placement due-tick
+ * baseline). Migrated saves backfill all three to `{}`: nobody could have
+ * built an attraction before this round shipped (they unlock at Keep tier
+ * 6, and the placeable itself did not exist), so an empty book is the
+ * only honest value — the SAME "existing saves must not gain impossible
+ * things" rule `MIGRATIONS[10]`'s `crafts` backfill and the fifth-resource
+ * widening both honor (`MIGRATIONS[11]`). The transient echo
+ * (`lastVisitorOutcome`) is OPTIONAL, same `undefined ≡ absent` precedent
+ * `lineageEggs`/`lastLossOutcome`/`lastCraftOutcome` already use, so no
+ * migration touches it at all.
+ *
+ * `rngState["visitors"]` needs NO shape change — it is already a plain
+ * `Record<string, number>`, absent-key-≡-0 like every other stream.
+ *
  * v11 (round 2J — docs/economy-bible.md §3, save schema): ONE new
  * REQUIRED top-level slice — `crafts` (`PlacementId → CraftOrder`, the
  * Craft Table's standing orders). Migrated saves backfill it to `{}`:
@@ -190,7 +209,7 @@ import type { CraftCompletion, CraftOrder, CraftOutcome, CraftsByStation } from 
  * `nextPlacementNumber`, per-pip `evolved` records, and the two new
  * transient outcome echoes (job, evolve). v2, Phase 4: keepLevel, eggs,
  * pendingReveals, id counters.) */
-export const CURRENT_SCHEMA_VERSION = 11;
+export const CURRENT_SCHEMA_VERSION = 12;
 
 /** The on-disk envelope (spec §8). */
 export interface SaveBlob {
@@ -808,6 +827,57 @@ function validateCrafts(value: unknown, path: string): CraftsByStation {
   return out;
 }
 
+/** v12 (round 2K, docs/liveliness-bible.md §7.1) — one attraction's
+ * live/most-recent visitor. Deep-validated (unlike the transient
+ * `last*Outcome` echoes below): the sim derives presence from
+ * `now < leavesAt` on every load (spec §6.1's derived-timer discipline),
+ * so a silently-wrong field here would misjudge whether a visitor is
+ * standing there. `expectedPlacementId` mirrors `validateCrafts`'s own
+ * key/id referential bar. */
+function validateVisitorRecord(
+  value: unknown,
+  path: string,
+  expectedPlacementId: string,
+): VisitorRecord {
+  const rec = expectRecord(value, path);
+  const placementId = expectString(rec["placementId"], p(path, "placementId"));
+  if (placementId !== expectedPlacementId) {
+    fail(
+      "invalid-field",
+      p(path, "placementId"),
+      `visitor record placementId ${JSON.stringify(placementId)} does not match its record key ${JSON.stringify(expectedPlacementId)}`,
+    );
+  }
+  return {
+    placementId,
+    speciesId: expectString(rec["speciesId"], p(path, "speciesId")),
+    name: expectString(rec["name"], p(path, "name")),
+    genome: validateGenome(rec["genome"], p(path, "genome")),
+    arrivedAt: expectFiniteNumber(rec["arrivedAt"], p(path, "arrivedAt")),
+    leavesAt: expectFiniteNumber(rec["leavesAt"], p(path, "leavesAt")),
+    trust: expectFiniteNumber(rec["trust"], p(path, "trust")),
+    fedThisVisit: expectBoolean(rec["fedThisVisit"], p(path, "fedThisVisit")),
+    visits: expectFiniteNumber(rec["visits"], p(path, "visits")),
+  };
+}
+
+/** v12 — every attraction placement's visitor record, keyed by
+ * `PlacementId`. Referential integrity against `keep.placements` is
+ * intentionally NOT enforced here (unlike `jobs` vs `pips`): a stale
+ * visitor entry for a placement removed by a corrupt hand-edit is
+ * harmless dead data, not a double-render/double-decay hazard the way a
+ * duplicated PipId would be — `core/attractions`'s own functions only
+ * ever read a placement's entry after confirming the placement itself
+ * still hosts an attraction. */
+function validateVisitors(value: unknown, path: string): VisitorsByPlacement {
+  const rec = expectRecord(value, path);
+  const out: Record<PlacementId, VisitorRecord> = {};
+  for (const [placementId, record] of Object.entries(rec)) {
+    out[placementId] = validateVisitorRecord(record, p(path, placementId), placementId);
+  }
+  return out;
+}
+
 /** Onboarding progress (v4, spec §10.1): the sim reads `completed`
  * (boot decides whether to resume the guided beats), so it is deeply
  * validated, unlike the transient echoes below. */
@@ -1343,6 +1413,26 @@ function validateGameState(value: unknown, path: string): GameState {
             rec["lastCraftCompletions"],
             p(path, "lastCraftCompletions"),
           ),
+        }
+      : {}),
+    // v12 (round 2K) — required: `MIGRATIONS[11]` backfills `{}` for
+    // every pre-2K save, so a blob reaching here without them is
+    // genuinely malformed, not merely old (same contract as `crafts`).
+    visitors: validateVisitors(rec["visitors"], p(path, "visitors")),
+    attractionStock: validateNumberRecord(rec["attractionStock"], p(path, "attractionStock")),
+    attractionSchedule: validateNumberRecord(
+      rec["attractionSchedule"],
+      p(path, "attractionSchedule"),
+    ),
+    // v12 — the FEED_VISITOR/WELCOME_VISITOR/RESTOCK_ATTRACTION echo.
+    // Transient like every other `last*Outcome`, so shape-checked only;
+    // OPTIONAL for the same reason as `lineageEggs` above.
+    ...(rec["lastVisitorOutcome"] !== undefined
+      ? {
+          lastVisitorOutcome: passThroughTransient(
+            rec["lastVisitorOutcome"],
+            p(path, "lastVisitorOutcome"),
+          ) as VisitorOutcome | null,
         }
       : {}),
   };

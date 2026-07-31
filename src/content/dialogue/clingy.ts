@@ -90,4 +90,20 @@ export const clingy: DialoguePool = {
     "Ask again while holding me. Still no, but cozier.",
     "I would, but who'd adore you at close range? Exactly.",
   ],
+  /**
+   * ROUND 2K (docs/liveliness-bible.md §4.5) — PIP TO PIP, not Pip to
+   * player. Two Pips who stop within a tile and a half of each other
+   * turn, face, emote, and 35% of the time one of them says one of
+   * these. The audience is the OTHER Pip; the player is overhearing.
+   */
+  greeting: [
+    "There you are! I was just about to come find you.",
+    "Hi hi hi. Okay. I'm calm. I'm calm.",
+    "Hello! Are you staying? You're staying, right?",
+    "Oh good, it's you. It's nicer when it's you.",
+    "Hi. I saved you a spot. It's this spot. Right here.",
+    "Hello! I thought about you earlier. Twice, actually.",
+    "You're back! I mean — you were never gone. But still.",
+    "Hi. Can we stand near each other for a bit? No reason.",
+  ],
 };
