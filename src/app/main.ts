@@ -79,6 +79,18 @@ import { showRecoveryModal } from "../ui/recovery";
 import { createXpBar } from "../ui/xpBar";
 import { initLevelUpUi } from "../ui/levelUp";
 import { initMilestoneCelebrationUi } from "../ui/milestoneCelebration";
+// Round 2H — THE LIFECYCLE's four surfaces (spec §16 v1.5, docs/lifecycle-
+// bible.md). Same parallel-module, static-import pattern as everything
+// above: each owns all of its own DOM + CSS (ui/lifecycle.css) and mounts
+// nothing until main.ts says where. Their five promises are enforced in
+// core; these are the surfaces that make them VISIBLE, which is the whole
+// difference between a mechanic and a dead feature (spec v1.3 §4.6's
+// standing rule: "written to state" and "visible to the player" are
+// separate acceptance criteria).
+import { createPipLevelView } from "../ui/pipLevel";
+import { createAilmentView } from "../ui/ailment";
+import { createMemorialView } from "../ui/memorial";
+import { createBreedingView } from "../ui/breeding";
 // Round 2A sound (amends spec §12): the `sound(slotId)` seam is no longer
 // a no-op — app/audio/ synthesizes every cue procedurally. initSound is
 // the only wiring the app needs; every call site was already in place.
@@ -299,6 +311,46 @@ async function startGame(
   });
   document.body.append(pipdexView.el, sanctuaryView.el);
 
+  // --- Round 2H lifecycle surfaces (spec §16 v1.5) ---
+  // Created BEFORE the UI overlay for the same reason the sanctuary view is:
+  // three of the seams below are affordances that live inside the focus view
+  // (a Pip's own page) but whose dialogs, copy and dispatches belong here.
+  //
+  // `openExpeditionPicker` is a forward reference through a mutable binding
+  // (the `hideKeepStrip` pattern above) because the lineage board's "Send
+  // someone" button reaches into the focus view, which `initUi` creates a few
+  // lines below. Nothing calls it synchronously during any constructor.
+  let openExpeditionPicker: ((expeditionId: string) => void) | null = null;
+
+  const pipLevelView = createPipLevelView({ getState: () => store.getState() });
+  // THE SEND SEAM: `ailmentView.requestExpedition` replaces the focus view's
+  // direct ASSIGN_EXPEDITION dispatch (wired through `initUi` below). A safe
+  // trail passes straight through to the same dispatch; a risky one shows the
+  // confirm first. This is promise 1 ("loss is never a surprise") at the only
+  // moment it can be kept — BEFORE the player sends someone into danger.
+  const ailmentView = createAilmentView({
+    dispatch: (a) => store.dispatch(a),
+    getState: () => store.getState(),
+    clock,
+  });
+  const memorialView = createMemorialView({
+    dispatch: (a) => store.dispatch(a),
+    getState: () => store.getState(),
+    clock,
+    onSendToExpedition: (expeditionId) => openExpeditionPicker?.(expeditionId),
+  });
+  const breedingView = createBreedingView({
+    dispatch: (a) => store.dispatch(a),
+    getState: () => store.getState(),
+    clock,
+  });
+  document.body.append(
+    pipLevelView.el,
+    ailmentView.el,
+    memorialView.el,
+    breedingView.el,
+  );
+
   // --- DOM UI overlay ---
   const ui = initUi({
     mount: document.body,
@@ -306,6 +358,14 @@ async function startGame(
     clock,
     getBubbleAnchor: () => scene.getBubbleAnchor(),
     openReveal: () => phase4.openLootReveal(),
+    // Round 2H seams the focus view offers but does not own (same split as
+    // `openRetireConfirm` below — the affordance is on the Pip's page, the
+    // dialog belongs to its own module):
+    requestExpedition: (pipId, expeditionId) =>
+      ailmentView.requestExpedition(pipId, expeditionId),
+    openGrowth: (pipId) => pipLevelView.open(pipId),
+    openAilment: (pipId) => ailmentView.open(pipId),
+    openRetirementReady: (pipId) => memorialView.openRetirementReady(pipId),
     // The retire affordance lives in the focus view (that is where a Pip's
     // own page is), but the dialog, its copy and its dispatch belong to
     // ui/sanctuary.ts. The confirm sits ABOVE the focus view (z 26 vs 20,
@@ -419,11 +479,34 @@ async function startGame(
       pipdexView.close();
       sanctuaryView.close();
       dailies.close();
+      // Round 2H's two destinations join the same one-surface-at-a-time
+      // routine. The Nursery is always listed; "Someone to find" only
+      // appears while a lineage egg is actually waiting (see navMenu.ts).
+      pipLevelView.close();
+      breedingView.close();
+      memorialView.closeLineageBoard();
       if (id === "album") pipdexView.open();
       else if (id === "meadow") sanctuaryView.open();
       else if (id === "today") dailies.open();
+      else if (id === "nursery") breedingView.open();
+      else if (id === "lineage") memorialView.openLineageBoard();
+    },
+    // ROUND 2H — SHIELD SIX (docs/lifecycle-bible.md §7.7). One dispatch,
+    // no confirm dialog and no warning copy: a player reaching for "Pips
+    // never fall ill" should get it immediately, and turning it back on is
+    // free either way.
+    onSetQuietKeep: (on) => {
+      store.dispatch({ type: "SET_QUIET_KEEP", on, at: clock.now() });
     },
   });
+
+  // The lineage board's "Send someone" button (bible §5.3 item 2): close the
+  // board, open the picker on the Pip whose page it lands on. The focus view
+  // owns the expedition list; this just gets the player there.
+  openExpeditionPicker = () => {
+    memorialView.closeLineageBoard();
+    ui.openFocus();
+  };
 
   // --- Round 2F: the milestone ribbon (progression bible §6.1) ---
   //
@@ -460,6 +543,10 @@ async function startGame(
   pipdexView.sync(prevState);
   sanctuaryView.sync(prevState);
   navMenu.sync(prevState);
+  pipLevelView.sync(prevState);
+  ailmentView.sync(prevState);
+  memorialView.sync(prevState);
+  breedingView.sync(prevState);
 
   store.subscribe((state) => {
     const prev = prevState;
@@ -470,6 +557,14 @@ async function startGame(
     pipdexView.sync(state);
     sanctuaryView.sync(state);
     navMenu.sync(state);
+    // Round 2H: the memorial view is DRIVEN by its sync — it watches
+    // `lastLossOutcome` and the `readyToRetire` edge itself, so the loss
+    // moment and the retirement card fire without main.ts diffing anything.
+    // The ailment view's floating chip is likewise self-driving.
+    pipLevelView.sync(state);
+    ailmentView.sync(state);
+    memorialView.sync(state);
+    breedingView.sync(state);
     watchAlerts(prev, state);
 
     if (state.lastCareOutcome !== prev.lastCareOutcome && state.lastCareOutcome !== null) {

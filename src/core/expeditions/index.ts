@@ -54,8 +54,22 @@ import { beginReturn, departExpedition } from "../pips/machine";
 import type { MachineTuning } from "../pips/machine";
 import { DIALOGUE_STREAM, pickLineFromPools } from "../pips/dialogue";
 import type { DialoguePoolsView, DialogueStateSlice } from "../pips/dialogue";
-import { createEgg } from "../eggs";
+import { createEgg, createLineageFindEgg } from "../eggs";
 import type { Egg, EggTuning } from "../eggs";
+// ROUND 2H (spec §16 v1.5, docs/lifecycle-bible.md §3.2) — AILMENT
+// CONTRACTION is rolled at the exact same moment loot is (this function is
+// the ONE settle point both the live TICK path and the CATCHUP path funnel
+// through), from a dedicated stream so the `"expedition-loot"` cursor's
+// contract (module doc above) stays untouched by this round.
+import { AILMENT_STREAM, ailmentForExpedition, rollContraction } from "../pips/ailment";
+import type { AilmentRegistry, AilmentTuning, LineageEggSeed } from "../pips/ailment";
+// ROUND 2H (spec §12 unfenced, docs/lifecycle-bible.md §5.2) — LINEAGE EGG
+// FINDS are rolled at this SAME settle point too, from their own dedicated
+// stream (see `attemptLineageFind`'s own doc for the cursor contract this
+// preserves).
+import { attemptLineageFind, LINEAGE_STREAM, oldestUnfoundSeedFor } from "../pips/breeding";
+import type { LineageTuning } from "../pips/breeding";
+import type { CombineGenomesContent } from "../pips/genome";
 
 /** Identifier of an in-flight expedition instance (not the content id). */
 export type ExpeditionRunId = string;
@@ -113,6 +127,25 @@ export type ExpeditionTuning = EggTuning &
         readonly expeditionSpeedFloorWithQuirk?: number;
       };
     };
+    /**
+     * ROUND 2H (spec §16 v1.5, docs/lifecycle-bible.md §7.2) — THE CAREFUL
+     * ROUTE's two halves of one bargain: the trip takes
+     * `carefulRouteDurationMultiplier` longer and brings home
+     * `carefulRouteLootMultiplier` of the loot rolls, and in exchange it
+     * cannot inflict an ailment at all.
+     *
+     * Optional/structural for the same reason `progression` above is: the
+     * ~dozen bare `{ quirks: {...} }` tuning fixtures across
+     * `core/expeditions`/`core/economy` keep compiling, and an absent
+     * value is the IDENTITY (×1 duration, ×1 loot) — which is also exactly
+     * what a non-careful trip gets, so no fixture observes a change.
+     */
+    readonly lifecycle?: {
+      readonly shields?: {
+        readonly carefulRouteDurationMultiplier?: number;
+        readonly carefulRouteLootMultiplier?: number;
+      };
+    };
   };
 
 /** Injectable content, defaulting to the real registries. */
@@ -163,6 +196,30 @@ export interface ExpeditionContent {
    */
   readonly keepSpeedMultiplier?: number;
   /**
+   * ROUND 2H (docs/lifecycle-bible.md §1.3) — the departing Pip's OWN
+   * expedition-speed level effect
+   * (`core/pips/level.ts`'s `expeditionSpeedMultiplierFor`), passed
+   * straight through to `effectiveExpeditionDurationMs`. Omitted
+   * (`undefined`) preserves the pre-2H formula exactly (defaults to 1
+   * there). Used by `assignExpedition`'s single call site.
+   */
+  readonly pipSpeedMultiplier?: number;
+  /**
+   * ROUND 2H (spec §16 v1.5, docs/lifecycle-bible.md §7.2) — THE CAREFUL
+   * ROUTE, shield two: the player ticked "take the long way round" on the
+   * send-off card. Read by `assignExpedition` ONLY, and only honoured for
+   * a trip that actually carries risk (`ailmentRegistry` must be supplied
+   * AND name an ailment for this biome) — there is no such thing as taking
+   * the careful route to the Meadow, and charging a player 1.5× duration
+   * and a quarter of the loot to avoid a risk that never existed would be
+   * a trap.
+   *
+   * Once honoured it is stamped onto the trip snapshot
+   * (`ActiveExpedition.careful`) and read back at settle time; nothing
+   * recomputes it mid-trip.
+   */
+  readonly careful?: boolean;
+  /**
    * ROUND 2F — the Keep's already-resolved building incubation-speed
    * multiplier (`resolveKeepEffects().incubationSpeedMultiplier`), passed
    * straight through to `createEgg` when a returning trip finds an egg.
@@ -171,6 +228,33 @@ export interface ExpeditionContent {
    * site.
    */
   readonly keepIncubationSpeedMultiplier?: number;
+  /**
+   * ROUND 2H (docs/lifecycle-bible.md §3.2) — the ailment registry
+   * (`content/ailments.ts`, injected structurally like every other content
+   * registry here). Omitted (`undefined`) means NO contraction roll at
+   * all — every existing caller/fixture that doesn't pass this stays
+   * byte-identical (zero extra RNG consumed), the same contract every
+   * other optional content field on this interface already keeps.
+   */
+  readonly ailmentRegistry?: AilmentRegistry;
+  /** Tuning `rollContraction` reads (level effects, contraction cap).
+   * Defaults to `content/tuning.ts` inside `rollContraction` itself when
+   * `ailmentRegistry` is provided but this is not. */
+  readonly ailmentTuning?: AilmentTuning;
+  /**
+   * ROUND 2H (docs/lifecycle-bible.md §5.2) — tuning `attemptLineageFind`
+   * reads (find odds, level share, shiny-inherit chance). Defaults to
+   * `content/tuning.ts` inside `attemptLineageFind` itself; only ever
+   * consulted when `state.lineageEggs` actually carries an unfound seed
+   * for the returning trip's biome (module doc on `ExpeditionStateSlice
+   * .lineageEggs`).
+   */
+  readonly lineageTuning?: LineageTuning;
+  /** Injectable content `combineGenomes` reads while resolving a find's
+   * inheritance (species registry, for the mutation branch) — defaults to
+   * `content/species.ts` inside `combineGenomes` itself. Test-only seam;
+   * production never sets this. */
+  readonly lineageGenomeContent?: CombineGenomesContent;
 }
 
 /**
@@ -188,6 +272,15 @@ export interface PendingReveal {
   readonly items: readonly string[];
   /** Egg found on this trip (state Found), or null. */
   readonly egg: Egg | null;
+  /**
+   * ROUND 2H (docs/lifecycle-bible.md §9.5 — the 2G HUD seam) — set iff
+   * this return rolled a NEW ailment (`rollContraction` returned non-null).
+   * The UI's "came back limping" beat (bible §3.4) reads this to stage one
+   * extra quiet card after the ordinary loot reveal. Absent on every trip
+   * that didn't contract anything — which is every quick trip, by
+   * construction, and most deep ones.
+   */
+  readonly contractedAilmentId?: string;
 }
 
 /**
@@ -203,6 +296,15 @@ export interface ExpeditionStateSlice extends DialogueStateSlice {
   readonly pendingReveals: readonly PendingReveal[];
   /** Deterministic egg-id counter (`egg-<n>`). */
   readonly nextEggNumber: number;
+  /**
+   * ROUND 2H (docs/lifecycle-bible.md §5.1) — promise 4's unfound-seed
+   * queue, read (and, on a find, shortened) by `settleExpeditionReturn`.
+   * OPTIONAL, `undefined ≡ []` — the SAME precedent `GameState.lineageEggs`
+   * itself uses, so every fixture/test in this module's own large existing
+   * suite that never sets it stays byte-identical (zero unfound seeds ⇒
+   * zero "lineage" rolls, `core/pips/breeding.ts`'s own module doc).
+   */
+  readonly lineageEggs?: readonly LineageEggSeed[];
 }
 
 /**
@@ -215,23 +317,31 @@ export interface ExpeditionStateSlice extends DialogueStateSlice {
  * (`core/keep/effects.ts`'s `resolveKeepEffects().expeditionSpeedMultiplier`,
  * already capped at `effectCaps.expeditionSpeedMin` there) — defaults to 1,
  * so every existing caller/fixture that doesn't pass it is byte-identical.
- * Composed with the personality multiplier and THEN floored at
- * `effectCaps.expeditionSpeedFloorWithQuirk` (0.75) — never floored twice,
- * and the floor is a no-op whenever `tuning.progression` is absent (test
- * fixtures) or `keepSpeedMultiplier` is 1 (an unbuilt Keep), so this is
- * additive over the pre-2F formula in both dimensions.
+ *
+ * `pipSpeedMultiplier` (round 2H, docs/lifecycle-bible.md §1.3 "trail
+ * legs") — the Pip's OWN level effect
+ * (`core/pips/level.ts`'s `expeditionSpeedMultiplierFor`, ×0.94 at level
+ * 10) — defaults to 1 (level 1 / no Pip supplied), same byte-identical
+ * contract.
+ *
+ * All three compose by multiplying, THEN floored together at
+ * `effectCaps.expeditionSpeedFloorWithQuirk` (0.75) — never floored
+ * twice, and the floor is a no-op whenever `tuning.progression` is absent
+ * (test fixtures) or every multiplier is 1 (an unbuilt Keep, a level-1
+ * Pip), so this is additive over the pre-2H formula in every dimension.
  */
 export function effectiveExpeditionDurationMs(
   expedition: ExpeditionView,
   personalityId: string,
   tuning: ExpeditionTuning = contentTuning,
   keepSpeedMultiplier = 1,
+  pipSpeedMultiplier = 1,
 ): number {
   const personalityMultiplier =
     personalityId === HARDWORKING_PERSONALITY_ID
       ? tuning.quirks.hardworkingExpeditionDurationMultiplier
       : 1;
-  const combined = personalityMultiplier * keepSpeedMultiplier;
+  const combined = personalityMultiplier * keepSpeedMultiplier * pipSpeedMultiplier;
   const floor = tuning.progression?.effectCaps?.expeditionSpeedFloorWithQuirk;
   const flooredCombined = floor !== undefined ? Math.max(combined, floor) : combined;
   return expedition.durationMs * flooredCombined;
@@ -275,6 +385,11 @@ export type AssignExpeditionOutcome =
       readonly durationMs: number;
       /** Derived: departedAt + durationMs (spec §6.1). */
       readonly returnAt: number;
+      /** ROUND 2H — the send actually took the careful route (shield two).
+       * Absent/`false` = the ordinary route. Lets the send-off toast say
+       * "the long way round" honestly, and lets a test assert that a
+       * `careful: true` request on a SAFE trail was correctly ignored. */
+      readonly careful?: boolean;
     }
   | {
       readonly ok: false;
@@ -391,15 +506,30 @@ export function assignExpedition<S extends ExpeditionStateSlice>(
     });
   }
 
-  const durationMs = effectiveExpeditionDurationMs(
+  // ROUND 2H — THE CAREFUL ROUTE (shield two). Honoured only where there
+  // is a real risk to opt out of (see `ExpeditionContent.careful`), so a
+  // stray `careful: true` on a safe trail costs the player nothing.
+  const careful =
+    content.careful === true &&
+    content.ailmentRegistry !== undefined &&
+    ailmentForExpedition(content.ailmentRegistry, expeditionId) !== undefined;
+
+  const baseDurationMs = effectiveExpeditionDurationMs(
     expedition,
     pip.personalityId,
     tuning,
     content.keepSpeedMultiplier ?? 1,
+    content.pipSpeedMultiplier ?? 1,
   );
+  const durationMs = careful
+    ? Math.round(
+        baseDurationMs *
+          (tuning.lifecycle?.shields?.carefulRouteDurationMultiplier ?? 1),
+      )
+    : baseDurationMs;
   const result = departExpedition(
     pip,
-    { expeditionId, departedAt: at, durationMs },
+    { expeditionId, departedAt: at, durationMs, ...(careful ? { careful: true } : {}) },
     tuning,
   );
 
@@ -439,6 +569,7 @@ export function assignExpedition<S extends ExpeditionStateSlice>(
       departedAt: at,
       durationMs,
       returnAt: at + durationMs,
+      ...(careful ? { careful: true } : {}),
     },
   };
 }
@@ -505,13 +636,19 @@ export function rollExpeditionLoot(
   tuning: ExpeditionTuning = contentTuning,
   effectiveBonusChance?: number,
   effectiveEggChance?: number,
+  lootRollsOverride?: number,
 ): LootRoll {
   const items: string[] = [];
   const curious = personalityId === CURIOUS_PERSONALITY_ID;
   const bonusChance =
     effectiveBonusChance ?? (curious ? tuning.quirks.curiousLootBonus : 0);
+  // ROUND 2H — the careful route's half of the bargain (shield two). The
+  // OVERRIDE, not a multiplier applied here, so this function keeps its
+  // "rolls exactly `lootRolls` times" contract for every other caller and
+  // the cursor arithmetic stays trivially readable.
+  const rolls = lootRollsOverride ?? expedition.lootRolls;
   if (expedition.lootTable.length > 0) {
-    for (let i = 0; i < expedition.lootRolls; i++) {
+    for (let i = 0; i < rolls; i++) {
       items.push(pickWeighted(stream, expedition.lootTable));
       if (bonusChance > 0 && stream.chance(bonusChance)) {
         items.push(pickWeighted(stream, expedition.lootTable));
@@ -559,6 +696,19 @@ export function settleExpeditionReturn<S extends ExpeditionStateSlice>(
   const pip = state.pips[pipId];
   const rng = createRngFromState(state.seed, state.rngState);
   const stream = rng.stream(EXPEDITION_LOOT_STREAM);
+  // ROUND 2H — THE CAREFUL ROUTE (shield two), read back off the trip
+  // snapshot the player committed to at send-off. Fewer loot rolls
+  // (floored, never below one — the long way round always brings SOMETHING
+  // home) and, below, no contraction roll at all.
+  const carefulTrip = expedition.careful === true;
+  const carefulLootRolls = carefulTrip
+    ? Math.max(
+        1,
+        Math.round(
+          def.lootRolls * (tuning.lifecycle?.shields?.carefulRouteLootMultiplier ?? 1),
+        ),
+      )
+    : undefined;
   const loot = rollExpeditionLoot(
     stream,
     def,
@@ -566,6 +716,7 @@ export function settleExpeditionReturn<S extends ExpeditionStateSlice>(
     tuning,
     content.effectiveLootBonusChance,
     content.effectiveEggChance,
+    carefulLootRolls,
   );
 
   const egg = loot.eggFound
@@ -580,19 +731,108 @@ export function settleExpeditionReturn<S extends ExpeditionStateSlice>(
       )
     : null;
 
+  // ROUND 2H (docs/lifecycle-bible.md §3.2) — ailment contraction, rolled
+  // from the dedicated "ailment" stream AFTER the loot/egg rolls above, so
+  // the "expedition-loot" cursor's own contract is untouched either way.
+  // Gated entirely on `content.ailmentRegistry` being supplied: omitted
+  // (every pre-2H caller/test) consumes ZERO extra rolls and touches
+  // `pip.ailment` not at all — byte-identical to before this round.
+  //
+  // A CAREFUL TRIP SKIPS THIS ENTIRELY — zero rolls, no cursor footprint,
+  // no possible ailment. That is shield two's whole promise, and it is
+  // enforced here rather than by a low contract chance so that "the long
+  // way round is safe" is a structural fact and not a tuning value.
+  let contractedPip: PipState | undefined;
+  let contractedAilmentId: string | undefined;
+  if (!carefulTrip && pip !== undefined && content.ailmentRegistry !== undefined) {
+    const ailmentStream = rng.stream(AILMENT_STREAM);
+    const contracted = rollContraction(
+      pip,
+      expedition.expeditionId,
+      ailmentStream,
+      content.ailmentRegistry,
+      completedAt,
+      content.ailmentTuning ?? contentTuning,
+    );
+    if (contracted !== null) {
+      contractedPip = { ...pip, ailment: contracted };
+      contractedAilmentId = contracted.id;
+    }
+  }
+
+  // ROUND 2H (docs/lifecycle-bible.md §5.2) — LINEAGE EGG FINDS, rolled
+  // from the dedicated "lineage" stream AFTER loot/egg AND ailment, so
+  // neither of those cursors' contracts are touched either way. Zero rolls
+  // (and `lineageEggs` echoed back UNCHANGED by reference) whenever
+  // `state.lineageEggs` carries no unfound seed for this biome —
+  // `attemptLineageFind`'s own doc comment / `core/pips/breeding.ts`'s
+  // module doc.
+  let lineageEggsAfter = state.lineageEggs;
+  let lineageEgg: Egg | null = null;
+  // The candidate check itself is pure and roll-free
+  // (`oldestUnfoundSeedFor`) — checked BEFORE `rng.stream(LINEAGE_STREAM)`
+  // is ever called, so a biome with no unfound seed never even registers
+  // the "lineage" cursor (merely calling `.stream()` would otherwise seed
+  // an untouched-but-present entry in `rngState`, which — while harmless
+  // to re-derive — would break the "zero unfound seed ⇒ zero rolls, zero
+  // footprint" contract this module's other content gates all keep).
+  if (
+    state.lineageEggs !== undefined &&
+    oldestUnfoundSeedFor(state.lineageEggs, expedition.expeditionId) !== undefined
+  ) {
+    const lineageStream = rng.stream(LINEAGE_STREAM);
+    const outcome = attemptLineageFind(
+      state.lineageEggs,
+      expedition.expeditionId,
+      lineageStream,
+      content.lineageTuning ?? contentTuning,
+      content.lineageGenomeContent ?? {},
+    );
+    if (outcome.kind !== "none") lineageEggsAfter = outcome.seeds;
+    if (outcome.kind === "found") {
+      lineageEgg = createLineageFindEgg(
+        {
+          id: `egg-${state.nextEggNumber}`,
+          foundAt: completedAt,
+          sourceExpeditionId: expedition.expeditionId,
+          lineageGenome: outcome.inheritance.genome,
+          lineageParentIds: outcome.inheritance.parentIds,
+          lineageLevel: outcome.inheritance.level,
+          lineageResistances: outcome.inheritance.resistances,
+          lineageGeneration: outcome.inheritance.generation,
+        },
+        tuning,
+        content.keepIncubationSpeedMultiplier ?? 1,
+      );
+    }
+  }
+  // A lineage find TAKES PRECEDENCE over an ordinary loot-egg roll on the
+  // same trip (both independent, low-probability rolls landing together
+  // is rare) — the loot egg is simply not created; its `eggChance` roll
+  // above still happened (cursor determinism, module doc), it just never
+  // materialises as a second `Egg`/pending reveal (`PendingReveal.egg` is
+  // singular, matching every other trip).
+  const finalEgg = lineageEgg ?? egg;
+
   const reveal: PendingReveal = {
     pipId,
     expeditionId: expedition.expeditionId,
     completedAt,
     items: loot.items,
-    egg,
+    egg: finalEgg,
+    ...(contractedAilmentId !== undefined ? { contractedAilmentId } : {}),
   };
 
   return {
     ...state,
     rngState: rng.getState(),
+    pips:
+      contractedPip !== undefined
+        ? { ...state.pips, [pipId]: contractedPip }
+        : state.pips,
+    ...(lineageEggsAfter !== state.lineageEggs ? { lineageEggs: lineageEggsAfter } : {}),
     pendingReveals: [...state.pendingReveals, reveal],
-    nextEggNumber: egg !== null ? state.nextEggNumber + 1 : state.nextEggNumber,
+    nextEggNumber: finalEgg !== null ? state.nextEggNumber + 1 : state.nextEggNumber,
   };
 }
 

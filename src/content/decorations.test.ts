@@ -60,7 +60,7 @@ describe("decoration registry shape (content bible §5.1, progression bible §5.
 });
 
 describe("placeable registry shape, plus the Stockpot's pricing relationship", () => {
-  it("ships thirteen registry ids: the original four plus nine round-2F stations", () => {
+  it("ships fourteen registry ids: the original four, nine round-2F stations, and round 2H's Poultice Shelf", () => {
     expect(placeables.map((p) => p.id).sort()).toEqual(
       [
         "food-bowl",
@@ -76,6 +76,7 @@ describe("placeable registry shape, plus the Stockpot's pricing relationship", (
         "sun-bunks",
         "beacon",
         "weathervane",
+        "poultice-shelf",
       ].sort(),
     );
   });

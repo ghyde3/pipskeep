@@ -20,6 +20,8 @@ import {
   PipActivity,
 } from "./types";
 import type { NeedId, PipNeeds, PipState } from "./types";
+import { seasoningFor } from "./level";
+import type { LevelEffectsTuning } from "./level";
 
 /**
  * The slice of tuning the needs math reads. Structural (rather than the
@@ -28,7 +30,7 @@ import type { NeedId, PipNeeds, PipState } from "./types";
  * `personalityDecayMultipliers` is keyed by string because core treats
  * personality ids as opaque content ids.
  */
-export interface NeedsTuning {
+export interface NeedsTuning extends LevelEffectsTuning {
   readonly needDecayPerHour: Readonly<Record<NeedId, number>>;
   readonly personalityDecayMultipliers: Readonly<
     Record<string, Readonly<Record<NeedId, number>>>
@@ -39,6 +41,23 @@ export interface NeedsTuning {
   readonly pipling: { readonly decayMultiplier: number };
   readonly care: {
     readonly rest: { readonly energyPerHour: number };
+  };
+  /**
+   * ROUND 2H (docs/lifecycle-bible.md §1.4) — THE SHARED CARE-EASE
+   * CHANNEL, this round's fragile invariant: a Pip's `seasoning` (its own
+   * level effect, `pips/level.ts`) and the Keep's building `comfort` are
+   * ONE channel, summed then clamped ONCE at this cap — never two
+   * independent reductions. Fully optional and chained
+   * (`progression?.effectCaps?.comfortReductionMax`) so every pre-2H
+   * fixture in this file (and `core/keep/effects.balance.test.ts`'s own
+   * bare tuning objects) that omits `progression` entirely keeps
+   * `effectiveRates` byte-identical — see `levelTableValue`'s sibling
+   * no-op contract in `pips/level.ts`'s module doc.
+   */
+  readonly progression?: {
+    readonly effectCaps?: {
+      readonly comfortReductionMax?: number;
+    };
   };
 }
 
@@ -116,6 +135,21 @@ export function effectiveRates(
     pip.activity === PipActivity.OnExpedition ||
     pip.activity === PipActivity.Returning;
 
+  // ROUND 2H (docs/lifecycle-bible.md §1.4) — a Pip's own seasoning is
+  // SUMMED with the Keep's building comfort and clamped ONCE, at
+  // whatever headroom remains under `comfortReductionMax` — never a
+  // second independent reduction (the arithmetic is arithmetically
+  // unavailable: see `pips/level.ts`'s `seasoningFor` doc comment and
+  // `level.balance.test.ts`). Written as a HEADROOM clamp
+  // (`min(pipReduction, cap − keepReduction)`), never `min(cap, sum)`,
+  // so a caller-supplied `keepComfort` above the cap (a hand-built
+  // `effects.balance.test.ts` fixture proving the pre-2H ceiling) is
+  // left EXACTLY as supplied — this is a strict no-op whenever
+  // `pipReduction` is 0, which is every fixture that predates this round
+  // and every Pip at level 1.
+  const careEaseMax = tuning.progression?.effectCaps?.comfortReductionMax;
+  const pipReduction = careEaseMax !== undefined ? seasoningFor(pip, tuning) : 0;
+
   const rates = {} as NeedRates;
   for (const need of NEED_IDS) {
     const situational =
@@ -124,12 +158,19 @@ export function effectiveRates(
       pip.personalityId === CLINGY_PERSONALITY_ID
         ? tuning.quirks.clingyExpeditionHappinessMultiplier
         : 1;
+    let comfortMultiplier = keepComfort.multiplier[need];
+    if (careEaseMax !== undefined && pipReduction > 0) {
+      const keepReduction = 1 - comfortMultiplier;
+      const headroom = Math.max(0, careEaseMax - keepReduction);
+      const applied = Math.min(pipReduction, headroom);
+      comfortMultiplier = comfortMultiplier - applied;
+    }
     rates[need] =
       tuning.needDecayPerHour[need] *
       personality[need] *
       lifeStageMultiplier *
       situational *
-      keepComfort.multiplier[need];
+      comfortMultiplier;
   }
 
   if (pip.activity === PipActivity.Resting) {
@@ -176,6 +217,14 @@ function happinessAreaHours(h0: number, rate: number, hours: number): number {
  *   the exact clamped-trapezoid area (see happinessAreaHours) in
  *   happiness·ms, so lifetime average = happinessIntegral / ageMs.
  * - `needsUpdatedAt` advances by exactly the elapsed ms.
+ * - ROUND 2H (docs/lifecycle-bible.md §2.2) — `lifeMs` accrues by exactly
+ *   `elapsedMs` too: THIS is the whole mechanism behind "ageing is a RATE,
+ *   not a timer". `accrueFrozenTime` below deliberately does NOT touch
+ *   `lifeMs` — catch-up's rated/frozen split (`catchup.ts`'s
+ *   `advanceThroughCap`) therefore ages a Pip by `min(elapsed,
+ *   offlineRateCapMs)` for free, with no separate cap logic anywhere:
+ *   the SAME segmentation that already protects need decay protects a
+ *   Pip's lifespan (promise 2 and promise 5, docs/lifecycle-bible.md §2.1).
  *
  * Negative `hours` clamps to 0 (spec §4.5: never apply negative decay).
  * Callers crossing an activity/stage boundary must split the interval at
@@ -204,6 +253,27 @@ export function applyNeedsDelta(
       pip.happinessIntegral +
       happinessAreaHours(pip.needs.happiness, rates.happiness, h) * HOUR_MS,
     needsUpdatedAt: pip.needsUpdatedAt + elapsedMs,
+    lifeMs: (pip.lifeMs ?? 0) + elapsedMs,
+    // ROUND 2H (docs/lifecycle-bible.md §3.3) — AN AILMENT COUNTDOWN IS A
+    // RATE, NOT A TIMER: `remainingMs` decrements by exactly the RATED
+    // elapsed ms, through this SAME function `accrueFrozenTime` below
+    // deliberately does not touch — the identical mechanism `lifeMs` just
+    // above already uses. This is the entire reason a week-long absence
+    // only ever burns `offlineRateCapMs` off a countdown (promise 2), with
+    // no separate cap logic anywhere. A conditional spread (not a bare
+    // `ailment: pip.ailment != null ? … : pip.ailment`) so a Pip that has
+    // NEVER carried the optional field stays byte-identical after a save
+    // round-trip: `...pip` above already carries forward whatever
+    // `pip.ailment` currently is (absent, `null`, or a real record); this
+    // only OVERRIDES the key when there is an actual ailment to decrement.
+    ...(pip.ailment != null
+      ? {
+          ailment: {
+            ...pip.ailment,
+            remainingMs: Math.max(0, pip.ailment.remainingMs - elapsedMs),
+          },
+        }
+      : {}),
   };
 }
 
@@ -214,6 +284,12 @@ export function applyNeedsDelta(
  * the frozen happiness value (spec §4.6: "during rate-frozen catch-up
  * segments the frozen value keeps accruing"). `needsUpdatedAt` advances so
  * subsequent segments line up. Negative `hours` clamps to 0.
+ *
+ * ROUND 2H — `lifeMs` is DELIBERATELY ABSENT from this function's return.
+ * Ageing is a rate (docs/lifecycle-bible.md §2.2): it accrues only in
+ * `applyNeedsDelta` (the rated portion of a segment), never here (the
+ * frozen portion) — that is the entire mechanism that caps offline ageing
+ * at `offlineRateCapMs`, with no separate cap logic. Do not add it here.
  */
 export function accrueFrozenTime(pip: PipState, hours: number): PipState {
   const h = Math.max(0, hours);

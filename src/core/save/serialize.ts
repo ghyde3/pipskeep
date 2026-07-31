@@ -29,10 +29,18 @@
  */
 
 import { ONBOARDING_STEPS } from "../state";
-import type { EvolveOutcome, GameState, LevelUpOutcome, OnboardingState } from "../state";
+import type {
+  BreedOutcome,
+  EvolveOutcome,
+  GameSettings,
+  GameState,
+  LevelUpOutcome,
+  OnboardingState,
+} from "../state";
 import { LifeStage, NEED_IDS, PipActivity } from "../pips/types";
 import type {
   ActiveExpedition,
+  AilmentState,
   EvolvedRecord,
   NeedId,
   PipId,
@@ -40,6 +48,7 @@ import type {
   PipState,
   TraitGenome,
 } from "../pips/types";
+import type { LineageEggSeed, LossOutcome } from "../pips/ailment";
 import type {
   PipdexEntry,
   PipdexPortrait,
@@ -62,6 +71,32 @@ import type { KeepState, Placement, PlacementId } from "../keep";
 import type { JobAssignment, JobOutcome, JobsByPip } from "../keep/jobs";
 
 /**
+ * v9 (round 2H — spec §16 v1.5, docs/lifecycle-bible.md §9.2): PER-PIP
+ * LEVELS + LIFESPAN. Four new OPTIONAL per-pip fields, same
+ * `undefined ≡ default` contract `sulking`/`mastery` already established
+ * (types.ts), so — on their own — none of these would even need a schema
+ * bump. The bump exists because `CURRENT_SCHEMA_VERSION` is round 2H's
+ * ONE shared save-schema delta (docs/lifecycle-bible.md §9.2 is explicit:
+ * "ONE bump, v8 → v9" for the whole round, ailments/lineage included);
+ * this migration step backfills only the lifecycle/level slice:
+ *
+ *   - `level?: number` / `pipXp?: number` (`≡ 1` / `≡ 0`) — a Pip's own
+ *     XP ladder (bible §1). `MIGRATIONS[8]` grants every EXISTING Pip
+ *     (active and sanctuary) `migrationGrantLevel` (2) generously — "a
+ *     veteran's Pips arrive with a season already behind them" — never
+ *     the reverse: a migrated Pip is NEVER punished relative to a fresh
+ *     one.
+ *   - `lifeMs?: number` (`≡ 0`) — the RATED-time lifespan clock (bible
+ *     §2.2), backfilled to exactly 0 for every existing Pip: keying it
+ *     off `ageMs` instead (even scaled) was considered and rejected in
+ *     the bible (§9.2) — it would make a veteran's first sight of this
+ *     round a Pip closer to retirement than a brand-new save's, which is
+ *     the opposite of "must not arrive instantly old".
+ *   - `readyToRetire?: boolean` (`≡ false`) — follows from `lifeMs: 0`,
+ *     written explicitly by the migration so a round-trip through this
+ *     file is byte-equal (same reason v5's `sulking` backfill is
+ *     explicit rather than left implicit).
+ *
  * v8 (round 2F — docs/progression-bible.md §8.4): TWO new fields, the
  * whole round's schema delta —
  *
@@ -123,7 +158,7 @@ import type { JobAssignment, JobOutcome, JobsByPip } from "../keep/jobs";
  * `nextPlacementNumber`, per-pip `evolved` records, and the two new
  * transient outcome echoes (job, evolve). v2, Phase 4: keepLevel, eggs,
  * pendingReveals, id counters.) */
-export const CURRENT_SCHEMA_VERSION = 8;
+export const CURRENT_SCHEMA_VERSION = 9;
 
 /** The on-disk envelope (spec §8). */
 export interface SaveBlob {
@@ -335,6 +370,43 @@ function validateEgg(value: unknown, path: string): Egg {
       rec["sourceExpeditionId"],
       p(path, "sourceExpeditionId"),
     ),
+    // ROUND 2H (v9, spec §12 unfenced, docs/lifecycle-bible.md §5.1/§6.1/
+    // §9.2) — a LINEAGE or BRED egg's five `lineage*` fields, deep-
+    // validated (the sim genuinely reads these at HATCH_EGG, unlike the
+    // transient `last*Outcome` echoes). OPTIONAL, exactly like
+    // `PipState.mastery`/`level` — `undefined` on every ordinary
+    // expedition-found or debug-spawned egg, which is every egg this
+    // round's own tests didn't specifically construct as lineage/bred.
+    ...(rec["lineageGenome"] !== undefined
+      ? { lineageGenome: validateGenome(rec["lineageGenome"], p(path, "lineageGenome")) }
+      : {}),
+    ...(rec["lineageParentIds"] !== undefined
+      ? {
+          lineageParentIds: validateStringArray(
+            rec["lineageParentIds"],
+            p(path, "lineageParentIds"),
+          ),
+        }
+      : {}),
+    ...(rec["lineageLevel"] !== undefined
+      ? { lineageLevel: expectFiniteNumber(rec["lineageLevel"], p(path, "lineageLevel")) }
+      : {}),
+    ...(rec["lineageResistances"] !== undefined
+      ? {
+          lineageResistances: validateNumberRecord(
+            rec["lineageResistances"],
+            p(path, "lineageResistances"),
+          ),
+        }
+      : {}),
+    ...(rec["lineageGeneration"] !== undefined
+      ? {
+          lineageGeneration: expectFiniteNumber(
+            rec["lineageGeneration"],
+            p(path, "lineageGeneration"),
+          ),
+        }
+      : {}),
   };
 }
 
@@ -405,6 +477,34 @@ function validateEvolved(value: unknown, path: string): EvolvedRecord | null {
   };
 }
 
+/** ROUND 2H — an in-progress ailment (v9, docs/lifecycle-bible.md §3.1).
+ * Deep-validated (unlike the transient `last*Outcome` echoes) because the
+ * sim genuinely reads this every tick (`needs.ts`'s `applyNeedsDelta`,
+ * `ailment.ts`'s `resolveAilments`). */
+function validateAilmentState(value: unknown, path: string): AilmentState {
+  const rec = expectRecord(value, path);
+  return {
+    id: expectString(rec["id"], p(path, "id")),
+    contractedAt: expectFiniteNumber(rec["contractedAt"], p(path, "contractedAt")),
+    fromExpeditionId: expectString(rec["fromExpeditionId"], p(path, "fromExpeditionId")),
+    remainingMs: expectFiniteNumber(rec["remainingMs"], p(path, "remainingMs")),
+    totalMs: expectFiniteNumber(rec["totalMs"], p(path, "totalMs")),
+    cureAttempts: expectFiniteNumber(rec["cureAttempts"], p(path, "cureAttempts")),
+    // The free daily cure's rate-limit stamp (`core/pips/ailment.ts`'s
+    // `applyDevotedCare`). Optional — `undefined ≡ never rolled`, which is
+    // ELIGIBLE, so a save written before this field existed can only ever
+    // gain a chance, never lose one.
+    ...(rec["lastCareRollDay"] !== undefined
+      ? {
+          lastCareRollDay: expectFiniteNumber(
+            rec["lastCareRollDay"],
+            p(path, "lastCareRollDay"),
+          ),
+        }
+      : {}),
+  };
+}
+
 function validateExpedition(
   value: unknown,
   path: string,
@@ -415,6 +515,14 @@ function validateExpedition(
     expeditionId: expectString(rec["expeditionId"], p(path, "expeditionId")),
     departedAt: expectFiniteNumber(rec["departedAt"], p(path, "departedAt")),
     durationMs: expectFiniteNumber(rec["durationMs"], p(path, "durationMs")),
+    // ROUND 2H (v9) — the careful route the player committed to at
+    // send-off. Optional, `undefined ≡ false` (the ordinary route), so
+    // every trip snapshot written before this round is valid unchanged —
+    // and a mid-flight trip from an older save correctly settles as the
+    // ordinary route it actually was.
+    ...(rec["careful"] !== undefined
+      ? { careful: expectBoolean(rec["careful"], p(path, "careful")) }
+      : {}),
   };
 }
 
@@ -472,6 +580,63 @@ function validatePipState(
     // round-trips byte-for-byte with no field materialising from nothing.
     ...(rec["mastery"] !== undefined
       ? { mastery: validateNumberRecord(rec["mastery"], p(path, "mastery")) }
+      : {}),
+    // ROUND 2H (v9, docs/lifecycle-bible.md §9.2) — per-Pip level + the
+    // lifespan clock. All four optional exactly like `sulking`/`mastery`
+    // above (`undefined ≡` 1 / 0 / 0 / false — types.ts) — every pip this
+    // build produces sets `lifeMs` explicitly the moment it first ticks
+    // (`needs.ts`'s `applyNeedsDelta`), and `MIGRATIONS[8]` backfills
+    // every pre-v9 pip; a blob reaching here with the field absent is
+    // simply a Pip that has never yet ticked (freshly hatched this same
+    // dispatch) or a pre-2H fixture — never an error.
+    ...(rec["level"] !== undefined
+      ? { level: expectFiniteNumber(rec["level"], p(path, "level")) }
+      : {}),
+    ...(rec["pipXp"] !== undefined
+      ? { pipXp: expectFiniteNumber(rec["pipXp"], p(path, "pipXp")) }
+      : {}),
+    ...(rec["lifeMs"] !== undefined
+      ? { lifeMs: expectFiniteNumber(rec["lifeMs"], p(path, "lifeMs")) }
+      : {}),
+    ...(rec["readyToRetire"] !== undefined
+      ? { readyToRetire: expectBoolean(rec["readyToRetire"], p(path, "readyToRetire")) }
+      : {}),
+    // ROUND 2H (v9, docs/lifecycle-bible.md §3/§9.2) — AILMENTS. Optional
+    // exactly like `mastery`/`level` above: `undefined ≡ null` / `[]` /
+    // `{}`. `MIGRATIONS[8]` does not need to touch these (they were never
+    // possible before this round, so absence on any pre-v9 blob is simply
+    // "never ailed, never scarred" — the true, safe default).
+    ...(rec["ailment"] !== undefined
+      ? {
+          ailment:
+            rec["ailment"] === null
+              ? null
+              : validateAilmentState(rec["ailment"], p(path, "ailment")),
+        }
+      : {}),
+    ...(rec["scars"] !== undefined
+      ? { scars: validateStringArray(rec["scars"], p(path, "scars")) }
+      : {}),
+    ...(rec["resistances"] !== undefined
+      ? { resistances: validateNumberRecord(rec["resistances"], p(path, "resistances")) }
+      : {}),
+    // ROUND 2H (v9, spec §12 unfenced, docs/lifecycle-bible.md
+    // §5.4/§6.1/§9.2) — LINEAGE. Optional exactly like `scars`/
+    // `resistances` above: `undefined ≡ 1` / `[]` / `null` / `0`.
+    // `MIGRATIONS[8]` does not need to touch these (they were never
+    // possible before this round, so absence on any pre-v9 blob is simply
+    // "original stock, never bred" — the true, safe default).
+    ...(rec["generation"] !== undefined
+      ? { generation: expectFiniteNumber(rec["generation"], p(path, "generation")) }
+      : {}),
+    ...(rec["parentIds"] !== undefined
+      ? { parentIds: validateStringArray(rec["parentIds"], p(path, "parentIds")) }
+      : {}),
+    ...(rec["lastBredAt"] !== undefined
+      ? { lastBredAt: expectNumberOrNull(rec["lastBredAt"], p(path, "lastBredAt")) }
+      : {}),
+    ...(rec["clutches"] !== undefined
+      ? { clutches: expectFiniteNumber(rec["clutches"], p(path, "clutches")) }
       : {}),
   };
 }
@@ -695,6 +860,8 @@ function validatePipdexState(value: unknown, path: string): PipdexState {
 /** ROUND 2C — the Long Meadow (v6, docs/retention-bible.md §2.6). A
  * resident's whole `PipState`, verbatim — same referential bar as an
  * active pip (`validatePipState`'s key/id match). */
+const SANCTUARY_REASONS = ["player", "age", "lost"] as const;
+
 function validateSanctuaryRecord(
   value: unknown,
   path: string,
@@ -709,6 +876,12 @@ function validateSanctuaryRecord(
       p(path, "retiredFromKeepLevel"),
     ),
     visits: expectFiniteNumber(rec["visits"], p(path, "visits")),
+    // ROUND 2H (v9, docs/lifecycle-bible.md §2.5/§9.2): optional exactly
+    // like `PipState.sulking`/`mastery` — `undefined ≡ "player"`, so
+    // every pre-2H resident round-trips with the field simply absent.
+    ...(rec["reason"] !== undefined
+      ? { reason: expectOneOf(rec["reason"], p(path, "reason"), SANCTUARY_REASONS) }
+      : {}),
   };
 }
 
@@ -828,6 +1001,31 @@ function validateBountiesState(value: unknown, path: string): BountiesState {
     rerollsUsed: expectFiniteNumber(rec["rerollsUsed"], p(path, "rerollsUsed")),
     dayBonusGranted: expectBoolean(rec["dayBonusGranted"], p(path, "dayBonusGranted")),
   };
+}
+
+/** ROUND 2H — one lineage-egg seed (v9, docs/lifecycle-bible.md §5.1):
+ * promise 4's thread, deep-validated (the future lineage/breeding find/hatch
+ * system genuinely reads this, unlike the transient `last*Outcome` echoes). */
+function validateLineageEggSeed(value: unknown, path: string): LineageEggSeed {
+  const rec = expectRecord(value, path);
+  return {
+    pipId: expectString(rec["pipId"], p(path, "pipId")),
+    name: expectString(rec["name"], p(path, "name")),
+    genome: validateGenome(rec["genome"], p(path, "genome")),
+    expeditionId: expectString(rec["expeditionId"], p(path, "expeditionId")),
+    level: expectFiniteNumber(rec["level"], p(path, "level")),
+    scars: validateStringArray(rec["scars"], p(path, "scars")),
+    generation: expectFiniteNumber(rec["generation"], p(path, "generation")),
+    seededAt: expectFiniteNumber(rec["seededAt"], p(path, "seededAt")),
+    misses: expectFiniteNumber(rec["misses"], p(path, "misses")),
+  };
+}
+
+function validateLineageEggs(value: unknown, path: string): readonly LineageEggSeed[] {
+  if (!Array.isArray(value)) {
+    fail("invalid-field", path, `expected an array, got ${describeValue(value)}`);
+  }
+  return value.map((seed, i) => validateLineageEggSeed(seed, `${path}[${i}]`));
 }
 
 function validateGameState(value: unknown, path: string): GameState {
@@ -1013,6 +1211,55 @@ function validateGameState(value: unknown, path: string): GameState {
       rec["lastLevelUp"],
       p(path, "lastLevelUp"),
     ) as LevelUpOutcome | null,
+    // v9 (round 2H, docs/lifecycle-bible.md §5.1/§9.2) — PROMISE 4's
+    // thread. OPTIONAL, exactly like `PipState.mastery`/`scars` — absent
+    // stays absent (`undefined ≡ []`), so every pre-2H save/fixture round-
+    // trips with the field simply absent and needs no migration.
+    ...(rec["lineageEggs"] !== undefined
+      ? { lineageEggs: validateLineageEggs(rec["lineageEggs"], p(path, "lineageEggs")) }
+      : {}),
+    // v9 — the ailment-resolution echo (cured / Loyal Turn / lost).
+    // Transient like every other `last*Outcome`, so shape-checked only;
+    // OPTIONAL for the same reason as `lineageEggs` above.
+    ...(rec["lastLossOutcome"] !== undefined
+      ? {
+          lastLossOutcome: passThroughTransient(
+            rec["lastLossOutcome"],
+            p(path, "lastLossOutcome"),
+          ) as LossOutcome | null,
+        }
+      : {}),
+    // v9 (spec §12 unfenced, docs/lifecycle-bible.md §6) — the BREED_PIPS
+    // echo. Transient like every other `last*Outcome`, so shape-checked
+    // only; OPTIONAL for the same reason as `lineageEggs`/`lastLossOutcome`
+    // above.
+    ...(rec["lastBreedOutcome"] !== undefined
+      ? {
+          lastBreedOutcome: passThroughTransient(
+            rec["lastBreedOutcome"],
+            p(path, "lastBreedOutcome"),
+          ) as BreedOutcome | null,
+        }
+      : {}),
+    // v9 (docs/lifecycle-bible.md §7.7) — PLAYER SETTINGS, currently just
+    // the Quiet Keep switch. DEEP-validated, unlike the transient echoes
+    // above: the sim reads this on every expedition return and every
+    // ailment resolution, and a setting that silently failed to load
+    // would be the single worst way for this round to break its promises.
+    // OPTIONAL for the same reason as `lineageEggs` (absent ≡ defaults).
+    ...(rec["settings"] !== undefined
+      ? { settings: validateSettings(rec["settings"], p(path, "settings")) }
+      : {}),
+  };
+}
+
+/** v9 — `GameState.settings`. Every field optional, `undefined ≡ off`. */
+function validateSettings(value: unknown, path: string): GameSettings {
+  const rec = expectRecord(value, path);
+  return {
+    ...(rec["quietKeep"] !== undefined
+      ? { quietKeep: expectBoolean(rec["quietKeep"], p(path, "quietKeep")) }
+      : {}),
   };
 }
 

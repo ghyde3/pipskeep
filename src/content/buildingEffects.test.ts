@@ -66,6 +66,15 @@ describe("every authored BuildingEffect strictly helps (bible §0.3/§3.1 rule 1
   }
 });
 
+describe("round 2H: the Poultice Shelf (bible §3.5)", () => {
+  it("exists, is a real placeable, and carries no BuildingEffect (see content/buildingEffects.ts's round 2H note)", () => {
+    const shelf = placeables.find((p) => p.id === "poultice-shelf");
+    expect(shelf).toBeDefined();
+    expect(shelf?.effects ?? []).toEqual([]);
+    expect(shelf?.unlockKeepLevel).toBe(5);
+  });
+});
+
 describe("the four shipped placeables (bible §3.4)", () => {
   it("the Food Bowl slows Hunger", () => {
     const bowl = placeables.find((p) => p.id === "food-bowl");

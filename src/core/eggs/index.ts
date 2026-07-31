@@ -35,6 +35,7 @@
 
 import { tuning as contentTuning } from "../../content/tuning";
 import type { CatchupEvent, CatchupState } from "../pips/catchup";
+import type { PipId, TraitGenome } from "../pips/types";
 
 export type EggId = string;
 
@@ -69,6 +70,34 @@ export interface Egg {
   readonly incubationStartedAt: number | null;
   /** Expedition that found it; null for debug-spawned eggs. */
   readonly sourceExpeditionId: string | null;
+  /**
+   * ROUND 2H (spec §12 unfenced, docs/lifecycle-bible.md §5.1/§6.1/§9.2) —
+   * set for a LINEAGE egg (found on a later trip to the biome that took a
+   * lost Pip, `createLineageFindEgg`) or a BRED egg (`BREED_PIPS`,
+   * `createBredEgg`): the child's ALREADY-COMBINED genome, computed at
+   * find/breed time — never re-rolled at hatch, because by hatch time a
+   * lost Pip's lineage seed is the only surviving record of it and a bred
+   * parent may itself have since retired or been lost
+   * (`core/pips/breeding.ts`'s module doc). `undefined` for an ORDINARY
+   * expedition-found egg, which still rolls a fresh genome at HATCH_EGG
+   * exactly as before this round — `core/state.ts`'s HATCH_EGG arm reads
+   * this field to decide which path a given egg takes, and skips
+   * `rollGenome`/the pity ladder/the biome pool entirely when it is set
+   * (bible §6.3/§9.1: "lineage/bred eggs bypass both channels entirely").
+   */
+  readonly lineageGenome?: TraitGenome;
+  /** The parent id(s): one for a lineage egg (the lost Pip), two for a
+   * bred egg (`[aId, bId]`). Present iff `lineageGenome` is. */
+  readonly lineageParentIds?: readonly PipId[];
+  /** The hatchling's inherited starting level (bible §5.4/§6.2). Present
+   * iff `lineageGenome` is. */
+  readonly lineageLevel?: number;
+  /** The hatchling's inherited ailment resistances, from the parent(s)'
+   * scars (bible §3.6/§5.4/§6.2). Present iff `lineageGenome` is. */
+  readonly lineageResistances?: Readonly<Record<string, number>>;
+  /** The hatchling's generation (bible §5.4/§6.2: parent's generation(s)
+   * + 1). Present iff `lineageGenome` is. */
+  readonly lineageGeneration?: number;
 }
 
 /** The slice of tuning the egg system reads (injectable for tests).
@@ -124,6 +153,97 @@ export function createEgg(
     incubationMs: resolveIncubationMs(rarity, tuning) * incubationSpeedMultiplier,
     incubationStartedAt: null,
     sourceExpeditionId: options.sourceExpeditionId,
+  };
+}
+
+/** `createEgg`'s options plus the five `lineage*` fields (module doc) a
+ * FOUND lineage egg carries from the moment it is found. */
+export interface CreateLineageFindEggOptions extends CreateEggOptions {
+  readonly lineageGenome: TraitGenome;
+  readonly lineageParentIds: readonly PipId[];
+  readonly lineageLevel: number;
+  readonly lineageResistances: Readonly<Record<string, number>>;
+  readonly lineageGeneration: number;
+}
+
+/**
+ * A freshly FOUND lineage egg (docs/lifecycle-bible.md §5.1) — the Egg a
+ * SUCCESSFUL `core/pips/breeding.ts` `attemptLineageFind` turns into.
+ * State Found, exactly like an ordinary loot egg: it funnels through the
+ * SAME Found → ACKNOWLEDGE_REVEAL → Incubating flow (`beginIncubation`
+ * below), so no new state-machine surface is needed for the egg itself —
+ * only its five `lineage*` fields distinguish it, which `HATCH_EGG` reads
+ * to skip the ordinary genome roll entirely (module doc on `Egg`).
+ */
+export function createLineageFindEgg(
+  options: CreateLineageFindEggOptions,
+  tuning: EggTuning = contentTuning,
+  incubationSpeedMultiplier = 1,
+): Egg {
+  const {
+    lineageGenome,
+    lineageParentIds,
+    lineageLevel,
+    lineageResistances,
+    lineageGeneration,
+    ...eggOptions
+  } = options;
+  return {
+    ...createEgg(eggOptions, tuning, incubationSpeedMultiplier),
+    lineageGenome,
+    lineageParentIds,
+    lineageLevel,
+    lineageResistances,
+    lineageGeneration,
+  };
+}
+
+/** `createBredEgg`'s full options — unlike `createEgg`/
+ * `createLineageFindEgg`, rarity/incubation are NOT resolved from the
+ * `eggs` tuning table (bible §6.1: breeding has its own fixed
+ * `breedingIncubationMs`, not a rarity lookup). */
+export interface CreateBredEggOptions {
+  readonly id: EggId;
+  /** Clock timestamp (ms) of the BREED_PIPS action. */
+  readonly at: number;
+  /** `lifecycle.lineage.breedingIncubationMs`, pre-multiplied by any
+   * Keep incubation-speed effect the caller wants applied — passed in
+   * resolved rather than composed here, so this module stays free of a
+   * `lifecycle` tuning dependency. */
+  readonly incubationMs: number;
+  readonly lineageGenome: TraitGenome;
+  readonly lineageParentIds: readonly PipId[];
+  readonly lineageLevel: number;
+  readonly lineageResistances: Readonly<Record<string, number>>;
+  readonly lineageGeneration: number;
+}
+
+/**
+ * A freshly BRED egg (docs/lifecycle-bible.md §6.1). Unlike every other
+ * egg in this file, it starts life ALREADY Incubating: breeding has no
+ * loot to reveal, so there is no Found → ACKNOWLEDGE_REVEAL step for it
+ * to wait through — `BREED_PIPS` is itself the player-witnessed moment.
+ * `sourceExpeditionId: null` (bible §6.1 — a bred egg was not found
+ * anywhere).
+ */
+export function createBredEgg(options: CreateBredEggOptions): Egg {
+  return {
+    id: options.id,
+    state: EggState.Incubating,
+    foundAt: options.at,
+    // Not a real rarity-table id — `incubationMs` below is already fully
+    // resolved, so nothing ever looks this up via
+    // `resolveIncubationMs`/`incubationMsByRarity`. Kept descriptive for
+    // anyone reading a save file or debug dump.
+    rarity: "bred",
+    incubationMs: options.incubationMs,
+    incubationStartedAt: options.at,
+    sourceExpeditionId: null,
+    lineageGenome: options.lineageGenome,
+    lineageParentIds: options.lineageParentIds,
+    lineageLevel: options.lineageLevel,
+    lineageResistances: options.lineageResistances,
+    lineageGeneration: options.lineageGeneration,
   };
 }
 

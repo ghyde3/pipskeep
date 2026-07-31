@@ -398,3 +398,117 @@ describe("createLootRevealModal — the card actually says what the trip paid", 
     expect(collected).toBe(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// ROUND 2H — the lineage egg's payoff (spec §16 v1.5 promise 4).
+//
+// The gap this closes was found by playing, not by reading: everything else
+// about the thread was visible (the Nook's "Someone to find" card, the
+// per-biome hint on the send-off row, the seed in state), but the moment a
+// player went back for their lost Pip and SUCCEEDED read exactly like any
+// other loot egg — "and something round and full of promise". A quest whose
+// completion goes unremarked is not a quest.
+// ---------------------------------------------------------------------------
+
+describe("ROUND 2H — a lineage egg is named, not anonymous", () => {
+  const genome = {
+    speciesId: "pebblepip",
+    palette: "sandstone",
+    pattern: "banded",
+    accessorySlots: 1,
+    personalityId: "curious",
+    shiny: false,
+  };
+
+  const lineageEgg = (parentIds: readonly string[]) => ({
+    id: "egg-9",
+    state: "found" as const,
+    sourceExpeditionId: "bramblewick",
+    foundAt: 10_000,
+    incubationStartedAt: null,
+    incubationMs: 60_000,
+    lineageGenome: genome,
+    lineageParentIds: parentIds,
+    lineageLevel: 4,
+    lineageResistances: {},
+    lineageGeneration: 2,
+  });
+
+  // The lost parent is NOT in the roster — being lost is what seeded the
+  // egg — so the name has to come from the Long Meadow.
+  const NAMES = { "pip-1": { name: "Moss" }, "pip-gone": { name: "Pebblepip" } };
+
+  it("names the lost parent in both the summary line and the egg caption", () => {
+    const script = buildRevealScript(
+      reveal({ egg: lineageEgg(["pip-gone"]) as never }),
+      NAMES,
+    );
+    expect(script.summaryLine).toContain("Pebblepip's egg");
+    expect(script.eggCaption).toBe("Pebblepip's egg.");
+    expect(script.steps.find((s) => s.kind === "egg")?.label).toBe("Pebblepip's egg.");
+    // ...and never the generic line, which is the whole failure being fixed.
+    expect(script.summaryLine).not.toContain("round and full of promise");
+  });
+
+  it("leaves an ORDINARY egg's copy byte-identical", () => {
+    const plain = buildRevealScript(
+      reveal({ egg: { id: "egg-1", state: "found" } as never }),
+      NAMES,
+    );
+    expect(plain.eggCaption).toBe("An egg?!");
+    expect(plain.summaryLine).toContain("round and full of promise");
+  });
+
+  it("does NOT claim a two-parent (bred) egg was found on a trail", () => {
+    // A bred egg carries the same `lineageGenome` but names two parents and
+    // never reaches a reveal. If it ever does, it must not borrow promise
+    // 4's copy — nobody went and fetched it.
+    const bred = buildRevealScript(
+      reveal({ egg: lineageEgg(["pip-1", "pip-gone"]) as never }),
+      NAMES,
+    );
+    expect(bred.eggCaption).toBe("An egg?!");
+    expect(bred.summaryLine).toContain("round and full of promise");
+  });
+
+  it("falls back gracefully when the parent's name cannot be resolved", () => {
+    const orphan = buildRevealScript(
+      reveal({ egg: lineageEgg(["pip-nobody"]) as never }),
+      NAMES,
+    );
+    expect(orphan.eggCaption).toBe("An egg?!");
+  });
+});
+
+describe("ROUND 2H — the queue controller resolves names from the Long Meadow", () => {
+  it("merges sanctuary residents into the name lookup so a lost parent can be named", () => {
+    const state: RevealQueueStateView = {
+      pendingReveals: [
+        reveal({
+          egg: {
+            id: "egg-9",
+            state: "found",
+            sourceExpeditionId: "bramblewick",
+            lineageGenome: {
+              speciesId: "pebblepip",
+              palette: "sandstone",
+              pattern: "banded",
+              accessorySlots: 1,
+              personalityId: "curious",
+              shiny: false,
+            },
+            lineageParentIds: ["pip-gone"],
+          } as never,
+        }),
+      ],
+      pips: { "pip-1": { name: "Moss" } },
+      sanctuary: { pips: { "pip-gone": { pip: { name: "Pebblepip" } } } },
+    };
+    const controller = createRevealQueueController({
+      getState: () => state,
+      dispatch: () => {},
+      now: () => 0,
+    });
+    expect(controller.openScript()?.eggCaption).toBe("Pebblepip's egg.");
+  });
+});

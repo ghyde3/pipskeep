@@ -242,6 +242,35 @@
   padding: 6px 2px;
 }
 
+/* ROUND 2H — a memorial (spec §16 v1.5, docs/lifecycle-bible.md §4).
+   Quieter than a resident card, never grey-as-disabled: this Pip is
+   remembered, not deactivated. A soft dusk-rose edge is the only signal
+   that separates it from the living residents above and below it. */
+.pk-sanctuary-card--memorial {
+  border-left: 3px solid rgba(201, 123, 138, 0.55);
+  background: rgba(201, 123, 138, 0.07);
+}
+
+.pk-sanctuary-memorial-note {
+  font-size: 11.5px;
+  font-style: italic;
+  opacity: 0.65;
+  padding: 6px 2px;
+}
+
+/* Shield six, made visible (bible §7.6): an ailing resident's countdown
+   is frozen for as long as they stay. */
+.pk-sanctuary-paused {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #9c6f2e;
+  background: rgba(246, 183, 60, 0.16);
+  border-radius: 10px;
+  padding: 6px 9px;
+  margin-top: 5px;
+  line-height: 1.35;
+}
+
 .pk-sanctuary-toast {
   font-size: 12px;
   font-weight: 700;

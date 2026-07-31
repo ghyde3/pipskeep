@@ -844,3 +844,272 @@ describe("ROUND 2C — the Long Meadow: RETIRE_PIP / RETRIEVE_PIP (docs/retentio
     expect(state.pipdex).toBe(pipdexBeforeRetire); // still untouched
   });
 });
+
+describe("ROUND 2H — LIFECYCLE: per-Pip levels, ageing and the five promises (spec §16 v1.5)", () => {
+  it("a care action grants this Pip's own Pip XP — a SEPARATE number from Keep XP", () => {
+    const state0 = createNewGame(7, 0);
+    const starterId = state0.rosterOrder[0] as string;
+    const state1 = rootReducer(state0, {
+      type: "FEED",
+      pipId: starterId,
+      foodId: "berry",
+      at: 1_000,
+    });
+    expect(pip(state1, starterId).pipXp).toBe(tuning.lifecycle.level.xp.care);
+    expect(state1.keepXp).toBeGreaterThan(0);
+  });
+
+  it("a completed expedition credits Pip XP to the Pip that went, at ACKNOWLEDGE_REVEAL", () => {
+    let state = createNewGame(7, 0);
+    const starterId = state.rosterOrder[0] as string;
+    state = rootReducer(state, {
+      type: "ASSIGN_EXPEDITION",
+      pipId: starterId,
+      expeditionId: "meadow",
+      at: 0,
+    });
+    const durationMs = tuning.expeditions.meadow.durationMs;
+    state = rootReducer(state, { type: "TICK", at: durationMs + 1 });
+    state = rootReducer(state, { type: "ACKNOWLEDGE_REVEAL", at: durationMs + 2 });
+    const cfg = tuning.lifecycle.level.xp;
+    const expected = cfg.tripBase + cfg.tripPer5Min * Math.floor(durationMs / (5 * 60 * 1000));
+    expect(pip(state, starterId).pipXp).toBe(expected);
+  });
+
+  it("levelling up a Pip pays the matching Keep XP exactly once (bible §1.0/§9.3)", () => {
+    let state = createNewGame(7, 0);
+    const starterId = state.rosterOrder[0] as string;
+    const threshold2 = tuning.lifecycle.level.levelXp[1] as number;
+    state = rootReducer(state, {
+      type: "LOAD_SAVE",
+      state: {
+        ...state,
+        pips: { ...state.pips, [starterId]: { ...pip(state, starterId), pipXp: threshold2 - 1 } },
+      },
+    });
+    const keepXpBefore = state.keepXp;
+    state = rootReducer(state, { type: "FEED", pipId: starterId, foodId: "berry", at: 1_000 });
+    expect(pip(state, starterId).level).toBe(2);
+    expect(state.keepXp - keepXpBefore).toBeGreaterThanOrEqual(tuning.lifecycle.keepXp.pipLevel);
+  });
+
+  it("PROMISE 5: RETIRE_PIP refuses the last active Pip whether player-chosen OR age-ready", () => {
+    let state = createNewGame(7, 0);
+    const starterId = state.rosterOrder[0] as string;
+    state = rootReducer(state, {
+      type: "LOAD_SAVE",
+      state: {
+        ...state,
+        pips: { ...state.pips, [starterId]: { ...pip(state, starterId), readyToRetire: true } },
+      },
+    });
+    const next = rootReducer(state, { type: "RETIRE_PIP", pipId: starterId, at: 1_000 });
+    expect(next.lastSanctuaryOutcome).toEqual({
+      action: "retire",
+      ok: false,
+      pipId: starterId,
+      at: 1_000,
+      reason: "lastPip",
+    });
+    expect(next.pips[starterId]?.readyToRetire).toBe(true); // still there, still ready
+  });
+
+  it("retiring an age-ready Pip (with a second Pip to spare) pays retirementWitnessed Keep XP", () => {
+    let state = createNewGame(7, 0);
+    const starterId = state.rosterOrder[0] as string;
+    const hatched = hatchSecondPip(state, 0);
+    state = hatched.state;
+    state = rootReducer(state, {
+      type: "LOAD_SAVE",
+      state: {
+        ...state,
+        pips: { ...state.pips, [starterId]: { ...pip(state, starterId), readyToRetire: true } },
+      },
+    });
+    const keepXpBefore = state.keepXp;
+    const nameBefore = pip(state, starterId).name;
+    state = rootReducer(state, { type: "RETIRE_PIP", pipId: starterId, at: 5_000 });
+    expect(state.lastSanctuaryOutcome?.ok).toBe(true);
+    expect(state.keepXp).toBeGreaterThanOrEqual(
+      keepXpBefore + tuning.lifecycle.keepXp.retirementWitnessed,
+    );
+
+    // ⚠️ PROMISE 3 — "old age is peaceful". Everything above this line is
+    // about XP, and a mutation that deleted the sanctuary record right
+    // after `retireToSanctuary` wrote it left the whole suite green: the
+    // retiree vanished from `pips`, `rosterOrder` AND `sanctuary` — the
+    // one-place invariant violated in the direction nothing was watching,
+    // taking the Pip's genome, name, evolution record and mastery with it.
+    // A retirement that ENDS somewhere is the entire promise.
+    expect(state.pips[starterId]).toBeUndefined();
+    expect(state.rosterOrder).not.toContain(starterId);
+    expect(state.sanctuary.pips[starterId]).toBeDefined();
+    expect(state.sanctuary.order).toContain(starterId);
+    expect(state.sanctuary.pips[starterId]?.pip.name).toBe(nameBefore);
+    // ...and the record says WHY, so an age retirement is distinguishable
+    // from a change of scene forever after (the Long Meadow's copy reads
+    // this, and `"age"` was an unreachable value until it was wired).
+    expect(state.sanctuary.pips[starterId]?.reason).toBe("age");
+  });
+
+  // The general form of the assertion above, as a standing guard: after
+  // ANY retirement the Pip is in exactly one collection. This is the
+  // reducer-level twin of `core/pips/ailment.test.ts`'s XOR check for the
+  // LOSS path — that one existed, this one did not, which is precisely
+  // why the promise-3 arm could be mutated without a single test noticing.
+  it("PROMISE 3: RETIRE_PIP keeps the one-place invariant — every id is in pips XOR sanctuary", () => {
+    let state = createNewGame(7, 0);
+    const starterId = state.rosterOrder[0] as string;
+    const hatched = hatchSecondPip(state, 0);
+    state = hatched.state;
+    const everyId = [starterId, hatched.pipId];
+
+    for (const [i, id] of everyId.entries()) {
+      const before = { ...state.pips[id] } as PipState;
+      state = rootReducer(state, { type: "RETIRE_PIP", pipId: id, at: 5_000 + i });
+      const inRoster = state.pips[id] !== undefined;
+      const inMeadow = state.sanctuary.pips[id] !== undefined;
+      expect(inRoster !== inMeadow).toBe(true); // XOR — never both, never neither
+      // Whichever side it landed on, the whole PipState survived.
+      const survived = state.pips[id] ?? state.sanctuary.pips[id]?.pip;
+      expect(survived?.genome).toEqual(before.genome);
+      expect(survived?.name).toBe(before.name);
+    }
+    // The last Pip is refused (promise 5), so it is still in the roster —
+    // and the XOR above held for it too, on the other side.
+    expect(state.rosterOrder.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("a player-chosen retirement records reason 'player', not 'age'", () => {
+    let state = createNewGame(7, 0);
+    const starterId = state.rosterOrder[0] as string;
+    state = hatchSecondPip(state, 0).state;
+    state = rootReducer(state, { type: "RETIRE_PIP", pipId: starterId, at: 5_000 });
+    expect(state.sanctuary.pips[starterId]?.reason).toBe("player");
+  });
+
+  it("a manually-retired (NOT age-ready) Pip does not pay retirementWitnessed", () => {
+    let state = createNewGame(7, 0);
+    const starterId = state.rosterOrder[0] as string;
+    const hatched = hatchSecondPip(state, 0);
+    state = hatched.state;
+    const keepXpBefore = state.keepXp;
+    state = rootReducer(state, { type: "RETIRE_PIP", pipId: starterId, at: 5_000 });
+    expect(state.lastSanctuaryOutcome?.ok).toBe(true);
+    // Only the (possible) first-ever-arrival bonus (20) — never
+    // retirementWitnessed (40), which requires `readyToRetire`.
+    expect(state.keepXp).toBeLessThan(
+      keepXpBefore + tuning.lifecycle.keepXp.retirementWitnessed,
+    );
+  });
+
+  it("PROMISE 2/5: a 3-week (21-day) absence never empties the Keep, and ages a Pip by at most the offline rate cap", () => {
+    let state = createNewGame(7, 0);
+    const starterId = state.rosterOrder[0] as string;
+    const hatched = hatchSecondPip(state, 0);
+    state = hatched.state;
+    const secondId = hatched.pipId;
+
+    const nearEnd = (p: PipState): PipState => ({
+      ...p,
+      ageMs: 1000 * HOUR_MS,
+      happinessIntegral: 50 * 1000 * HOUR_MS,
+      lifeMs: 0.999 * tuning.lifecycle.lifespan.baseMs,
+    });
+    state = rootReducer(state, {
+      type: "LOAD_SAVE",
+      state: {
+        ...state,
+        pips: {
+          ...state.pips,
+          [starterId]: nearEnd(pip(state, starterId)),
+          [secondId]: nearEnd(pip(state, secondId)),
+        },
+      },
+    });
+
+    const savedAt = state.lastTickAt;
+    state = rootReducer(state, {
+      type: "CATCHUP",
+      savedAt,
+      now: savedAt + 21 * 24 * HOUR_MS,
+    });
+
+    // The Keep is never empty (promise 5) — nobody auto-retired, however
+    // close to the end either Pip already was.
+    expect(state.rosterOrder).toHaveLength(2);
+    expect(Object.keys(state.sanctuary.pips)).toHaveLength(0);
+    // lifeMs advanced by AT MOST the offline rate cap for each Pip —
+    // never by the full 21 days (promise 2).
+    for (const id of [starterId, secondId]) {
+      expect(pip(state, id).lifeMs).toBeLessThanOrEqual(
+        0.999 * tuning.lifecycle.lifespan.baseMs + tuning.offlineRateCapMs,
+      );
+    }
+  });
+
+  it("TICK/CATCHUP only ever SET readyToRetire — RETIRE_PIP is the sole action that ever moves a Pip to the sanctuary", () => {
+    let state = createNewGame(7, 0);
+    const starterId = state.rosterOrder[0] as string;
+    const hatched = hatchSecondPip(state, 0);
+    state = hatched.state;
+    const secondId = hatched.pipId;
+
+    // Push both WAY past any plausible lifespan.
+    const overAge = (p: PipState): PipState => ({
+      ...p,
+      lifeMs: 100 * tuning.lifecycle.lifespan.baseMs,
+    });
+    state = rootReducer(state, {
+      type: "LOAD_SAVE",
+      state: {
+        ...state,
+        pips: {
+          ...state.pips,
+          [starterId]: overAge(pip(state, starterId)),
+          [secondId]: overAge(pip(state, secondId)),
+        },
+      },
+    });
+
+    // Repeated TICK and CATCHUP dispatches: the flag may (and should)
+    // flip, but nobody may ever be MOVED.
+    let t = state.lastTickAt;
+    for (let i = 0; i < 10; i++) {
+      t += HOUR_MS;
+      state = rootReducer(state, { type: "TICK", at: t });
+    }
+    state = rootReducer(state, { type: "CATCHUP", savedAt: t, now: t + 5 * 24 * HOUR_MS });
+
+    expect(state.rosterOrder).toHaveLength(2);
+    expect(Object.keys(state.sanctuary.pips)).toHaveLength(0);
+    expect(pip(state, starterId).readyToRetire).toBe(true);
+    expect(pip(state, secondId).readyToRetire).toBe(true);
+  });
+
+  it("ASSIGN_EXPEDITION bakes this Pip's own expedition-speed level effect into departedAt/durationMs at send-off", () => {
+    let state = createNewGame(7, 0);
+    const starterId = state.rosterOrder[0] as string;
+    state = rootReducer(state, {
+      type: "LOAD_SAVE",
+      state: {
+        ...state,
+        pips: {
+          ...state.pips,
+          [starterId]: { ...pip(state, starterId), level: tuning.lifecycle.level.maxLevel },
+        },
+      },
+    });
+    state = rootReducer(state, {
+      type: "ASSIGN_EXPEDITION",
+      pipId: starterId,
+      expeditionId: "meadow",
+      at: 0,
+    });
+    expect(state.lastAssignOutcome?.ok).toBe(true);
+    if (state.lastAssignOutcome?.ok !== true) return;
+    // A max-level Pip's own trail-legs effect makes the trip faster than
+    // the base content duration, even on an unbuilt Keep.
+    expect(state.lastAssignOutcome.durationMs).toBeLessThan(tuning.expeditions.meadow.durationMs);
+  });
+});

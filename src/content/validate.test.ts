@@ -579,6 +579,198 @@ describe("broken content is caught", () => {
   });
 });
 
+// ROUND 2H — ailments (docs/lifecycle-bible.md §3). The five promises are
+// data relationships, not hopes; each check below pins one of them as a
+// loud boot-time error rather than a silent, unwinnable game.
+describe("ailments (round 2H): the anti-brutality promises are caught as data errors", () => {
+  it("the shipped default content has no ailment errors", () => {
+    const { errors } = collectContentIssues(defaultContentBundle);
+    expect(errors.filter((e) => e.includes("ailment") || e.includes("lifecycle"))).toEqual(
+      [],
+    );
+  });
+
+  it("flags a biome flagged dangerous with no ailment pool", () => {
+    // Remove Brambleburr's registry entry while Bramblewick's riskCopy
+    // still says risky — the send-off card would keep warning about a
+    // danger that no longer exists in the ailment pool.
+    const { brambleburr: _removed, ...rest } = defaultContentBundle.ailments;
+    const bundle: ContentBundle = {
+      ...defaultContentBundle,
+      ailments: rest as ContentBundle["ailments"],
+    };
+    const { errors } = collectContentIssues(bundle);
+    expect(errors).toContain(
+      'expedition "bramblewick": has no ailment pool but riskCopy says "Some risk. Pips sometimes come back with a burr." — hidden safety is as misleading as hidden danger',
+    );
+  });
+
+  it("flags a biome flagged safe that actually carries an ailment pool (hidden risk)", () => {
+    const meadow = defaultContentBundle.expeditions["meadow"] as ExpeditionDef;
+    const bundle: ContentBundle = {
+      ...defaultContentBundle,
+      expeditions: {
+        ...defaultContentBundle.expeditions,
+        meadow: { ...meadow, riskCopy: "Safe trail." },
+      },
+      ailments: {
+        ...defaultContentBundle.ailments,
+        brambleburr: { ...defaultContentBundle.ailments.brambleburr, fromExpeditionId: "meadow" },
+      },
+    };
+    const { errors } = collectContentIssues(bundle);
+    expect(errors).toContain(
+      'expedition "meadow": has an ailment pool but riskCopy says "Safe trail." — a dangerous biome must say so (bible §7.1)',
+    );
+  });
+
+  it("flags a riskCopy string that is neither shipped variant", () => {
+    const meadow = defaultContentBundle.expeditions["meadow"] as ExpeditionDef;
+    const bundle: ContentBundle = {
+      ...defaultContentBundle,
+      expeditions: {
+        ...defaultContentBundle.expeditions,
+        meadow: { ...meadow, riskCopy: "Probably fine?" },
+      },
+    };
+    const { errors } = collectContentIssues(bundle);
+    expect(errors).toContain(
+      'expedition "meadow": riskCopy "Probably fine?" is not one of the two shipped risk-line strings (bible §7.1)',
+    );
+  });
+
+  it("flags an ailment whose fromExpeditionId names no real expedition", () => {
+    const bundle: ContentBundle = {
+      ...defaultContentBundle,
+      ailments: {
+        ...defaultContentBundle.ailments,
+        brambleburr: {
+          ...defaultContentBundle.ailments.brambleburr,
+          fromExpeditionId: "volcano",
+        },
+      },
+    };
+    const { errors } = collectContentIssues(bundle);
+    expect(errors).toContain(
+      'ailment "brambleburr": fromExpeditionId "volcano" is not a defined expedition',
+    );
+  });
+
+  it("flags a cure item that does not exist", () => {
+    const { poultice: _removed, ...rest } = defaultContentBundle.foods;
+    const bundle: ContentBundle = { ...defaultContentBundle, foods: rest };
+    const { errors } = collectContentIssues(bundle);
+    expect(errors).toContain(
+      'ailments: cure item "poultice" (POULTICE_ITEM_ID) does not exist in the food/item registry',
+    );
+  });
+
+  it("flags a countdown shorter than the offline cap (would break promise 2 by construction)", () => {
+    const bundle: ContentBundle = {
+      ...defaultContentBundle,
+      ailments: {
+        ...defaultContentBundle.ailments,
+        lanternfever: {
+          ...defaultContentBundle.ailments.lanternfever,
+          totalMs: defaultContentBundle.tuning.offlineRateCapMs,
+        },
+      },
+    };
+    const { errors } = collectContentIssues(bundle);
+    expect(
+      errors.some((e) =>
+        e.startsWith(
+          'ailment "lanternfever": countdown 57600000ms does not exceed offlineRateCapMs',
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it("flags an ailment shorter than lifecycle.ailments.minDurationMs even if it still clears the offline cap", () => {
+    const bundle: ContentBundle = {
+      ...defaultContentBundle,
+      ailments: {
+        ...defaultContentBundle.ailments,
+        lanternfever: {
+          ...defaultContentBundle.ailments.lanternfever,
+          totalMs: defaultContentBundle.tuning.offlineRateCapMs + 60_000,
+        },
+      },
+    };
+    const { errors } = collectContentIssues(bundle);
+    expect(
+      errors.some((e) =>
+        e.startsWith('ailment "lanternfever": countdown 57660000ms is shorter than'),
+      ),
+    ).toBe(true);
+  });
+
+  it("flags an ailment with a contractChance out of (0, 1]", () => {
+    const bundle: ContentBundle = {
+      ...defaultContentBundle,
+      ailments: {
+        ...defaultContentBundle.ailments,
+        chillshake: { ...defaultContentBundle.ailments.chillshake, contractChance: 0 },
+      },
+    };
+    const { errors } = collectContentIssues(bundle);
+    expect(errors).toContain('ailment "chillshake": contractChance 0 out of (0, 1]');
+  });
+
+  it("flags an ailment with no cure route at all (both cure chances non-positive)", () => {
+    const bundle: ContentBundle = {
+      ...defaultContentBundle,
+      tuning: {
+        ...defaultContentBundle.tuning,
+        lifecycle: {
+          ...defaultContentBundle.tuning.lifecycle,
+          ailments: {
+            ...defaultContentBundle.tuning.lifecycle.ailments,
+            poulticeCureChance: 0,
+            devotedCareCureChance: 0,
+          },
+        },
+      },
+    };
+    const { errors } = collectContentIssues(bundle);
+    expect(errors).toContain(
+      "ailments: no cure route exists (poulticeCureChance and devotedCareCureChance are both non-positive) — every ailment would be unwinnable",
+    );
+  });
+
+  it("flags minDurationMs failing to exceed offlineRateCapMs as a standalone tuning-invariant error", () => {
+    const bundle: ContentBundle = {
+      ...defaultContentBundle,
+      tuning: {
+        ...defaultContentBundle.tuning,
+        lifecycle: {
+          ...defaultContentBundle.tuning.lifecycle,
+          ailments: {
+            ...defaultContentBundle.tuning.lifecycle.ailments,
+            minDurationMs: defaultContentBundle.tuning.offlineRateCapMs,
+          },
+        },
+      },
+    };
+    const { errors } = collectContentIssues(bundle);
+    expect(
+      errors.some((e) => e.startsWith("lifecycle.ailments.minDurationMs")),
+    ).toBe(true);
+  });
+
+  it("flags an ailment missing flavor text", () => {
+    const bundle: ContentBundle = {
+      ...defaultContentBundle,
+      ailments: {
+        ...defaultContentBundle.ailments,
+        chillshake: { ...defaultContentBundle.ailments.chillshake, flavor: "  " },
+      },
+    };
+    const { errors } = collectContentIssues(bundle);
+    expect(errors).toContain('ailment "chillshake": missing flavor text');
+  });
+});
+
 describe("validateContent logging", () => {
   it("logs errors via console.error (loud, per spec §3)", () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -697,19 +889,25 @@ describe("a dead tier is rejected (progression bible §2, ruling #2)", () => {
   });
 
   it("catches a dead tier whichever currency was removed — expeditions, upgrades, grid or set bonuses", () => {
-    // Tier 5's only gates are the Lanterngrotto and grid growth. Remove both.
+    // Tier 5's gates are the Lanterngrotto, grid growth, and (round 2H)
+    // the Poultice Shelf. Remove all three.
     const expeditions = Object.fromEntries(
       Object.entries(defaultContentBundle.expeditions).map(([id, e]) => [
         id,
         e.unlockKeepLevel === 5 ? { ...e, unlockKeepLevel: 6 as typeof e.unlockKeepLevel } : e,
       ]),
     );
+    const placeables = defaultContentBundle.placeables.map((p) =>
+      p.unlockKeepLevel === 5 ? { ...p, unlockKeepLevel: 6 as typeof p.unlockKeepLevel } : p,
+    );
     const gridGrowth = { ...defaultContentBundle.tuning.progression.gridGrowth };
     delete (gridGrowth as Record<number, unknown>)[5];
     const bundle: ContentBundle = {
       ...defaultContentBundle,
       expeditions,
+      placeables,
       tuning: {
+        ...defaultContentBundle.tuning,
         progression: {
           ...defaultContentBundle.tuning.progression,
           gridGrowth,
@@ -732,6 +930,7 @@ describe("a dead tier is rejected (progression bible §2, ruling #2)", () => {
       ...defaultContentBundle,
       placeables,
       tuning: {
+        ...defaultContentBundle.tuning,
         progression: { ...defaultContentBundle.tuning.progression, gridGrowth },
       },
     };

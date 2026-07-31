@@ -203,11 +203,58 @@ const LADDER: readonly Rung[] = [
     peer: true,
   },
   {
+    layer: "growth-sheet",
+    file: "lifecycle.css",
+    selector: ".pk-growth-wrap--open",
+    z: 23,
+    why: "ROUND 2H: a Pip's own Growth sheet (docs/lifecycle-bible.md §1)",
+  },
+  {
+    layer: "ailment-card",
+    file: "lifecycle.css",
+    selector: ".pk-ailment-wrap--open",
+    z: 24,
+    why: "ROUND 2H: the ailment card — which Pip, what she has, what to do (bible §3–§4)",
+  },
+  {
+    layer: "lineage-board",
+    file: "lifecycle.css",
+    selector: ".pk-lineage-wrap--open",
+    z: 25,
+    why: "ROUND 2H: \"Someone to find\" — every unfound lineage egg (bible §5.3)",
+  },
+  {
     layer: "confirm",
     file: "sanctuary.css",
     selector: ".pk-sanctuary-confirm-wrap--open",
     z: 26,
     why: "retire/retrieve confirm — reachable FROM the focus view AND the list",
+  },
+  {
+    layer: "confirm",
+    file: "lifecycle.css",
+    selector: ".pk-breed-wrap--open",
+    z: 26,
+    why:
+      "ROUND 2H (bible §9.5's own pin): the clutch sheet — a peer of the " +
+      "Long Meadow's retire confirm, reachable from the focus view and the roster alike",
+    peer: true,
+  },
+  {
+    layer: "risk-confirm",
+    file: "lifecycle.css",
+    selector: ".pk-ailment-risk-wrap--open",
+    z: 27,
+    why:
+      "ROUND 2H: \"before a Pip leaves for a biome that can make her ill\" (bible §7.1) — " +
+      "reachable from an expedition picker this module does not own, so it must clear everything above",
+  },
+  {
+    layer: "retirement-ready",
+    file: "lifecycle.css",
+    selector: ".pk-retireready-wrap--open",
+    z: 28,
+    why: "ROUND 2H: old age's own moment (bible §2.5/§4) — never a lesser death, never queued behind chores",
   },
   {
     layer: "coach",
@@ -258,6 +305,15 @@ const LADDER: readonly Rung[] = [
       "milestone completions (bible §6.2); floats above ordinary toasts " +
       "for the same reason the tier banner does, and queues behind the " +
       "Doorstep/reveal queue itself (milestoneCelebration.ts)",
+  },
+  {
+    layer: "loss",
+    file: "lifecycle.css",
+    selector: ".pk-loss",
+    z: 48,
+    why:
+      "ROUND 2H (bible §9.5's own pin): the loss moment — above the milestone " +
+      "ribbon, below the recovery modal, because nothing except a corrupt save may ever cover it",
   },
   {
     layer: "recovery",

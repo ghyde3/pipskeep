@@ -17,7 +17,9 @@ import {
   buildSanctuaryListModel,
   formatResidencySince,
   isSettled,
+  memorialLine,
   pickActivityLine,
+  sanctuaryBlurb,
 } from "./sanctuary";
 
 const needs = (overrides: Partial<PipNeeds> = {}): PipNeeds => ({
@@ -284,5 +286,100 @@ describe("buildRetireConfirmModel", () => {
   it("is null for an unknown pip id (defensive — caller shouldn't offer it)", () => {
     const state = makeState({ pips: {}, order: [] } as SanctuaryState, {});
     expect(buildRetireConfirmModel(state, "ghost")).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ROUND 2H FIX PASS — the Long Meadow told a lost Pip's owner she was
+// "home again tomorrow morning". The reducer had always refused the
+// retrieve; only the SCREEN disagreed, so the player learned the truth by
+// tapping a button that silently did nothing.
+// ---------------------------------------------------------------------------
+
+describe("a memorial is never rendered as a retiree (promise 3/4)", () => {
+  const lost = (): SanctuaryState =>
+    makeSanctuary({ "pip-1": makeRecord({ reason: "lost" }) }, ["pip-1"]);
+
+  it("is never 'settled', at any distance in time — the button must agree with the reducer", () => {
+    const state = makeState(lost());
+    for (const days of [0, 1, 3, 30, 365]) {
+      const model = buildResidentModel(state, "pip-1", days * DAY_MS);
+      expect(model?.settled, `${days}d after the loss`).toBe(false);
+      expect(model?.isMemorial).toBe(true);
+      expect(model?.reason).toBe("lost");
+    }
+  });
+
+  it("carries the remembrance line, not a jaunty resident activity line", () => {
+    const model = buildResidentModel(makeState(lost()), "pip-1", DAY_MS);
+    expect(model?.activityLine).toBe(memorialLine(model?.name ?? ""));
+    expect(model?.activityLine).not.toMatch(/beetle|hay|fence/i);
+  });
+
+  it("never glows 'ask them home to see it', however ready to evolve they were", () => {
+    const state = makeState(
+      makeSanctuary(
+        { "pip-1": makeRecord({ reason: "lost", pip: makePip({ readyToEvolve: true }) }) },
+        ["pip-1"],
+      ),
+    );
+    expect(buildResidentModel(state, "pip-1", DAY_MS)?.readyToEvolve).toBe(false);
+  });
+
+  it("an ordinary retiree is untouched by any of this", () => {
+    for (const reason of [undefined, "player", "age"] as const) {
+      const state = makeState(makeSanctuary({ "pip-1": makeRecord({ reason }) }, ["pip-1"]));
+      const model = buildResidentModel(state, "pip-1", 30 * DAY_MS);
+      expect(model?.isMemorial).toBe(false);
+      expect(model?.settled).toBe(true);
+      expect(model?.reason).toBe(reason ?? "player");
+    }
+  });
+
+  // The header used to promise "Nothing here is lost — … ask anyone home
+  // whenever you like" directly above a memorial card. It was true until
+  // this round, and then it was a lie in exactly the moment that mattered.
+  it("the header stops promising that nothing here is lost once something is", () => {
+    const ordinary = buildSanctuaryListModel(
+      makeState(makeSanctuary({ "pip-1": makeRecord({}) }, ["pip-1"])),
+      DAY_MS,
+    );
+    expect(ordinary.hasMemorial).toBe(false);
+    expect(sanctuaryBlurb(ordinary.hasMemorial)).toMatch(/nothing here is lost/i);
+
+    const grieving = buildSanctuaryListModel(makeState(lost()), DAY_MS);
+    expect(grieving.hasMemorial).toBe(true);
+    const blurb = sanctuaryBlurb(grieving.hasMemorial);
+    expect(blurb).not.toMatch(/nothing here is lost/i);
+    expect(blurb).not.toMatch(/ask anyone home whenever/i);
+    expect(blurb).toMatch(/album/i); // the Album is still permanent, and says so
+  });
+});
+
+describe("shield six, made visible — a paused ailing resident (bible §7.6)", () => {
+  it("says the countdown is frozen and that she can come home", () => {
+    const ailing = makePip({
+      ailment: {
+        id: "brambleburr",
+        contractedAt: 0,
+        fromExpeditionId: "bramblewick",
+        remainingMs: 3 * 60 * 60 * 1000,
+        totalMs: 48 * 60 * 60 * 1000,
+        cureAttempts: 0,
+      },
+    });
+    const state = makeState(
+      makeSanctuary({ "pip-1": makeRecord({ pip: ailing, reason: "player" }) }, ["pip-1"]),
+    );
+    const model = buildResidentModel(state, "pip-1", DAY_MS);
+    expect(model?.ailingPaused).toBe(true);
+    // ...and she is still fully retrievable: pausing is not a goodbye.
+    expect(model?.settled).toBe(true);
+    expect(model?.isMemorial).toBe(false);
+  });
+
+  it("a healthy resident is not flagged as paused", () => {
+    const state = makeState(makeSanctuary({ "pip-1": makeRecord({}) }, ["pip-1"]));
+    expect(buildResidentModel(state, "pip-1", DAY_MS)?.ailingPaused).toBe(false);
   });
 });

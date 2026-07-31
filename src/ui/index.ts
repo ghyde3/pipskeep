@@ -38,6 +38,25 @@ export interface UiDeps {
    * every pre-2C `initUi` caller and test valid.
    */
   openRetireConfirm?(pipId: string): void;
+  /**
+   * ROUND 2H THE SEND SEAM (spec §16 v1.5 promise 1, docs/lifecycle-bible.md
+   * §7.1). The focus view's "Send" button routes here instead of dispatching
+   * `ASSIGN_EXPEDITION` itself, so a RISKY trail can show its confirm before
+   * anyone leaves. `ui/ailment.ts` owns that confirm; main.ts wires it.
+   * Optional, and the focus view falls back to its own direct dispatch when
+   * omitted — which is what keeps every pre-2H focusView/initUi test valid.
+   */
+  requestExpedition?(pipId: string, expeditionId: string): void;
+  /** Open a Pip's own Growth sheet (`ui/pipLevel.ts`). Optional; the level
+   * chip is simply not drawn without it. */
+  openGrowth?(pipId: string): void;
+  /** Open a Pip's ailment card (`ui/ailment.ts`). Optional; the "poorly"
+   * row is not drawn without it. (The ailment view also carries its own
+   * floating chip, so this is a second door, never the only one.) */
+  openAilment?(pipId: string): void;
+  /** Reopen the retirement-ready card (`ui/memorial.ts`) for a Pip who has
+   * reached the end of a full life. Optional. */
+  openRetirementReady?(pipId: string): void;
 }
 
 export interface Ui {
@@ -94,6 +113,10 @@ export function initUi(deps: UiDeps): Ui {
     getState: () => deps.store.getState(),
     clock: deps.clock,
     openRetireConfirm: deps.openRetireConfirm,
+    requestExpedition: deps.requestExpedition,
+    openGrowth: deps.openGrowth,
+    openAilment: deps.openAilment,
+    openRetirementReady: deps.openRetirementReady,
   });
   const topBar = createTopBar({
     dispatch: (a) => deps.store.dispatch(a),

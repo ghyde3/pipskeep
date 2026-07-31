@@ -28,7 +28,11 @@ import "./sanctuary.css";
 import type { Clock } from "../core/clock";
 import type { GameAction, GameState } from "../core/state";
 import type { PipState } from "../core/pips/types";
-import type { RetireRefusalReason, RetrieveRefusalReason } from "../core/sanctuary";
+import type {
+  RetireRefusalReason,
+  RetrieveRefusalReason,
+  SanctuaryReason,
+} from "../core/sanctuary";
 import { EXPEDITION_IDS, expeditions } from "../content/expeditions";
 import { personalities } from "../content/personalities";
 import type { PersonalityId } from "../content/personalities";
@@ -196,6 +200,26 @@ export interface ResidentModel {
    * card says "ask them home to see it" (evolution is witnessed in the
    * Keep, spec §4.6, never in the Long Meadow). */
   readonly readyToEvolve: boolean;
+  /**
+   * ROUND 2H (spec §16 v1.5, docs/lifecycle-bible.md §4) — WHY they are
+   * here, straight off the record. `undefined ≡ "player"`.
+   *
+   * ⚠️ `"lost"` CHANGES WHAT THE CARD MAY SAY. The reducer has always
+   * refused RETRIEVE_PIP for a lost resident (a memorial is not a pause),
+   * but the list rendered one exactly like any other retiree — under a
+   * header promising "nothing here is lost… ask anyone home whenever you
+   * like", with the settling-in line "home again tomorrow morning". She
+   * is not coming home. The player found that out by tapping a button
+   * that silently did nothing, which took a careful, honest goodbye and
+   * turned it into a bug. `isMemorial` is what the renderer gates on.
+   */
+  readonly reason: SanctuaryReason;
+  readonly isMemorial: boolean;
+  /** ROUND 2H (bible §7.6) — shield six, made visible: this resident is
+   * still carrying an ailment, its countdown frozen for as long as they
+   * stay. The Long Meadow is an unlimited pause button for a frightened
+   * player, and it was worth nothing while nothing said so. */
+  readonly ailingPaused: boolean;
 }
 
 export function buildResidentModel(
@@ -206,6 +230,8 @@ export function buildResidentModel(
   const record = state.sanctuary.pips[pipId];
   if (record === undefined) return null;
   const pip = record.pip;
+  const reason: SanctuaryReason = record.reason ?? "player";
+  const isMemorial = reason === "lost";
   return {
     pipId,
     name: pip.name,
@@ -215,15 +241,51 @@ export function buildResidentModel(
     residencyLabel: formatResidencySince(record.retiredAt, now),
     keepLevelFlavor: keepLevelFlavor(record.retiredFromKeepLevel),
     visits: record.visits,
-    activityLine: pickActivityLine(pip),
+    // A memorial gets the remembrance line, never a jaunty "made friends
+    // with a beetle" — the personality pool is for residents who are
+    // actually out there having a week.
+    activityLine: isMemorial ? memorialLine(pip.name) : pickActivityLine(pip),
     masteryChips: buildMasteryChips(pip),
-    settled: isSettled(record.retiredAt, now, tuning.retention.sanctuary.minStayMs),
-    readyToEvolve: pip.readyToEvolve,
+    // `settled` gates the "ask them home" button. A memorial is never
+    // settled, at any distance in time — the reducer refuses the retrieve
+    // regardless (`core/sanctuary/index.ts`), and the button must agree
+    // with the reducer rather than apologise after the tap.
+    settled:
+      !isMemorial && isSettled(record.retiredAt, now, tuning.retention.sanctuary.minStayMs),
+    readyToEvolve: !isMemorial && pip.readyToEvolve,
+    reason,
+    isMemorial,
+    ailingPaused: !isMemorial && pip.ailment != null,
   };
+}
+
+/** The memorial's standing line (bible §4). Warm, finite, and honest —
+ * the one card in the game that must not imply a return. */
+export function memorialLine(name: string): string {
+  return `${name} rests here now. The Keep remembers.`;
+}
+
+/**
+ * The header blurb. ROUND 2H made the original a lie in one specific
+ * case: "Nothing here is lost — visit any time, and ask anyone home
+ * whenever you like" was printed directly above a memorial card for a Pip
+ * who could never be asked home. The Meadow is still a warm place and
+ * still mostly a pause; once someone is resting there for good, the
+ * header says so first, in the same breath.
+ */
+export function sanctuaryBlurb(hasMemorial: boolean): string {
+  return hasMemorial
+    ? "A wide green place over the hill. Most Pips here are just helping out for a while — " +
+        "ask them home whenever you like. Some are resting for good, and they stay in the Album forever."
+    : "A wide green place over the hill, where Pips go to help out for a while. " +
+        "Nothing here is lost — visit any time, and ask anyone home whenever you like.";
 }
 
 export interface SanctuaryListModel {
   readonly residents: readonly ResidentModel[];
+  /** True when at least one resident is a memorial (`reason: "lost"`) —
+   * drives `sanctuaryBlurb`. */
+  readonly hasMemorial: boolean;
   /** Earned gate signs (bible §4.3's "a Long Meadow gate sign") — the
    * milestone rewards `sanctuary-gate-sign` / `sanctuary-gathering-sign`,
    * which before this fix were `kind: "flair"` and paid literally nothing.
@@ -242,7 +304,11 @@ export function buildSanctuaryListModel(
     const model = buildResidentModel(state, pipId, now);
     if (model !== null) residents.push(model);
   }
-  return { residents, gateSigns: earnedFlairOfKind(state.flair, "sanctuarySign") };
+  return {
+    residents,
+    hasMemorial: residents.some((r) => r.isMemorial),
+    gateSigns: earnedFlairOfKind(state.flair, "sanctuarySign"),
+  };
 }
 
 export interface RetireConfirmModel {
@@ -278,6 +344,12 @@ export const RETRIEVE_REFUSAL_COPY: Readonly<Record<RetrieveRefusalReason, strin
   unknownResident: "They don't seem to be at the Long Meadow after all.",
   notSettled: "Still settling in — home again tomorrow morning.",
   full: "The Keep's full and cosy — swap someone out and they'll be along.",
+  // ROUND 2H (spec §16 v1.5, docs/lifecycle-bible.md §4) — a "lost"
+  // resident is a memorial, not a pause; this copy should be effectively
+  // unreachable (the Long Meadow list should not offer "ask them home" for
+  // one at all), but the reducer refuses it regardless, so the copy exists
+  // for the same defensive reason `unknownPip`/`unknownResident` do.
+  lost: "She's resting in the Long Meadow now. Some visits are just visits.",
 };
 
 // ---------------------------------------------------------------------------
@@ -373,6 +445,7 @@ export function createSanctuaryView(deps: SanctuaryViewDeps): SanctuaryView {
   function renderResidentCard(model: ResidentModel): HTMLElement {
     const card = document.createElement("div");
     card.className = "pk-sanctuary-card";
+    if (model.isMemorial) card.classList.add("pk-sanctuary-card--memorial");
 
     card.appendChild(buildPortraitEl(model.portraitVisual, "small"));
 
@@ -389,7 +462,9 @@ export function createSanctuaryView(deps: SanctuaryViewDeps): SanctuaryView {
 
     const flavor = document.createElement("div");
     flavor.className = "pk-sanctuary-flavor";
-    flavor.textContent = `Left the Keep when it was ${model.keepLevelFlavor}.`;
+    flavor.textContent = model.isMemorial
+      ? `Knew the Keep when it was ${model.keepLevelFlavor}.`
+      : `Left the Keep when it was ${model.keepLevelFlavor}.`;
 
     const activity = document.createElement("div");
     activity.className = "pk-sanctuary-activity";
@@ -403,6 +478,17 @@ export function createSanctuaryView(deps: SanctuaryViewDeps): SanctuaryView {
       visits.textContent =
         model.visits === 1 ? "Been home once before." : `Been home ${model.visits} times before.`;
       body.appendChild(visits);
+    }
+
+    // ROUND 2H (bible §7.6) — SHIELD SIX made visible. A frozen countdown
+    // is the best answer available to a player who needs time to go and
+    // find a Poultice, and until this line existed there was no way in the
+    // game to learn that pausing was even possible.
+    if (model.ailingPaused) {
+      const paused = document.createElement("div");
+      paused.className = "pk-sanctuary-paused";
+      paused.textContent = `${model.name} is resting, and still poorly — nothing is getting worse while they're here. Ask them home when you're ready to try again.`;
+      body.appendChild(paused);
     }
 
     if (model.readyToEvolve) {
@@ -428,7 +514,15 @@ export function createSanctuaryView(deps: SanctuaryViewDeps): SanctuaryView {
 
     const actions = document.createElement("div");
     actions.className = "pk-sanctuary-actions";
-    if (model.settled) {
+    if (model.isMemorial) {
+      // No button, and no "home again tomorrow morning". The reducer
+      // refuses the retrieve at every distance in time; the card must say
+      // the same thing rather than let the player discover it by tapping.
+      const note = document.createElement("div");
+      note.className = "pk-sanctuary-memorial-note";
+      note.textContent = "Some visits are just visits.";
+      actions.appendChild(note);
+    } else if (model.settled) {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.className = "pk-sanctuary-retrieve";
@@ -481,14 +575,13 @@ export function createSanctuaryView(deps: SanctuaryViewDeps): SanctuaryView {
     const title = document.createElement("div");
     title.className = "pk-sanctuary-title";
     title.textContent = "The Long Meadow";
+    const model = buildSanctuaryListModel(state, deps.clock.now());
+
     const blurb = document.createElement("div");
     blurb.className = "pk-sanctuary-blurb";
-    blurb.textContent =
-      "A wide green place over the hill, where Pips go to help out for a while. " +
-      "Nothing here is lost — visit any time, and ask anyone home whenever you like.";
+    blurb.textContent = sanctuaryBlurb(model.hasMemorial);
     header.append(title, blurb);
 
-    const model = buildSanctuaryListModel(state, deps.clock.now());
     // The gate signs, carved into the header (bible §4.3). Shown above the
     // residents because that is where a sign at a gate actually is.
     for (const sign of model.gateSigns) {

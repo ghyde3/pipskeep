@@ -84,6 +84,7 @@ import {
 } from "./pips/machine";
 import {
   applyEvolution,
+  updateAging,
   updateEvolutionReadiness,
   updateLifeStage,
 } from "./pips/lifecycle";
@@ -93,6 +94,45 @@ import type {
 } from "./pips/lifecycle";
 import { runCatchup } from "./pips/catchup";
 import type { CatchupSummary } from "./pips/catchup";
+// ROUND 2H (spec §16 v1.5, docs/lifecycle-bible.md §1) — PER-PIP LEVELS.
+// `level.ts` is the pure calculator (curve, per-source award amounts,
+// level-effect getters); this file composes it against the real
+// GameState/GameAction, exactly the division of labour every other
+// core/state.ts progression import already uses (xp.ts, mastery.ts, …).
+import {
+  awardPipXp,
+  careActionPipXp,
+  expeditionSpeedMultiplierFor,
+  jobTickPipXp,
+  masteryTierPipXp,
+  pipLevel,
+  tripPipXp,
+  xpForLevel,
+} from "./pips/level";
+// ROUND 2H (spec §16 v1.5, docs/lifecycle-bible.md §3–§5) — AILMENTS + THE
+// LOSS PATH. `resolveAilments`/`applyVigilFloor` are called from exactly
+// the TICK/CATCHUP arms below (see their own doc comments for WHY);
+// `attemptCure` backs the one wired cure route this round (GIVE_ITEM's
+// poultice, `applyAilmentCureForAction`).
+import {
+  applyDevotedCare,
+  applyVigilFloor,
+  attemptCure,
+  devotedCareEligible,
+  AILMENT_STREAM,
+  resolveAilments,
+} from "./pips/ailment";
+import type { LineageEggSeed, LossOutcome } from "./pips/ailment";
+import { ailments as contentAilments, POULTICE_ITEM_ID } from "../content/ailments";
+// ROUND 2H (spec §12 unfenced, docs/lifecycle-bible.md §6) — BREEDING +
+// LINEAGE EGGS. `breeding.ts` is the pure calculator (eligibility,
+// inheritance); this file composes it against the real GameState/
+// GameAction — the BREED_PIPS reducer arm below is `combineForBreeding`'s
+// one call site, and `HATCH_EGG` reads `Egg.lineageGenome` (set by either
+// this action or a lineage find inside `core/expeditions`) to skip the
+// ordinary genome roll.
+import { breedEligibility, combineForBreeding, LINEAGE_STREAM } from "./pips/breeding";
+import type { BreedRefusalReason } from "./pips/breeding";
 import { performCare } from "./pips/care";
 import type { CareAction, CareOutcome, CooldownsByPip } from "./pips/care";
 import type { LastLineIndexByPip } from "./pips/dialogue";
@@ -111,6 +151,7 @@ import {
   EggState,
   beginIncubation,
   collectEggCatchupEvents,
+  createBredEgg,
   createEgg,
   settleDueEggs,
 } from "./eggs";
@@ -162,7 +203,7 @@ import {
   retirePip as retireToSanctuary,
   retrievePip as retrieveFromSanctuary,
 } from "./sanctuary";
-import type { SanctuaryOutcome, SanctuaryState } from "./sanctuary";
+import type { SanctuaryOutcome, SanctuaryReason, SanctuaryState } from "./sanctuary";
 // ROUND 2C — PROGRESSION (docs/retention-bible.md, the streak/milestone/
 // bounty/mastery/pity/event/multiplier stack). Every module below is
 // content-injectable and pure, per the established core/ pattern; this
@@ -412,7 +453,100 @@ export interface GameState {
    * while away), so the UI's celebration banner has something to animate
    * from. Null until the first purchase. */
   readonly lastLevelUp: LevelUpOutcome | null;
+  /**
+   * ROUND 2H (spec §16 v1.5, docs/lifecycle-bible.md §5.1) — PROMISE 4's
+   * thread: one seed per Pip lost to an ailment, in the biome that took
+   * them. Forward-only — appended ONLY by `core/pips/ailment.ts`'s
+   * `resolveAilments` (in the same atomic step that removes the Pip), and
+   * removed only by the (not-this-round) lineage/breeding find-on-trip
+   * system. OPTIONAL, `undefined ≡ []` — the same precedent
+   * `PipState.mastery`/`scars` already use, so the dozens of hand-built
+   * `GameState` fixtures across `core/`/`ui/` that predate this round need
+   * no edits. `createNewGame` sets it explicitly to `[]` regardless.
+   */
+  readonly lineageEggs?: readonly LineageEggSeed[];
+  /**
+   * ROUND 2H — the most recent ailment resolution (cured / the Loyal Turn
+   * / a true loss): the UI's loss-moment / survival-moment data source,
+   * parked like every other `last*Outcome` echo. Transient — the sim
+   * never reads its fields, only the reference identity of the field
+   * itself (`applyKeepXpForAction` diffs `next.lastLossOutcome !==
+   * prev.lastLossOutcome` to grant `ailmentCured` Keep XP exactly once per
+   * event) — so it round-trips through `save/serialize.ts` shape-checked
+   * only, the same contract `lastCareOutcome`/`lastEvolveOutcome` already
+   * keep. OPTIONAL, `undefined ≡ null` (never yet resolved) — same
+   * precedent as `lineageEggs` above.
+   */
+  readonly lastLossOutcome?: LossOutcome | null;
+  /**
+   * ROUND 2H (spec §12 unfenced, docs/lifecycle-bible.md §6) — the most
+   * recent BREED_PIPS request: the witnessed moment (a fresh Egg's id) or
+   * a friendly structural refusal, parked like every other `last*Outcome`
+   * echo. OPTIONAL, `undefined ≡ null` — the same precedent
+   * `lastLossOutcome` above uses, so no pre-2H-breeding fixture needs an
+   * edit.
+   */
+  readonly lastBreedOutcome?: BreedOutcome | null;
+  /**
+   * ROUND 2H (spec §16 v1.5, docs/lifecycle-bible.md §7.7) — PLAYER
+   * SETTINGS. One field so far, and it is shield six of six: THE QUIET
+   * KEEP.
+   *
+   * The owner's stated fear about this round is that it "can't be brutal
+   * that a player loses their star too quickly and are disappointed." Five
+   * shields make that unlikely; this one makes it IMPOSSIBLE, by the
+   * player's own hand, at any moment, with no cost and no penalty. A game
+   * whose owner worries about disappointing players ships the switch that
+   * makes disappointment impossible, and does not wait to be asked for it.
+   *
+   * OPTIONAL, `undefined ≡ every default` — the same precedent
+   * `lineageEggs`/`lastLossOutcome` above use, so every pre-2H `GameState`
+   * fixture in the suite stays valid with the field simply absent.
+   */
+  readonly settings?: GameSettings;
 }
+
+/**
+ * ROUND 2H — player-owned settings (see `GameState.settings`). Every field
+ * optional, `undefined ≡ off`, so the whole object is safely absent.
+ */
+export interface GameSettings {
+  /**
+   * "Pips never fall ill." When true: no expedition return may roll a
+   * contraction (`baseReducer` withholds the ailment registry from BOTH
+   * the live and the catch-up settle paths, so zero rolls are consumed and
+   * the RNG cursor is untouched), switching it ON clears any ailment
+   * already in flight, and `resolveAilments` treats it as shield zero.
+   * Three independent guarantees for one switch, because the player who
+   * reaches for it is the player who most needs it to work.
+   */
+  readonly quietKeep?: boolean;
+}
+
+/** What one `BREED_PIPS` request did — the UI's send-off/refusal data
+ * source (parked in `state.lastBreedOutcome`). Refusal reasons are
+ * STRUCTURAL (`core/pips/breeding.ts`'s `BreedRefusalReason` — "the world
+ * said no", never Pip-voiced), mirroring `AssignExpeditionOutcome`'s own
+ * `busy`/`locked`/`occupied` shape rather than its Sulking/Pipling one. */
+export type BreedOutcome =
+  | {
+      readonly ok: true;
+      readonly aId: PipId;
+      readonly bId: PipId;
+      readonly eggId: string;
+      readonly at: number;
+    }
+  | {
+      readonly ok: false;
+      readonly aId: PipId;
+      readonly bId: PipId;
+      readonly at: number;
+      readonly reason: BreedRefusalReason;
+      /** Which parent the refusal is about, when it's a per-pip gate
+       * (`core/pips/breeding.ts`'s `BreedEligibility.pipId`). Absent for
+       * `samePip`. */
+      readonly pipId?: PipId;
+    };
 
 /** What one successful `PURCHASE_KEEP_LEVEL` did — the UI's tier-up
  * banner data source (parked in `state.lastLevelUp`, like every other
@@ -463,6 +597,12 @@ export type GameAction =
       readonly pipId: PipId;
       readonly expeditionId: string;
       readonly at: number;
+      /** ROUND 2H (spec §16 v1.5, docs/lifecycle-bible.md §7.2) — SHIELD
+       * TWO, "take the long way round": this trip takes 1.5× as long and
+       * brings back three quarters of the loot rolls, and cannot inflict
+       * an ailment at all. Absent/`false` = the ordinary route. Ignored
+       * (silently, at no cost) for a trail that carries no risk. */
+      readonly careful?: boolean;
     }
   /** Player closes the loot-reveal modal: the queue HEAD's items land in
    * inventory/resources, its egg starts incubating, and a still-Returning
@@ -591,7 +731,29 @@ export type GameAction =
       readonly forDay: number;
       readonly choiceIndex: number;
       readonly at: number;
-    };
+    }
+  /** ROUND 2H (spec §12 unfenced, docs/lifecycle-bible.md §6) — breed two
+   * eligible Pips into a new Egg (`sourceExpeditionId: null`), carrying
+   * their combined genome and a share of their earned levels. Refused
+   * (state unchanged bar the echoed refusal) when either Pip fails
+   * `breedEligibility` (bible §6.1's table) — every reason is structural,
+   * never Pip-voiced (mirrors ASSIGN_EXPEDITION's `busy`/`locked`/
+   * `occupied`, not its Sulking/Pipling refusals — there is no dialogue
+   * line for "not ready to breed"). */
+  | {
+      readonly type: "BREED_PIPS";
+      readonly aId: PipId;
+      readonly bId: PipId;
+      readonly at: number;
+    }
+  /** ROUND 2H (spec §16 v1.5, docs/lifecycle-bible.md §7.7) — SHIELD SIX:
+   * the Quiet Keep switch, from the Nook. Turning it ON also clears every
+   * ailment currently in flight (see the reducer arm) — a player reaches
+   * for this switch precisely when they are frightened for a Pip they can
+   * see, and a setting that only helps the NEXT Pip would be a cruel joke.
+   * Turning it off again simply lets the world resume; nothing is owed and
+   * nothing is punished. Idempotent at the same value. */
+  | { readonly type: "SET_QUIET_KEEP"; readonly on: boolean; readonly at: number };
 
 /**
  * Starter hunger (spec §10.1: "Hunger bar is visibly at ~60" so the
@@ -869,6 +1031,11 @@ export function createNewGame(
     // the very bottom of tier 1, and no tier-up has ever happened.
     keepXp: 0,
     lastLevelUp: null,
+    // ROUND 2H: nobody has ever been lost, so there is nothing to find yet
+    // and nothing to have witnessed.
+    lineageEggs: [],
+    lastLossOutcome: null,
+    lastBreedOutcome: null,
   };
 }
 
@@ -965,6 +1132,43 @@ function keepComfortFrom(keepEffects: ResolvedKeepEffects): KeepComfortEffect {
     multiplier: keepComfortMultipliers(keepEffects),
     restSpeedMultiplier: keepEffects.restSpeedMultiplier,
   };
+}
+
+/**
+ * ROUND 2H (docs/lifecycle-bible.md §1.1 row 3) — Pip XP for job ticks
+ * PRODUCED THIS LIVE TICK, one working pip at a time: `ticks` is derived
+ * from how far `lastProducedAt` actually advanced for that pip between
+ * `before` (jobs as of the start of this dispatch) and `after` (jobs
+ * immediately after `processJobProduction`, BEFORE `reconcileJobs` can
+ * prune a pip that stopped working — e.g. entered Sulking — during this
+ * SAME tick). A pip absent from either side (never worked, or the
+ * station/job vanished) is skipped; `ticks <= 0` (nothing produced) is a
+ * no-op. Pure — `pips` is only ever read from and spread into a new
+ * record when something actually changed.
+ */
+function awardJobTickPipXp(
+  pips: Readonly<Record<PipId, PipState>>,
+  before: JobsByPip,
+  after: JobsByPip,
+): Readonly<Record<PipId, PipState>> {
+  let result = pips;
+  for (const [pipId, afterJob] of Object.entries(after)) {
+    const beforeJob = before[pipId];
+    if (beforeJob === undefined) continue;
+    const def = (contentJobs as Readonly<Record<string, { readonly intervalMs: number }>>)[
+      afterJob.jobId
+    ];
+    if (def === undefined || def.intervalMs <= 0) continue;
+    const elapsedMs = afterJob.lastProducedAt - beforeJob.lastProducedAt;
+    if (elapsedMs <= 0) continue;
+    const ticks = Math.round(elapsedMs / def.intervalMs);
+    if (ticks <= 0) continue;
+    const pip = result[pipId];
+    if (pip === undefined) continue;
+    const awarded = awardPipXp(pip, jobTickPipXp(ticks, contentTuning), contentTuning);
+    if (awarded !== pip) result = { ...result, [pipId]: awarded };
+  }
+  return result;
 }
 
 /**
@@ -1245,6 +1449,10 @@ function bumpCountersForAction(
       const counterId = `keepLevel${next.keep.level}Reached`;
       return { ...next, counters: bumpCounters(next.counters, [counterId]) };
     }
+    case "BREED_PIPS": {
+      if (next.lastBreedOutcome?.ok !== true) return next;
+      return { ...next, counters: bumpCounters(next.counters, ["eggsBred"]) };
+    }
     case "PURCHASE_ROSTER_UPGRADE": {
       if (!next.rosterUpgradePurchased || prev.rosterUpgradePurchased) return next;
       return { ...next, counters: bumpCounters(next.counters, ["rosterUpgradePurchased"]) };
@@ -1462,6 +1670,17 @@ function applyKeepXpForAction(
           )[reveal.expeditionId]?.durationMs ?? 0;
         gained += revealXp(durationMs, contentTuning);
 
+        // ROUND 2H (spec §12 unfenced, docs/lifecycle-bible.md §5.1/§9.3)
+        // — PROMISE 4's payoff, witnessed: this reveal's egg (if any) is
+        // the one `core/expeditions/index.ts`'s `attemptLineageFind` just
+        // produced. Read generically off `Egg.lineageGenome` (set for a
+        // lineage find, unset for an ordinary loot egg) rather than a
+        // separate outcome field — the reveal queue is the sole call site
+        // either way, so there is nothing else to key this on.
+        if (reveal.egg?.lineageGenome !== undefined) {
+          gained += contentTuning.lifecycle.keepXp.lineageEggFound;
+        }
+
         // Mastery tier-up (bible row 32): compare this pip's mastery tier
         // on this biome BEFORE (prev, untouched by this dispatch yet) vs
         // AFTER (`applyMasteryForAction`, run just above this call site
@@ -1494,6 +1713,14 @@ function applyKeepXpForAction(
     }
     case "HATCH_EGG":
       if (next.lastHatchOutcome?.ok === true) gained += hatchXp(contentTuning);
+      break;
+    case "BREED_PIPS":
+      // bible §9.3: `breedEgg` (20) — the witnessed BREED_PIPS moment
+      // itself. A hatched bred child still separately pays the ordinary
+      // `hatchXp` above (its egg goes through HATCH_EGG like any other).
+      if (next.lastBreedOutcome?.ok === true) {
+        gained += contentTuning.lifecycle.keepXp.breedEgg;
+      }
       break;
     case "EVOLVE_PIP":
       if (next.lastEvolveOutcome?.ok === true) gained += evolveXp(contentTuning);
@@ -1595,11 +1822,43 @@ function applyKeepXpForAction(
           gained += sanctuaryFirstArrivalXp(contentTuning);
           counters = { ...counters, [key]: 1 };
         }
+        // ROUND 2H (docs/lifecycle-bible.md §4 "the retirement moment",
+        // §9.3) — "retiring pays 40 Keep XP — old age is a reward",
+        // EVERY time an age-ready Pip is walked over (not just the
+        // first-ever arrival above, which pays regardless of why). Read
+        // from `prev` — the retired Pip is gone from `next.pips` by now
+        // (moved wholesale into `next.sanctuary`). Naturally idempotent:
+        // a Pip can only retire once per visit to the Keep, so there is
+        // no repeat-grant path to guard against.
+        if (prev.pips[action.pipId]?.readyToRetire === true) {
+          gained += contentTuning.lifecycle.keepXp.retirementWitnessed;
+        }
       }
       break;
     }
     default:
       break;
+  }
+
+  // ROUND 2H (docs/lifecycle-bible.md §9.3) — `ailmentCured` Keep XP,
+  // read GENERICALLY off `lastLossOutcome` rather than duplicated per
+  // action arm: it fires from whichever action produced a "cured" or
+  // "loyalTurn" resolution — `applyAilmentCureForAction`'s poultice route
+  // (a GIVE_ITEM), or TICK's own Loyal-Turn/true-loss resolution inside
+  // `baseReducer` (`resolveAilments`). Reference-equality gated
+  // (`!== prev.lastLossOutcome`) so this only ever fires on the exact
+  // dispatch that produced a NEW outcome — both writers only ever replace
+  // the field with a fresh object when something actually happened, so a
+  // dispatch that changes nothing ailment-related carries the field
+  // forward BY REFERENCE and this is a strict no-op. A TRUE LOSS grants
+  // nothing here (bible §7.6: "a loss grants zero, and costs zero" —
+  // grief is never monetised).
+  if (
+    next.lastLossOutcome !== prev.lastLossOutcome &&
+    next.lastLossOutcome != null &&
+    (next.lastLossOutcome.kind === "cured" || next.lastLossOutcome.kind === "loyalTurn")
+  ) {
+    gained += contentTuning.lifecycle.keepXp.ailmentCured;
   }
 
   // Bounty completions / day-clears (bible rows 30–31) — the counters
@@ -1688,6 +1947,225 @@ function applyKeepXpForAction(
   }
 
   return { ...next, counters, keepXp, flair };
+}
+
+/**
+ * ROUND 2H (spec §16 v1.5, docs/lifecycle-bible.md §1) — PER-PIP XP,
+ * applied in this ONE place (run right after `applyKeepXpForAction`,
+ * mirroring its exact boundary): every branch below keys off the SAME
+ * already-trusted outcome fields that function reads (`lastCareOutcome.
+ * applied`, the reveal queue, …) and never re-validates legality itself —
+ * so a unit test dispatching a REFUSED action against a hand-built
+ * fixture never silently gains Pip XP either (bible §1.0's guardrail,
+ * restated for the smaller ladder).
+ *
+ * TWO sources are handled ELSEWHERE, on purpose, each because its
+ * qualifying moment already has a narrower, more reliable sole call site
+ * than this generic (prev, next, action) diff could reproduce:
+ * - `evolve` — awarded inside `pips/lifecycle.ts`'s `applyEvolution`,
+ *   the EVOLVE_PIP reducer arm's only possible callee.
+ * - `jobTick` — awarded inline inside the TICK/CATCHUP reducer arms
+ *   themselves (see those arms' own comments), where the per-pip
+ *   attribution is still available before `reconcileJobs` can prune a
+ *   pip that stopped working mid-dispatch.
+ *
+ * Also grants the Keep XP a Pip LEVELLING UP pays (bible §1.0/§9.3:
+ * `pipLevel` (10) per level crossed, idempotent on
+ * `counters["pipLevel.<pipId>.<level>"]` so roster churn — retiring one
+ * Pip and hatching another that reaches the same level number — cannot
+ * re-grant it).
+ */
+function applyPipXpForAction(
+  prev: GameState,
+  next: GameState,
+  action: GameAction,
+): GameState {
+  let pips = next.pips;
+  let counters = next.counters;
+  let keepXpGain = 0;
+
+  /** Award `amount` Pip XP to `pipId` and, if it crossed one or more
+   * levels, the matching (idempotent) Keep XP alongside it. No-op for an
+   * unknown pip or a non-positive amount. */
+  const grant = (pipId: PipId, amount: number): void => {
+    const pip = pips[pipId];
+    if (pip === undefined) return;
+    const beforeLevel = pipLevel(pip);
+    const awarded = awardPipXp(pip, amount, contentTuning);
+    if (awarded === pip) return;
+    pips = { ...pips, [pipId]: awarded };
+    const afterLevel = pipLevel(awarded);
+    for (let level = beforeLevel + 1; level <= afterLevel; level++) {
+      const key = `pipLevel.${pipId}.${level}`;
+      if ((counters[key] ?? 0) === 0) {
+        keepXpGain += contentTuning.lifecycle.keepXp.pipLevel;
+        counters = { ...counters, [key]: 1 };
+      }
+    }
+  };
+
+  switch (action.type) {
+    case "FEED":
+    case "CLEAN":
+    case "PLAY":
+    case "PET":
+    case "GIVE_ITEM":
+      if (next.lastCareOutcome?.applied === true) {
+        grant(action.pipId, careActionPipXp(contentTuning));
+      }
+      break;
+    case "REST_TOGGLE":
+      // Only a nap that STARTS pays — mirrors `applyKeepXpForAction`'s
+      // own REST_TOGGLE row exactly (bible §1.1 row 1's "REST_TOGGLE when
+      // a nap *starts*").
+      if (
+        next.lastCareOutcome?.applied === true &&
+        next.pips[action.pipId]?.activity === PipActivity.Resting
+      ) {
+        grant(action.pipId, careActionPipXp(contentTuning));
+      }
+      break;
+    case "ACKNOWLEDGE_REVEAL": {
+      // A completed expedition, credited to the Pip that went (bible
+      // §1.1 row 2) — `prev.pendingReveals[0]` is the trip THIS
+      // acknowledge just resolved (the base reducer already shifted the
+      // queue by the time `next` is built, same read `applyKeepXpForAction`
+      // uses for `revealXp`).
+      const reveal = prev.pendingReveals[0];
+      if (reveal !== undefined) {
+        const durationMs =
+          (
+            contentExpeditions as Readonly<Record<string, { durationMs: number }>>
+          )[reveal.expeditionId]?.durationMs ?? 0;
+        grant(reveal.pipId, tripPipXp(durationMs, contentTuning));
+
+        // A mastery tier gained ON THIS TRIP (bible §1.1 row 6) — the
+        // SAME before/after trip-count diff `applyKeepXpForAction` reads
+        // just above, but its OWN idempotence key
+        // (`pipLevelMastery.<pipId>.<expeditionId>`), independent of Keep
+        // XP's `masteryTier.<pipId>.<expeditionId>` key — both channels
+        // must pay for the SAME tier-up without either one's bookkeeping
+        // silently gating the other.
+        const prevPip = prev.pips[reveal.pipId];
+        const nextPip = next.pips[reveal.pipId];
+        if (prevPip !== undefined && nextPip !== undefined) {
+          const prevTrips = prevPip.mastery?.[reveal.expeditionId] ?? 0;
+          const nextTrips = nextPip.mastery?.[reveal.expeditionId] ?? 0;
+          if (nextTrips > prevTrips) {
+            const prevTier = masteryTier(prevTrips, durationMs, contentTuning);
+            const nextTier = masteryTier(nextTrips, durationMs, contentTuning);
+            if (nextTier > prevTier) {
+              const key = `pipLevelMastery.${reveal.pipId}.${reveal.expeditionId}`;
+              const paidTier = counters[key] ?? 0;
+              if (nextTier > paidTier) {
+                grant(reveal.pipId, masteryTierPipXp(nextTier, contentTuning));
+                counters = { ...counters, [key]: nextTier };
+              }
+            }
+          }
+        }
+      }
+      break;
+    }
+    default:
+      break;
+  }
+
+  if (pips === next.pips && counters === next.counters && keepXpGain === 0) {
+    return next;
+  }
+  return { ...next, pips, counters, keepXp: next.keepXp + keepXpGain };
+}
+
+/**
+ * ROUND 2H (docs/lifecycle-bible.md §3.5) — THE POULTICE CURE ROUTE, the
+ * one cure route wired to a reducer this round (the other, devoted care,
+ * is a documented seam — `core/pips/ailment.ts`'s `attemptCure` already
+ * supports it, but nothing here auto-rolls it, so it is data-complete and
+ * reducer-inert until a future round wires the day-boundary trigger).
+ *
+ * A GIVE_ITEM of `POULTICE_ITEM_ID` that actually consumed the item
+ * (`next.lastCareOutcome?.applied === true` — the base reducer's ordinary
+ * GIVE_ITEM arm already decremented the inventory count) against a Pip who
+ * is currently ailing rolls exactly one cure attempt from the dedicated
+ * `"ailment"` stream. Success clears the ailment, adds the scar and awards
+ * `ailmentSurvivedPipXp` — all inside `attemptCure` itself, the sole call
+ * site for that award (the same "this function IS the qualifying moment"
+ * reasoning `lifecycle.ts`'s `applyEvolution` uses for `evolvePipXp`) — and
+ * this wrapper additionally stamps `lastLossOutcome` so
+ * `applyKeepXpForAction` can grant `ailmentCured` Keep XP generically.
+ * Every other action, or a GIVE_ITEM of any other item, or a Pip with no
+ * active ailment, is a no-op returning `next` BY REFERENCE.
+ */
+function applyAilmentCureForAction(
+  prev: GameState,
+  next: GameState,
+  action: GameAction,
+): GameState {
+  if (action.type !== "GIVE_ITEM" || action.itemId !== POULTICE_ITEM_ID) return next;
+  if (next.lastCareOutcome?.applied !== true) return next;
+  const pip = next.pips[action.pipId];
+  if (pip === undefined || pip.ailment == null) return next;
+
+  const rng = createRngFromState(next.seed, next.rngState);
+  const result = attemptCure(pip, "poultice", rng.stream(AILMENT_STREAM), contentTuning);
+  if (result === null) return next;
+
+  let updated: GameState = {
+    ...next,
+    pips: { ...next.pips, [pip.id]: result.pip },
+    rngState: rng.getState(),
+  };
+  if (result.cured) {
+    updated = {
+      ...updated,
+      lastLossOutcome: {
+        kind: "cured",
+        pipId: pip.id,
+        at: action.at,
+        ailmentId: result.ailmentId,
+        route: "poultice",
+      },
+    };
+  }
+  return updated;
+}
+
+/**
+ * ROUND 2H (docs/lifecycle-bible.md §3.5) — THE DEVOTED-CARE CURE ROUTE:
+ * the free daily chance, and the ONLY cure route that does not depend on
+ * what happens to be in the satchel.
+ *
+ * WHY THIS EXISTS AS ITS OWN WIRED PATH. The round's first cut shipped the
+ * poultice route alone and left this one as a documented seam — while the
+ * ailment card went on promising the player "Every need is high — there's
+ * a free chance at the next day's start." Measured, a devoted player with
+ * an empty satchel and all four needs pinned at 100 survived 0 times in
+ * 100. A worried player did exactly what the game told them for two days
+ * and the Pip died anyway. That is the single cruellest thing this round
+ * could do, and it breaks promise 1 outright: with no poultice there was
+ * no actionable chance at all. The card's copy was right; the wiring was
+ * missing. This is the wiring.
+ *
+ * ONE roll per ailing Pip per day index, earned by holding all four needs
+ * at or above `lifecycle.ailments.devotedCareNeedFloor` — see
+ * `core/pips/ailment.ts`'s `applyDevotedCare` for the rate-limit rule (a
+ * day whose needs never came up spends nothing).
+ *
+ * ZERO FOOTPRINT WHEN NOBODY QUALIFIES: `devotedCareEligible` is a pure,
+ * roll-free pre-check, and the `"ailment"` stream is not even opened
+ * unless it finds someone — merely calling `rng.stream()` would seed an
+ * untouched-but-present `rngState` entry, the same "no candidate ⇒ no
+ * footprint" contract `core/expeditions`'s lineage gate already keeps. So
+ * every save with no ailing Pip (which is nearly every tick of nearly
+ * every save) is byte-identical to before this route existed.
+ */
+function applyDevotedCareRolls(state: GameState, at: number): GameState {
+  const day = streakDayIndex(at, state.dayOffsetMs, contentTuning.retention.dayMs);
+  if (devotedCareEligible(state, day, contentTuning).length === 0) return state;
+  const rng = createRngFromState(state.seed, state.rngState);
+  const tended = applyDevotedCare(state, at, day, rng.stream(AILMENT_STREAM), contentTuning);
+  return { ...tended, rngState: rng.getState() };
 }
 
 /**
@@ -1784,6 +2262,7 @@ export const STREAK_VISIT_ACTION_TYPES: ReadonlySet<GameAction["type"]> = new Se
   "REMOVE_ITEM",
   "PURCHASE_KEEP_LEVEL",
   "PURCHASE_ROSTER_UPGRADE",
+  "BREED_PIPS",
 ]);
 
 /**
@@ -1831,11 +2310,21 @@ function applyProgressionEffects(
   }
   result = applyMasteryForAction(prev, result, action);
   result = applyBountyProgressForAction(prev, result, action);
+  // ROUND 2H — the poultice cure route (docs/lifecycle-bible.md §3.5):
+  // BEFORE Keep XP, which reads `lastLossOutcome` generically to grant
+  // `ailmentCured` for whichever action produced it (this one, or TICK's
+  // own Loyal-Turn/loss resolution inside `baseReducer`).
+  result = applyAilmentCureForAction(prev, result, action);
   // ROUND 2F — Keep XP (docs/progression-bible.md §1.3): AFTER mastery
   // (reads the already-incremented trip count) and bounty progress
   // (reads the already-bumped completion counters), same "runs only when
   // baseReducer actually changed something" safety the whole wrapper has.
   result = applyKeepXpForAction(prev, result, action);
+  // ROUND 2H — PER-PIP XP (docs/lifecycle-bible.md §1), run right after
+  // Keep XP so it can piggyback the same "did this action's outcome
+  // qualify" trust (and, for mastery tier-ups, the same before/after
+  // trip-count diff) without re-deriving either.
+  result = applyPipXpForAction(prev, result, action);
   // ROUND 2F — what the absence actually PAID (bible §6.3): recorded onto the
   // same transient `lastCatchup` echo the Doorstep already reads, once the XP
   // and production above have landed. See `recordCatchupGains`.
@@ -1889,6 +2378,9 @@ function baseReducer(state: GameState, action: GameAction): GameState {
         next = evaluateSulk(next);
         next = evaluateRestAutoWake(next);
         next = updateEvolutionReadiness(next, registry);
+        // ROUND 2H (docs/lifecycle-bible.md §2.5) — a FLAG only; only
+        // RETIRE_PIP may ever move a Pip (promise 3/5).
+        next = updateAging(next, contentTuning);
         return next;
       });
       let ticked: GameState = {
@@ -1904,10 +2396,22 @@ function baseReducer(state: GameState, action: GameAction): GameState {
       // job's lastProducedAt, rolled chronologically from the "job"
       // stream; then prune jobs whose pip left AssignedJob (Sulking
       // entry above pulls a pip off its job for good, spec §4.4).
+      //
+      // ROUND 2H (docs/lifecycle-bible.md §1.1 row 3) — Pip XP for job
+      // ticks is awarded HERE, from the snapshot BEFORE `reconcileJobs`
+      // prunes a Sulking pip's entry, rather than through the generic
+      // `applyPipXpForAction` wrapper: `next.jobs` post-reconcile has
+      // already lost the very entry a mid-tick Sulking pip needs credit
+      // for (the identical reasoning `applyKeepXpForAction`'s own
+      // TICK/CATCHUP case gives for why IT diffs produced-item counts
+      // rather than `lastProducedAt`).
+      const jobsBeforeProduction = ticked.jobs;
       ticked = processJobProduction(ticked, action.at);
+      const jobsAfterProduction = ticked.jobs;
       ticked = {
         ...ticked,
         jobs: reconcileJobs(ticked.jobs, ticked.pips, ticked.keep),
+        pips: awardJobTickPipXp(ticked.pips, jobsBeforeProduction, jobsAfterProduction),
       };
       // ROUND 2C: mastery/streak/event loot bonus AND the mastery/event
       // egg-chance bonus, both resolved per returning pip (see
@@ -1915,14 +2419,37 @@ function baseReducer(state: GameState, action: GameAction): GameState {
       // the cursor-parity contract this preserves on a fresh save) — PLUS
       // round 2F's building/set contribution (same keepEffects) and the
       // Keep's incubation-speed multiplier for any egg a returning trip
-      // finds.
-      return processDueExpeditionReturns(ticked, action.at, {
+      // finds. ROUND 2H: `ailmentRegistry`/`ailmentTuning` let a risky
+      // return roll contraction at the SAME settle point (docs/
+      // lifecycle-bible.md §3.2) — see `settleExpeditionReturn`'s own doc
+      // comment for why this can never touch the loot cursor.
+      const returned = processDueExpeditionReturns(ticked, action.at, {
         resolveLootBonusChance: (pip, expeditionId) =>
           resolveLootBonusChanceFor(ticked, pip, expeditionId, keepEffects),
         resolveEggChance: (pip, expeditionId) =>
           resolveEggChanceFor(ticked, pip, expeditionId, keepEffects),
         keepIncubationSpeedMultiplier: keepEffects.incubationSpeedMultiplier,
+        // ROUND 2H — SHIELD SIX: in a Quiet Keep the registry is withheld,
+        // which `settleExpeditionReturn` reads as "no ailment system at
+        // all" — zero rolls, zero cursor movement, no contraction possible.
+        ...(state.settings?.quietKeep === true
+          ? {}
+          : { ailmentRegistry: contentAilments, ailmentTuning: contentTuning }),
       });
+      // ROUND 2H (docs/lifecycle-bible.md §3.5) — THE FREE DAILY CURE, run
+      // BEFORE the countdown is allowed to resolve below: a Pip on the
+      // brink gets this day's devoted-care chance on the very tick that
+      // would otherwise take them. This is the cure route that belongs to
+      // every player regardless of what is in the satchel, so it must
+      // never be the one that arrives a moment late.
+      const tended = applyDevotedCareRolls(returned, action.at);
+      // ROUND 2H (docs/lifecycle-bible.md §3.1/§7) — resolve any ailment
+      // whose countdown just ran out. PROMISE 1/2's mechanism: this is the
+      // ONLY call site of `resolveAilments` in the entire codebase — it
+      // exists ONLY in the live TICK arm, never in CATCHUP, so the "lost"
+      // transition can only ever happen while the player is actually here
+      // to witness it.
+      return resolveAilments(tended, action.at, contentTuning);
     }
 
     case "SET_ACTIVE_PIP": {
@@ -1970,12 +2497,33 @@ function baseReducer(state: GameState, action: GameAction): GameState {
       // send-off (never recomputed later — same rule as Hardworking's
       // quirk) via `effectiveExpeditionDurationMs`'s composition + floor.
       const keepEffects = computeKeepEffects(state);
+      // ROUND 2H (docs/lifecycle-bible.md §1.3 "trail legs") — the
+      // departing Pip's OWN expedition-speed level effect, baked in at
+      // send-off the same way (never recomputed mid-trip if the Pip
+      // levels up while away).
+      const departingPip = state.pips[action.pipId];
+      const pipSpeedMultiplier =
+        departingPip !== undefined
+          ? expeditionSpeedMultiplierFor(departingPip, contentTuning)
+          : 1;
       const { state: next, outcome } = assignExpedition(
         state,
         action.pipId,
         action.expeditionId,
         action.at,
-        { keepSpeedMultiplier: keepEffects.expeditionSpeedMultiplier },
+        {
+          keepSpeedMultiplier: keepEffects.expeditionSpeedMultiplier,
+          pipSpeedMultiplier,
+          // ROUND 2H — SHIELD TWO, the careful route. The registry is what
+          // lets `assignExpedition` tell a risky trail from a safe one, so
+          // it is passed here (and only here) purely as that predicate —
+          // no contraction is ever rolled at send-off. In a Quiet Keep no
+          // trail is risky at all, so the careful route is (correctly) a
+          // no-op there: nothing to opt out of, nothing charged for it.
+          ...(state.settings?.quietKeep === true
+            ? {}
+            : { careful: action.careful === true, ailmentRegistry: contentAilments }),
+        },
       );
       return { ...next, lastAssignOutcome: outcome };
     }
@@ -2086,6 +2634,54 @@ function baseReducer(state: GameState, action: GameAction): GameState {
         );
       }
 
+      // ROUND 2H (spec §12 unfenced, docs/lifecycle-bible.md
+      // §5.4/§6.1/§6.3/§9.1) — a LINEAGE or BRED egg's genome/level/
+      // resistances were already fully resolved at find/breed time
+      // (`core/pips/breeding.ts`'s module doc: never re-derived at
+      // hatch). NO RNG roll, NO pity ladder, NO biome pool — "lineage/bred
+      // eggs bypass both channels entirely" (bible §6.3/§9.1): this branch
+      // never touches `rngState` or `eggPity`, which is what makes that
+      // true by construction rather than by convention.
+      if (egg.lineageGenome !== undefined) {
+        const genome = egg.lineageGenome;
+        const level = egg.lineageLevel ?? 1;
+        const lineagePipId: PipId = `pip-${state.nextPipNumber}`;
+        const hatchling: PipState = {
+          ...createPipFromGenome(genome, {
+            id: lineagePipId,
+            name: contentSpecies[genome.speciesId]?.name ?? genome.speciesId,
+            hatchedAt: action.at,
+            lifeStage: LifeStage.Pipling,
+          }),
+          level,
+          pipXp: xpForLevel(level, contentTuning),
+          generation: egg.lineageGeneration ?? 1,
+          parentIds: egg.lineageParentIds ?? [],
+          ...(egg.lineageResistances !== undefined
+            ? { resistances: egg.lineageResistances }
+            : {}),
+        };
+
+        const lineagePipdex = markPipdexCaught(state.pipdex, hatchling.speciesId, action.at, {
+          pipId: hatchling.id,
+          name: hatchling.name,
+          genome: hatchling.genome,
+          personalityId: hatchling.personalityId,
+          lifeStageAtCatch: hatchling.lifeStage,
+          sourceExpeditionId: egg.sourceExpeditionId,
+        });
+
+        return {
+          ...state,
+          pips: { ...state.pips, [lineagePipId]: hatchling },
+          rosterOrder: [...state.rosterOrder, lineagePipId],
+          eggs: state.eggs.filter((e) => e.id !== egg.id),
+          nextPipNumber: state.nextPipNumber + 1,
+          lastHatchOutcome: { ok: true, eggId: egg.id, pipId: lineagePipId, at: action.at },
+          pipdex: lineagePipdex,
+        };
+      }
+
       // ROUND 2C — EGG PITY (docs/retention-bible.md §7): a per-biome
       // counter of hatches that missed the pool's rarest tier. At
       // threshold, THIS hatch is guaranteed that tier — the species
@@ -2185,6 +2781,78 @@ function baseReducer(state: GameState, action: GameAction): GameState {
       };
     }
 
+    case "BREED_PIPS": {
+      const refuse = (reason: BreedRefusalReason, pipId?: PipId): GameState => ({
+        ...state,
+        lastBreedOutcome: {
+          ok: false,
+          aId: action.aId,
+          bId: action.bId,
+          at: action.at,
+          reason,
+          ...(pipId !== undefined ? { pipId } : {}),
+        },
+      });
+
+      const eligibility = breedEligibility(
+        state.pips,
+        action.aId,
+        action.bId,
+        action.at,
+        contentTuning,
+      );
+      if (!eligibility.ok) {
+        return refuse(eligibility.reason ?? "unknownPip", eligibility.pipId);
+      }
+      // Defensive only — `breedEligibility` already confirmed both exist
+      // when `ok` is true.
+      const a = state.pips[action.aId];
+      const b = state.pips[action.bId];
+      if (a === undefined || b === undefined) {
+        return refuse("unknownPip", a === undefined ? action.aId : action.bId);
+      }
+
+      const rng = createRngFromState(state.seed, state.rngState);
+      const inheritance = combineForBreeding(
+        a,
+        b,
+        rng.stream(LINEAGE_STREAM),
+        contentTuning,
+      );
+
+      const eggId = `egg-${state.nextEggNumber}`;
+      const egg = createBredEgg({
+        id: eggId,
+        at: action.at,
+        incubationMs: contentTuning.lifecycle.lineage.breedingIncubationMs,
+        lineageGenome: inheritance.genome,
+        lineageParentIds: inheritance.parentIds,
+        lineageLevel: inheritance.level,
+        lineageResistances: inheritance.resistances,
+        lineageGeneration: inheritance.generation,
+      });
+
+      const updatedA: PipState = {
+        ...a,
+        lastBredAt: action.at,
+        clutches: (a.clutches ?? 0) + 1,
+      };
+      const updatedB: PipState = {
+        ...b,
+        lastBredAt: action.at,
+        clutches: (b.clutches ?? 0) + 1,
+      };
+
+      return {
+        ...state,
+        pips: { ...state.pips, [a.id]: updatedA, [b.id]: updatedB },
+        eggs: [...state.eggs, egg],
+        nextEggNumber: state.nextEggNumber + 1,
+        rngState: rng.getState(),
+        lastBreedOutcome: { ok: true, aId: a.id, bId: b.id, eggId, at: action.at },
+      };
+    }
+
     case "CATCHUP": {
       // Adapt the Record-keyed roster to the catch-up engine's array view
       // and back, preserving roster order (catchup.ts owns all §4.5 rules).
@@ -2229,11 +2897,35 @@ function baseReducer(state: GameState, action: GameAction): GameState {
       );
       const pips: Record<PipId, PipState> = { ...state.pips };
       for (const pip of result.state.pips) {
-        pips[pip.id] = pip;
+        // ROUND 2H (docs/lifecycle-bible.md §2.5) — a FLAG only,
+        // evaluated once against the FINAL (already rate-capped) lifeMs
+        // this pass produced. Only RETIRE_PIP may ever move a Pip
+        // (promise 3/5) — this never touches `state.sanctuary`.
+        pips[pip.id] = updateAging(pip, contentTuning);
       }
+      // ROUND 2H (docs/lifecycle-bible.md §1.1 row 3) — Pip XP for job
+      // ticks that actually FIRED during the pass, tallied straight from
+      // `firedJobTicks`: `collectJobCatchupEvents`'s own `apply` only
+      // records a tick iff the pip was STILL AssignedJob at that moment,
+      // so — unlike the live TICK path above — there is no
+      // reconcileJobs-pruning edge case to route around here.
+      for (const tick of result.state.firedJobTicks) {
+        const pip = pips[tick.pipId];
+        if (pip === undefined) continue;
+        pips[tick.pipId] = awardPipXp(pip, jobTickPipXp(1, contentTuning), contentTuning);
+      }
+      // ROUND 2H (docs/lifecycle-bible.md §3.3 rule 2) — THE VIGIL FLOOR:
+      // within THIS pass, no ailing pip's countdown may have been reduced
+      // below `vigilFloorMs` — a returning player always finds at least a
+      // few hours of visible countdown left, and every cure still on the
+      // table. Compares each pip's ailment BEFORE this whole pass
+      // (`state.pips`, untouched) against AFTER (every needs/job-XP
+      // mutation above already applied); a no-op for every pip with no
+      // ailment, which is every fixture that predates this round.
+      const pipsWithVigilFloor = applyVigilFloor(state.pips, pips, contentTuning);
       let next: GameState = {
         ...state,
-        pips,
+        pips: pipsWithVigilFloor,
         eggs: result.state.eggs,
         jobs: result.state.jobs,
         lastTickAt: Math.max(state.lastTickAt, action.now),
@@ -2290,6 +2982,19 @@ function baseReducer(state: GameState, action: GameAction): GameState {
                   )
                 : undefined,
             keepIncubationSpeedMultiplier: keepEffects.incubationSpeedMultiplier,
+            // ROUND 2H (docs/lifecycle-bible.md §3.2) — an offline return
+            // from a risky biome can contract exactly like a live one; the
+            // countdown itself then obeys the SAME rate cap as needs
+            // (promise 2) starting from the NEXT pass, since this contract
+            // roll happens after `runCatchup` has already finished
+            // segmenting this absence.
+            //
+            // ROUND 2H — SHIELD SIX, exactly as in the live TICK arm: a
+            // Quiet Keep withholds the registry, so an offline return
+            // cannot contract anything either.
+            ...(state.settings?.quietKeep === true
+              ? {}
+              : { ailmentRegistry: contentAilments, ailmentTuning: contentTuning }),
           });
         }
       }
@@ -2619,10 +3324,21 @@ function baseReducer(state: GameState, action: GameAction): GameState {
       if (state.jobs[action.pipId] !== undefined) {
         working = unassignPipFromJob(working, action.pipId).state;
       }
+      // ROUND 2H (docs/lifecycle-bible.md §2.5/§4) — WHY they went. The
+      // record has always been able to carry `"age"`, and nothing ever
+      // wrote it: an age-ready retirement was indistinguishable from a
+      // player-chosen one in the stored state, which is also what left the
+      // promise-3 path with nothing durable for a test to assert on. The
+      // flag is the Pip's own `readyToRetire`, read BEFORE the move (the
+      // Pip has left `state.pips` by the time `retired` exists).
+      const reason: SanctuaryReason =
+        working.pips[action.pipId]?.readyToRetire === true ? "age" : "player";
       const { state: retired, outcome } = retireToSanctuary(
         working,
         action.pipId,
         action.at,
+        undefined,
+        reason,
       );
       return { ...retired, lastSanctuaryOutcome: outcome };
     }
@@ -2639,6 +3355,31 @@ function baseReducer(state: GameState, action: GameAction): GameState {
         rosterCap,
       );
       return { ...retrieved, lastSanctuaryOutcome: outcome };
+    }
+
+    case "SET_QUIET_KEEP": {
+      // ROUND 2H — SHIELD SIX (docs/lifecycle-bible.md §7.7): "Pips never
+      // fall ill." Idempotent at the same value (a true structural no-op,
+      // returned BY REFERENCE, so the progression wrapper never runs).
+      const current = state.settings?.quietKeep === true;
+      if (current === action.on) return state;
+      const settings: GameSettings = { ...state.settings, quietKeep: action.on };
+      if (!action.on) return { ...state, settings };
+      // TURNING IT ON CLEARS WHATEVER IS IN FLIGHT. A player reaches for
+      // this switch when they are frightened for a Pip they can SEE; a
+      // setting that only protected the next Pip would be the cruellest
+      // possible reading of "Pips never fall ill".
+      //
+      // No scar, no Pip XP, no Keep XP, no `lastLossOutcome`: the ailment
+      // simply never happened. Awarding the survival rewards here would
+      // make the switch an XP-and-immunity printer (flip on, flip off,
+      // repeat), and quietly turn a kindness into an optimal strategy.
+      let pips = state.pips;
+      for (const [id, pip] of Object.entries(state.pips)) {
+        if (pip.ailment == null) continue;
+        pips = { ...pips, [id]: { ...pip, ailment: null } };
+      }
+      return pips === state.pips ? { ...state, settings } : { ...state, pips, settings };
     }
 
     case "SET_DAY_OFFSET": {

@@ -14,7 +14,7 @@ import type { GameState } from "../core/state";
 import type { PipState } from "../core/pips/types";
 import { LifeStage, PipActivity } from "../core/pips/types";
 import type { SanctuaryRecord } from "../core/sanctuary";
-import { albumFilledCount, buildNavRows, navBadgeTotal } from "./navMenu";
+import { albumFilledCount, buildNavRows, navBadgeTotal, quietKeepRow } from "./navMenu";
 
 function makePip(overrides: Partial<PipState> = {}): PipState {
   return {
@@ -113,9 +113,17 @@ function record(pip: PipState): SanctuaryRecord {
 }
 
 describe("buildNavRows", () => {
-  it("always offers exactly the three destinations, in a stable order", () => {
+  it("always offers the permanent destinations, in a stable order", () => {
     const rows = buildNavRows(makeState());
-    expect(rows.map((r) => r.id)).toEqual(["album", "meadow", "today"]);
+    // ROUND 2H added "nursery" (breeding is the succession mechanic now that
+    // Pips are finite, so it needs a standing door). "lineage" is NOT here:
+    // it appears only while an egg is actually waiting — see below.
+    expect(rows.map((r) => r.id)).toEqual([
+      "album",
+      "meadow",
+      "today",
+      "nursery",
+    ]);
     // Every row is reachable from the very first session — none of them is
     // gated behind a Keep level or an unlock, so a new player can always see
     // where the game is going.
@@ -123,6 +131,54 @@ describe("buildNavRows", () => {
       expect(row.label.length).toBeGreaterThan(0);
       expect(row.hint.length).toBeGreaterThan(0);
     }
+  });
+
+  // ROUND 2H (spec §16 v1.5 promise 4: "every loss leaves a thread to pull").
+  // The thread has to be VISIBLE somewhere the player will look, and it has
+  // to disappear once pulled — a permanent "Someone to find" row with nobody
+  // to find would read as a chore the player is failing (bible §0.3).
+  describe('"Someone to find" — the lineage row (promise 4)', () => {
+    const seed = (name: string, expeditionId: string) => ({
+      pipId: `${name}-id`,
+      name,
+      genome: makePip().genome,
+      expeditionId,
+      level: 3,
+      scars: [],
+      generation: 1,
+      seededAt: 0,
+      misses: 0,
+    });
+
+    it("is absent while no lost Pip has left an egg", () => {
+      expect(buildNavRows(makeState()).map((r) => r.id)).not.toContain(
+        "lineage",
+      );
+      expect(
+        buildNavRows(makeState({ lineageEggs: [] })).map((r) => r.id),
+      ).not.toContain("lineage");
+    });
+
+    it("appears, last, the moment an egg is waiting — and names the count", () => {
+      const one = buildNavRows(
+        makeState({ lineageEggs: [seed("Bramble", "bramblewick")] }),
+      );
+      const row = one[one.length - 1];
+      expect(row?.id).toBe("lineage");
+      expect(row?.badge).toBe(1);
+      expect(row?.hint).toContain("An egg is waiting");
+
+      const two = buildNavRows(
+        makeState({
+          lineageEggs: [
+            seed("Bramble", "bramblewick"),
+            seed("Thistle", "snowdrift"),
+          ],
+        }),
+      );
+      expect(two[two.length - 1]?.badge).toBe(2);
+      expect(two[two.length - 1]?.hint).toContain("2 eggs");
+    });
   });
 
   it("pluralises the Long Meadow hint, and says so warmly when empty", () => {
@@ -231,5 +287,43 @@ describe("navBadgeTotal", () => {
     // One resident, but nothing claimable → still no badge.
     expect(buildNavRows(busy)[1]?.badge).toBe(1);
     expect(navBadgeTotal(busy)).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ROUND 2H FIX PASS — SHIELD SIX. `state.settings.quietKeep` existed only
+// as a sentence in a tuning comment: no state field, no reducer arm, no
+// control anywhere in the game. The bible called it "the complete,
+// unconditional answer to 'it can't be brutal'".
+// ---------------------------------------------------------------------------
+
+describe("the Quiet Keep switch (shield six)", () => {
+  it("reads OFF on a save that has never touched it", () => {
+    const row = quietKeepRow(makeState());
+    expect(row.on).toBe(false);
+    expect(row.label).toBe("Quiet Keep");
+    expect(row.hint).toMatch(/never fall ill/i);
+  });
+
+  it("reads ON, and says how to undo it — no setting here is a trap", () => {
+    const row = quietKeepRow({ ...makeState(), settings: { quietKeep: true } });
+    expect(row.on).toBe(true);
+    expect(row.hint).toMatch(/turn it off/i);
+  });
+
+  // Bible §0.3: no surface in this game may scold or nag. A player
+  // reaching for this switch is worried, and the last thing they need is
+  // a paragraph about game design.
+  it("never hedges, warns, or implies the player is playing wrong", () => {
+    for (const on of [false, true]) {
+      const row = quietKeepRow({ ...makeState(), settings: { quietKeep: on } });
+      expect(row.hint).not.toMatch(/easier|easy mode|cheat|but you|miss out|less rewarding/i);
+    }
+  });
+
+  it("is NOT a destination row — the Nook's list is places, and this is a switch", () => {
+    const ids = buildNavRows({ ...makeState(), settings: { quietKeep: true } }).map((r) => r.id);
+    expect(ids).not.toContain("quiet");
+    expect(ids).not.toContain("settings");
   });
 });

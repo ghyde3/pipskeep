@@ -14,6 +14,17 @@ Phase-gate log and decision journal, per spec §13–§15. Append entries; never
 | 5 — The Keep | **gate passed** | 2026-07-29 |
 | 6 — Polish, PWA, onboarding | **gate passed** | 2026-07-29 |
 
+### Round 2H — Lifecycle, lineage & risk — 2026-07-30 — GATE PASSED
+**2662 tests** (was 2286). The round that changed what the game *is*: Pips are finite. Spec §16 v1.5's five promises are the gate, and each has named tests.
+
+- **Shipped:** per-Pip levels (10-tier curve, six effect channels), a `lifeMs` lifespan, ailments with visible countdowns and cures, TRUE LOSS on the deep trails, lineage-recovery eggs, and **breeding — `combineGenomes()` is finally called by gameplay after sitting tested-and-uncalled since Phase 4.**
+- **The load-bearing discovery.** Per-Pip decay resistance cannot be its own channel: `effects.balance.test.ts` pins comfort at 0.25 and the binding arithmetic (Curious's worst window, 3.7 × 1.15 × 16h = 68.08, needing `68.08 × (1−r) > 50`) leaves **1.557 percentage points of decay-reduction headroom in the entire game** — already spent by building comfort. So a Pip's seasoning and the Keep's comfort are ONE channel, summed once and clamped once via a *headroom* clamp, chosen over `min(cap, sum)` specifically so it wouldn't re-clamp the guard suite's hypothetical-0.30 fixture and turn a passing test red for the wrong reason.
+- **The promises are structural, not tonal.** Ailment countdowns are stored as `remainingMs` — a RATE, so §4.5's offline cap governs them for free; `minAilmentDurationMs` (36h) exceeds the 16h cap by construction; and **the `lost` transition exists only in the live TICK arm, so catch-up can never take a Pip and the loss is always witnessed.** `lifeMs` advances on rated time only, so three weeks away ages a Pip by 16 hours — promises 2 and 5 in one line. Loss and lineage-seeding are a single atomic reducer arm, making *a loss without a thread* unrepresentable.
+- **The cruelty audit earned the round.** It played the real build and found **four blockers**, all fixed: the free "devoted care" cure the UI promised **did not exist** (0 cures in 100 runs with perfect care); the vigil floor was **a cliff, not a floor** (leaving with under 4h remaining killed the Pip a minute after reopening — a direct promise-2 breach); the Careful Route opt-out **was not implemented**, making risk mandatory; and the Quiet Keep toggle **did not exist anywhere**. It also caught the Long Meadow showing a *lost* Pip as merely retired and promising she'd be "home again tomorrow morning" — a lie to a grieving player.
+- **Also fixed:** the lineage seed hardcoded `generation: 1`, collapsing the chain for any lost descendant (now `seed.generation + 1`, with its own test); the only working cure was undiscoverable; and the bible's 83.9% survival floor was off by the whole margin.
+- **Six things were deliberately CUT as un-de-brutalizable**, including death by neglect (definitionally caused by absence, which promise 2 forbids) and any loss-related push notification — named explicitly now so round 2I cannot add one.
+- Note: 80 new dialogue lines were required (2 contexts × 5 personalities × 8) — spec §3 makes that non-optional.
+
 ### Round 2G — HUD legibility — 2026-07-30 — GATE PASSED
 **2286 tests.** Oracle visual pass → two builders → integrate → three verifiers → fixer → re-gate.
 
@@ -32,11 +43,8 @@ Two workflows were stopped mid-flight at the owner's request. **The tree is GREE
 ### Round 2G — HUD legibility — ✅ COMPLETE (see the gate log above)
 Resumed and gated 2026-07-30 at 2286 tests. No outstanding blockers.
 
-### Round 2H — Pip lifecycle — DESIGN ONLY
-Reached: **lifecycle bible ✅ only.** Stopped before any core builder ran.
-- `docs/lifecycle-bible.md` (1,195 lines) + an additive `tuning.lifecycle` block in `content/tuning.ts` are in the tree.
-- **No lifecycle code exists yet** — no per-pip levels, no aging, no ailments, no breeding wiring, no lineage eggs. Spec §16 v1.5 already commits to the design (the five promises), so the spec is ahead of the code here.
-- Resume by re-running the round; the design agent replays from cache.
+### Round 2H — Pip lifecycle — ✅ COMPLETE (see the gate log above)
+Resumed and gated 2026-07-30 at 2662 tests. Five promises enforced and tested.
 
 ### To resume
 Both runs are resumable with their cached prefixes intact:

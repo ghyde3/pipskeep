@@ -10,8 +10,10 @@
 import { describe, expect, it } from "vitest";
 import { CURRENT_SCHEMA_VERSION, fromSaveBlob, toSaveBlob } from "./serialize";
 import { MIGRATIONS, migrate } from "./migrate";
-import { tuning as tuningModule } from "../../content/tuning";
+import { HOUR_MS, tuning as tuningModule } from "../../content/tuning";
 import { MILESTONES as contentMilestones } from "../../content/milestones";
+import { pipSeason, updateAging } from "../pips/lifecycle";
+import type { PipState } from "../pips/types";
 
 /** Raw fixture text per file, via Vite's glob import (no node types
  * needed; vitest runs through Vite). Keys look like "./fixtures/v1.json". */
@@ -31,6 +33,37 @@ function loadFixture(version: number): unknown {
     throw new Error(`fixtures/v${version}.json missing`);
   }
   return JSON.parse(raw) as unknown;
+}
+
+/**
+ * ROUND 2H (docs/lifecycle-bible.md §9.2) — `MIGRATIONS[8]` (v8 → v9)
+ * grants every pip `level`/`pipXp`/`lifeMs`/`readyToRetire` generously and
+ * changes NOTHING else about it. Used by the two pre-existing "nothing
+ * was lost" integrate-gate tests below, which otherwise walk every field
+ * of a pre-v9 pip expecting byte-identical output — this asserts the
+ * grant is exactly right instead, and that it is the ONLY thing that
+ * changed.
+ */
+function expectPipMigratedToV9(
+  before: Record<string, unknown>,
+  after: Record<string, unknown>,
+): void {
+  const grantLevel = tuningModule.lifecycle.level.migrationGrantLevel;
+  const grantXp = tuningModule.lifecycle.level.levelXp[grantLevel - 1] ?? 0;
+  const { level, pipXp, lifeMs, readyToRetire, ...restAfter } = after as Record<
+    string,
+    unknown
+  > & {
+    level?: number;
+    pipXp?: number;
+    lifeMs?: number;
+    readyToRetire?: boolean;
+  };
+  expect(level).toBe(grantLevel);
+  expect(pipXp).toBe(grantXp);
+  expect(lifeMs).toBe(0);
+  expect(readyToRetire).toBe(false);
+  expect(restAfter).toEqual(before);
 }
 
 describe("migrate fixtures", () => {
@@ -328,16 +361,20 @@ describe("migrate fixtures", () => {
     expect(result.save.state.resources).toEqual(rawV6.state["resources"] ?? {});
 
     // --- AND NOTHING WAS LOST (the integrate gate's third obligation) ---
-    // Two full schema steps ran over this blob. Walk EVERY key the v6 save
-    // carried and prove it survived byte-identical, rather than trusting
-    // "it didn't throw" — a migration that quietly drops an egg, a
-    // placement or an rng cursor while adding a shiny new XP counter is
-    // exactly the failure this round must not ship. `counters` is the one
+    // THREE full schema steps now run over this blob (v7's flair, v8's
+    // Keep-XP, v9's per-pip level/lifespan grant). Walk EVERY key the v6
+    // save carried and prove it survived byte-identical, rather than
+    // trusting "it didn't throw" — a migration that quietly drops an egg,
+    // a placement or an rng cursor while adding a shiny new XP counter is
+    // exactly the failure this round must not ship. `counters` is one
     // exemption (v8 SEEDS new key families into it) and is checked
-    // key-by-key instead, so even it cannot lose an entry.
+    // key-by-key instead; `pips`/`sanctuary` are the other (v9 GRANTS
+    // level/pipXp/lifeMs/readyToRetire onto every pip, active and
+    // resident) and are checked below via `expectPipMigratedToV9`, so
+    // even they cannot silently lose an entry.
     const after = result.save.state as unknown as Record<string, unknown>;
     for (const [key, value] of Object.entries(rawV6.state)) {
-      if (key === "counters") continue;
+      if (key === "counters" || key === "pips" || key === "sanctuary") continue;
       expect(JSON.stringify(after[key]), `state.${key} was lost or altered`).toBe(
         JSON.stringify(value),
       );
@@ -350,7 +387,29 @@ describe("migrate fixtures", () => {
         `counters.${key} was lost or altered`,
       ).toBe(value);
     }
-    // The fields the two steps are ALLOWED to add, and no others.
+    const beforePipsV6 = rawV6.state["pips"] as Record<string, Record<string, unknown>>;
+    for (const [id, beforePip] of Object.entries(beforePipsV6)) {
+      expectPipMigratedToV9(
+        beforePip,
+        (after["pips"] as Record<string, Record<string, unknown>>)[id] as Record<
+          string,
+          unknown
+        >,
+      );
+    }
+    const beforeResident = (
+      (rawV6.state["sanctuary"] as { readonly pips: Record<string, { readonly pip: Record<string, unknown> }> })
+        .pips["pip-9"] as { readonly pip: Record<string, unknown> }
+    ).pip;
+    const afterResident = (
+      (after["sanctuary"] as { readonly pips: Record<string, { readonly pip: Record<string, unknown> }> })
+        .pips["pip-9"] as { readonly pip: Record<string, unknown> }
+    ).pip;
+    expectPipMigratedToV9(beforeResident, afterResident);
+    // The fields the three steps are ALLOWED to add, and no others.
+    // (round 2H's `lineageEggs`/`lastLossOutcome`/per-pip ailment fields
+    // are all OPTIONAL — `undefined ≡` a safe default — so this v8 → v9
+    // step adds none of them; see MIGRATIONS[8]'s own doc comment.)
     const added = Object.keys(after).filter((k) => !(k in rawV6.state));
     expect(added.sort()).toEqual(["flair", "keepXp", "lastLevelUp"]);
   });
@@ -408,7 +467,10 @@ describe("migrate fixtures", () => {
     // future field added to v5 is covered automatically rather than needing
     // this list to be maintained by hand. `lastCatchup` is the one honest
     // exception: it is a transient echo that LOAD_SAVE nulls by contract.
-    const transient = new Set(["lastCatchup"]);
+    // `pips` is the other (round 2H's v9 step GRANTS
+    // level/pipXp/lifeMs/readyToRetire onto every pip — checked via
+    // `expectPipMigratedToV9` below instead of byte-identity).
+    const transient = new Set(["lastCatchup", "pips"]);
     for (const key of Object.keys(before.state)) {
       if (transient.has(key)) continue;
       expect(after[key], `state.${key} was changed or dropped by the migration`).toEqual(
@@ -422,14 +484,17 @@ describe("migrate fixtures", () => {
 
     // Every Pip is still present, by id, with its needs and age intact —
     // spelled out because "no Pip is ever lost" is a §4.4 tone rule, not
-    // merely a data-integrity nicety.
-    const beforePips = before.state["pips"] as Record<string, { needs: unknown; ageMs: number }>;
+    // merely a data-integrity nicety. Every OTHER field (including the
+    // round-2H per-pip grant) is checked field-by-field below.
+    const beforePips = before.state["pips"] as Record<string, Record<string, unknown>>;
     expect(Object.keys(result.save.state.pips).sort()).toEqual(
       Object.keys(beforePips).sort(),
     );
     for (const [id, pip] of Object.entries(result.save.state.pips)) {
-      expect(pip.needs).toEqual(beforePips[id]?.needs);
-      expect(pip.ageMs).toBe(beforePips[id]?.ageMs);
+      const beforePip = beforePips[id] as Record<string, unknown>;
+      expect(pip.needs).toEqual(beforePip["needs"]);
+      expect(pip.ageMs).toBe(beforePip["ageMs"]);
+      expectPipMigratedToV9(beforePip, pip as unknown as Record<string, unknown>);
     }
 
     // And the gift half of "a gift, never a reset": the hidden founder
@@ -438,6 +503,88 @@ describe("migrate fixtures", () => {
     expect(result.save.state.milestones.earned["founder"]).toBeDefined();
     expect(result.save.state.streak.current).toBe(0);
     expect(result.save.state.streak.graceBanked).toBeGreaterThan(0);
+  });
+});
+
+describe("v8 → v9 (round 2H, docs/lifecycle-bible.md §9.2): PER-PIP LEVELS + LIFESPAN — a veteran is not punished", () => {
+  it("a 21-day-old, evolved, mastery-laden Pip migrates to lifeMs 0, reads as freshly Young, and is not readyToRetire", () => {
+    const v8 = loadFixture(8) as { readonly state: Record<string, unknown> };
+    const state = v8.state as Record<string, unknown>;
+    const pipsRec = state["pips"] as Record<string, Record<string, unknown>>;
+    const veteranId = Object.keys(pipsRec)[0] as string;
+    const veteran = {
+      ...(pipsRec[veteranId] as Record<string, unknown>),
+      ageMs: 21 * 24 * HOUR_MS,
+      happinessIntegral: 75 * 21 * 24 * HOUR_MS, // a well-cared-for veteran
+      mastery: { meadow: 40 },
+    };
+    const blob = { ...v8, state: { ...state, pips: { ...pipsRec, [veteranId]: veteran } } };
+
+    const after = MIGRATIONS[8]!(blob)["state"] as Record<string, unknown>;
+    const migratedPip = (after["pips"] as Record<string, Record<string, unknown>>)[
+      veteranId
+    ] as Record<string, unknown>;
+
+    // The hard requirement: NOT instantly old.
+    expect(migratedPip["lifeMs"]).toBe(0);
+    expect(migratedPip["readyToRetire"]).toBe(false);
+    // The generous thank-you: a season already behind them.
+    expect(migratedPip["level"]).toBe(tuningModule.lifecycle.level.migrationGrantLevel);
+    expect(migratedPip["pipXp"]).toBe(
+      tuningModule.lifecycle.level.levelXp[tuningModule.lifecycle.level.migrationGrantLevel - 1],
+    );
+    // Everything the Pip already DID survives untouched (mastery, the
+    // veteran ageMs itself, evolution) — only the NEW fields are added.
+    expect(migratedPip["ageMs"]).toBe(21 * 24 * HOUR_MS);
+    expect(migratedPip["mastery"]).toEqual({ meadow: 40 });
+    expect(migratedPip["evolved"]).toEqual((pipsRec[veteranId] as Record<string, unknown>)["evolved"]);
+
+    // Derived from the migrated shape: this Pip reads as freshly Young,
+    // never Elder, however long (by ageMs) it has already been played —
+    // and `lifeMs` is NOT derived from `ageMs` (the bible's rejected
+    // alternative, named in serialize.ts's own doc comment).
+    const rebuilt = migratedPip as unknown as PipState;
+    expect(pipSeason(rebuilt)).toBe("young");
+    expect(updateAging(rebuilt).readyToRetire).toBe(false);
+    expect(migratedPip["lifeMs"]).not.toBe(migratedPip["ageMs"]);
+  });
+
+  it("every migrated Pip — active AND resident in the Long Meadow — starts at the SAME generous level, regardless of how long it has already been owned", () => {
+    const v8 = loadFixture(8) as { readonly state: Record<string, unknown> };
+    const after = MIGRATIONS[8]!(v8)["state"] as Record<string, unknown>;
+    const pipsRec = after["pips"] as Record<string, Record<string, unknown>>;
+    const residentPip = (
+      (
+        after["sanctuary"] as {
+          readonly pips: Record<string, { readonly pip: Record<string, unknown> }>;
+        }
+      ).pips["pip-9"] as { readonly pip: Record<string, unknown> }
+    ).pip;
+
+    for (const p of [...Object.values(pipsRec), residentPip]) {
+      expect(p["level"]).toBe(tuningModule.lifecycle.level.migrationGrantLevel);
+      expect(p["lifeMs"]).toBe(0);
+      expect(p["readyToRetire"]).toBe(false);
+    }
+  });
+
+  it("no field this step doesn't own (ailments, lineage, breeding) is invented from nothing", () => {
+    // Round 2H's other slices of this SAME v9 bump are explicitly not
+    // this step's job (module doc in migrate.ts) — pin that this step
+    // adds ONLY the four lifecycle/level fields to a pip, nothing else.
+    const v8 = loadFixture(8) as { readonly state: Record<string, unknown> };
+    const state = v8.state as Record<string, unknown>;
+    const pipsRec = state["pips"] as Record<string, Record<string, unknown>>;
+    const anyId = Object.keys(pipsRec)[0] as string;
+    const before = pipsRec[anyId] as Record<string, unknown>;
+
+    const after = MIGRATIONS[8]!(v8)["state"] as Record<string, unknown>;
+    const migrated = (after["pips"] as Record<string, Record<string, unknown>>)[anyId] as Record<
+      string,
+      unknown
+    >;
+    const addedKeys = Object.keys(migrated).filter((key) => !(key in before));
+    expect(addedKeys.sort()).toEqual(["level", "lifeMs", "pipXp", "readyToRetire"]);
   });
 });
 

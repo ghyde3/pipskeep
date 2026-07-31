@@ -211,3 +211,34 @@
   line-height: 1.4;
   color: rgba(61, 74, 61, 0.65);
 }
+
+/* ROUND 2H — the Quiet Keep switch (shield six). A footer control, not a
+   destination: separated by a hairline so it never reads as a fourth
+   place to go. State is carried by the tick mark, not only by colour. */
+.pk-nav-quiet {
+  border-top: 1px solid rgba(61, 74, 61, 0.12);
+  margin-top: 4px;
+}
+
+.pk-nav-quiet--on {
+  background: rgba(108, 154, 95, 0.12);
+}
+
+.pk-nav-quiet-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  margin-left: 8px;
+  border: 2px solid rgba(95, 138, 94, 0.45);
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.pk-nav-quiet--on .pk-nav-quiet-mark {
+  border-color: #6c9a5f;
+  background: #6c9a5f;
+  color: #fffdf6;
+}

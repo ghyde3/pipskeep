@@ -137,7 +137,7 @@ describe("hasOpenBlockingSurface — the cross-module Doorstep/reveal signal", (
     expect(hasOpenBlockingSurface({ querySelector: () => ({}) })).toBe(true);
   });
 
-  it("queries exactly the two classes those modules toggle", () => {
+  it("queries exactly the classes those modules toggle", () => {
     let queried = "";
     hasOpenBlockingSurface({
       querySelector: (sel) => {
@@ -145,7 +145,21 @@ describe("hasOpenBlockingSurface — the cross-module Doorstep/reveal signal", (
         return null;
       },
     });
-    expect(queried).toBe(".pk-doorstep--open, .pk-reveal--open");
+    expect(queried).toBe(
+      ".pk-doorstep--open, .pk-reveal--open, .pk-loss--open",
+    );
+  });
+
+  // ROUND 2H (spec §16 v1.5). The tier-up banner and the milestone ribbon
+  // (which blocks through this same function) must never fire over
+  // `ui/memorial.ts`'s loss moment. This is the assertion that keeps the
+  // fix from being silently reverted by a later "tidy the selector" edit.
+  it("counts the memorial loss moment as a blocking surface", () => {
+    expect(
+      hasOpenBlockingSurface({
+        querySelector: (sel) => (sel.includes(".pk-loss--open") ? {} : null),
+      }),
+    ).toBe(true);
   });
 });
 

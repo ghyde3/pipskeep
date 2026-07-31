@@ -45,10 +45,28 @@ describe("foodEffectLine — generated, never authored", () => {
     expect(line).toContain(`+${foods.feastpot.sideEffects?.energy} Energy`);
   });
 
-  it("every shipped food produces a line starting with its hunger restore", () => {
+  it("every shipped food WITHOUT an override produces a line starting with its hunger restore", () => {
     for (const food of Object.values(foods)) {
+      if (food.effectCopy !== undefined) continue;
       expect(foodEffectLine(food)).toMatch(new RegExp(`^\\+${food.hungerRestore} Hunger`));
     }
+  });
+
+  // ROUND 2H — the one override, and the reason it exists. The Poultice
+  // restores no Hunger, so the generated line advertised the round's only
+  // working cure as "+0 Hunger": the worst food in the game, sitting in
+  // the satchel of a player watching their Pip's countdown run down. The
+  // Satchel is where a frightened player goes looking, so it has to say
+  // what the thing is FOR.
+  it("the Poultice says what it does, not '+0 Hunger'", () => {
+    const line = foodEffectLine(foods.poultice);
+    expect(line).not.toMatch(/Hunger/);
+    expect(line).toMatch(/cure/i);
+  });
+
+  it("no other food overrides the generated line", () => {
+    const overridden = Object.values(foods).filter((f) => f.effectCopy !== undefined);
+    expect(overridden.map((f) => f.id)).toEqual(["poultice"]);
   });
 });
 

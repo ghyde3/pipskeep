@@ -8,7 +8,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { FOOD_IDS, foods } from "./foods";
+import { FOOD_IDS, foods, type FoodId } from "./foods";
 import { tuning } from "./tuning";
 
 /** The worst-case Hunger drop over one full capped (16h) absence: base
@@ -23,9 +23,38 @@ const WORST_HUNGER_DROP =
   ) *
   (tuning.offlineRateCapMs / (60 * 60 * 1000));
 
-describe("food registry shape (content bible §4)", () => {
-  it("ships exactly the ten registry ids the bible specifies", () => {
+/**
+ * ROUND 2H — the Poultice is a registered "food" (it shares the Give Item
+ * lookup) but is NOT a meal: `hungerRestore` is deliberately 0, so it must
+ * sit outside the "servings to cover a day away" sizing loop below. This
+ * is the meal-shaped subset that loop actually applies to. The type
+ * predicate (not a bare `.filter`) is what narrows `(typeof
+ * MEAL_FOOD_IDS)[number]` down to exactly the ten meal ids for
+ * `servingsById` below — a bare filter callback would leave the inferred
+ * element type at the full `FoodId` union, "poultice" included.
+ */
+const MEAL_FOOD_IDS = FOOD_IDS.filter(
+  (id): id is Exclude<FoodId, "poultice"> => foods[id].hungerRestore > 0,
+);
+
+describe("food registry shape (content bible §4, +poultice round 2H)", () => {
+  it("ships exactly the ten meal ids the bible specifies, plus the round 2H cure item", () => {
     expect([...FOOD_IDS].sort()).toEqual(
+      [
+        "berry",
+        "stew",
+        "honeydrop",
+        "toastnut",
+        "frostberry",
+        "cocoabun",
+        "glowcap",
+        "tideroll",
+        "emberloaf",
+        "feastpot",
+        "poultice",
+      ].sort(),
+    );
+    expect([...MEAL_FOOD_IDS].sort()).toEqual(
       [
         "berry",
         "stew",
@@ -71,6 +100,11 @@ describe("food registry shape (content bible §4)", () => {
       expect(foods[id].flavor.trim().length, id).toBeGreaterThan(10);
     }
   });
+
+  it("the Poultice is the one deliberate non-meal: zero restore, no side effects (round 2H)", () => {
+    expect(foods.poultice.hungerRestore).toBe(0);
+    expect(foods.poultice.sideEffects).toBeUndefined();
+  });
 });
 
 describe("the restore-sizing rule: every food's 'cover a day away' arithmetic", () => {
@@ -83,8 +117,10 @@ describe("the restore-sizing rule: every food's 'cover a day away' arithmetic", 
     expect(foods.stew.hungerRestore).toBeGreaterThan(WORST_HUNGER_DROP);
   });
 
-  /** Servings the bible commits to per food, and the resulting total. */
-  const servingsById: Readonly<Record<(typeof FOOD_IDS)[number], number>> = {
+  /** Servings the bible commits to per food, and the resulting total.
+   * MEAL_FOOD_IDS only — the Poultice restores no Hunger and is not part
+   * of this arithmetic (see the dedicated test below). */
+  const servingsById: Readonly<Record<(typeof MEAL_FOOD_IDS)[number], number>> = {
     berry: 2,
     stew: 1,
     honeydrop: 7,
@@ -97,7 +133,7 @@ describe("the restore-sizing rule: every food's 'cover a day away' arithmetic", 
     feastpot: 1,
   };
 
-  for (const id of FOOD_IDS) {
+  for (const id of MEAL_FOOD_IDS) {
     it(`${id}: ${servingsById[id]} serving(s) clears one full capped absence`, () => {
       expect(servingsById[id] * foods[id].hungerRestore).toBeGreaterThan(
         WORST_HUNGER_DROP,

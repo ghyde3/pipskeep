@@ -19,7 +19,30 @@ export interface SanctuaryRecord {
   readonly retiredFromKeepLevel: number;
   /** Times asked home (forward-only). */
   readonly visits: number;
+  /**
+   * ROUND 2H (spec §16 v1.5, docs/lifecycle-bible.md §2.5/§4/§9.2) — WHY
+   * this Pip is here. All three are written by real code paths:
+   *
+   * - `"player"` — an ordinary RETIRE_PIP tap. Written explicitly by
+   *   `core/state.ts`'s RETIRE_PIP arm; `undefined` also reads as this,
+   *   which is what every pre-2H resident round-trips as.
+   * - `"age"` — a RETIRE_PIP tap on a Pip whose `readyToRetire` flag was
+   *   already set (promise 3's peaceful ending). Cosmetic in mechanics —
+   *   an age retirement is retrievable exactly like a player one — but
+   *   NOT cosmetic in meaning: it is what lets the Long Meadow tell a
+   *   full life apart from a change of scene, and what gives the
+   *   promise-3 path something durable for a test to assert on.
+   * - `"lost"` — `core/pips/ailment.ts`'s `resolveAilments` TRUE LOSS
+   *   branch, the only reason that is never player-chosen.
+   *
+   * `core/sanctuary/index.ts`'s `retrievePip` refuses a `"lost"` resident
+   * (a memorial, not a pause) — retiring an ailing-but-still-alive Pip
+   * (bible §7.6) stays `"player"`/`"age"` and fully retrievable.
+   */
+  readonly reason?: SanctuaryReason;
 }
+
+export type SanctuaryReason = "player" | "age" | "lost";
 
 export interface SanctuaryState {
   readonly pips: Readonly<Record<PipId, SanctuaryRecord>>;

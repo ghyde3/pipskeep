@@ -107,9 +107,26 @@ export interface BlockingSurfaceQuery {
  * modules already toggle on open/close (`.pk-doorstep--open`,
  * `.pk-reveal--open`, see `ui/welcome.ts` / `ui/lootReveal.ts`) are the
  * one honest, decoupled signal.
+ *
+ * ROUND 2H (spec §16 v1.5) adds `.pk-loss--open` — `ui/memorial.ts`'s
+ * full-screen loss moment — to the same list, by the same rule. Confetti
+ * and a tier-up fanfare over a Pip's memorial is the single worst thing
+ * this HUD could do, and this ONE selector is the whole fix for both
+ * celebration surfaces: `milestoneCelebration.ts` blocks through
+ * `isMilestoneRibbonBlocked`, which calls straight into here.
+ *
+ * (`ui/memorial.ts` also publishes a pure `isMourning(state, now)` for the
+ * same job. This is the same signal read one layer lower, and it is the
+ * better one HERE: it is true exactly while the moment is ON SCREEN,
+ * whereas `isMourning` approximates that with a fixed 15s window from
+ * `lastLossOutcome.at` — which would both un-block a still-open card and
+ * mis-block a dismissed one.)
  */
 export function hasOpenBlockingSurface(root: BlockingSurfaceQuery = document): boolean {
-  return root.querySelector(".pk-doorstep--open, .pk-reveal--open") !== null;
+  return (
+    root.querySelector(".pk-doorstep--open, .pk-reveal--open, .pk-loss--open") !==
+    null
+  );
 }
 
 // ---------------------------------------------------------------------------

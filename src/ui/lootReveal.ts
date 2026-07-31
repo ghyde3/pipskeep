@@ -125,6 +125,10 @@ export interface RevealScript {
    * direction for a promise.
    */
   readonly xpAward: number;
+  /** ROUND 2H — the egg card's caption. "An egg?!" for an ordinary find;
+   * the lost parent's name ("Pebblepip's egg.") when this is the lineage
+   * egg a Pip went back for (spec §16 v1.5 promise 4). */
+  readonly eggCaption: string;
   /** When the summary + Collect button appear, ms after open. */
   readonly readyAtMs: number;
 }
@@ -165,7 +169,19 @@ function summaryLine(
   expeditionName: string,
   itemCount: number,
   hasEgg: boolean,
+  lineageName: string | null = null,
 ): string {
+  // ROUND 2H (spec §16 v1.5 promise 4: "every loss leaves a thread to pull").
+  // A LINEAGE egg outranks every other line here, and it is the only branch
+  // that names another Pip. The thread is visible everywhere else already —
+  // the Nook's "Someone to find" card, the per-biome hint on the send-off
+  // row — but this is its PAYOFF, and without this branch the moment a
+  // player goes back for their lost Pip and actually succeeds reads exactly
+  // like any other loot egg. Promise 4 says loss is a quest, not a dead
+  // end; a quest whose completion goes unremarked is neither.
+  if (lineageName !== null) {
+    return `${pipName} went back to the ${expeditionName} — and came home with ${lineageName}'s egg.`;
+  }
   if (hasEgg && itemCount > 0) {
     return `${pipName} hauled home ${itemCount} treasure${
       itemCount === 1 ? "" : "s"
@@ -215,9 +231,39 @@ export function buildRevealScript(
   }
 
   const hasEgg = reveal.egg !== null;
+
+  // ROUND 2H: is this a LINEAGE egg — the one a lost Pip left behind, found
+  // by going back to the biome that took them (spec §16 v1.5 promise 4)?
+  //
+  // Exactly ONE parent id is the discriminator, and it is load-bearing: a
+  // BRED egg carries the same `lineageGenome` but names TWO parents, and
+  // "came home with X's egg" would be a lie about it. (A bred egg starts
+  // life already Incubating with no `sourceExpeditionId`, so it can never
+  // reach a reveal — this is belt and braces, so that stays true if the
+  // breeding flow ever grows a reveal beat of its own.)
+  //
+  // The name resolves through the SAME `pips` view every other name here
+  // does; the caller merges the Long Meadow's residents into it, because
+  // the parent being looked up is by definition no longer in the roster.
+  const lineageParents = reveal.egg?.lineageGenome === undefined
+    ? undefined
+    : reveal.egg.lineageParentIds;
+  const lineageParentId =
+    lineageParents !== undefined && lineageParents.length === 1
+      ? lineageParents[0]
+      : undefined;
+  const lineageName =
+    lineageParentId === undefined ? null : (pips[lineageParentId]?.name ?? null);
+
   if (hasEgg) {
     t += REVEAL_EGG_LEAD_MS;
-    steps.push({ kind: "egg", itemId: null, label: "An egg?!", tier: null, flipAtMs: t });
+    steps.push({
+      kind: "egg",
+      itemId: null,
+      label: lineageName === null ? "An egg?!" : `${lineageName}'s egg.`,
+      tier: null,
+      flipAtMs: t,
+    });
     t += REVEAL_EGG_HOLD_MS;
   }
 
@@ -228,7 +274,16 @@ export function buildRevealScript(
     expeditionName,
     steps,
     hasEgg,
-    summaryLine: summaryLine(pipName, expeditionName, reveal.items.length, hasEgg),
+    summaryLine: summaryLine(
+      pipName,
+      expeditionName,
+      reveal.items.length,
+      hasEgg,
+      lineageName,
+    ),
+    /** ROUND 2H: the egg card's own caption — the lost parent's name when
+     * this is a lineage find, the ordinary "An egg?!" otherwise. */
+    eggCaption: lineageName === null ? "An egg?!" : `${lineageName}'s egg.`,
     // Mirrors `core/state.ts`'s own arithmetic exactly: the base award from
     // `revealXp`, then `ceil` against the xpBonus so a bonus can never be
     // invisible (at +5% a 7-XP trip pays 8, never a silent 7).
@@ -253,6 +308,17 @@ export interface RevealQueueStateView {
    * reveal's `+N XP` chip. Optional so every pre-2F fixture still satisfies
    * this view; GameState satisfies it in full. */
   readonly keep?: KeepState;
+  /**
+   * ROUND 2H: the Long Meadow's residents, read ONLY to put a name to a
+   * lineage egg's parent. That parent is by definition not in `pips` any
+   * more — being lost is what seeded the egg — so without this the payoff
+   * line has no name to use and silently degrades to the ordinary egg copy.
+   * Optional so every pre-2H fixture still satisfies this view; GameState's
+   * `sanctuary` satisfies it in full.
+   */
+  readonly sanctuary?: {
+    readonly pips: Readonly<Record<string, { readonly pip: { readonly name: string } }>>;
+  };
 }
 
 export interface RevealQueueControllerDeps {
@@ -290,7 +356,20 @@ export function createRevealQueueController(
     const xpBonusFraction =
       deps.content?.xpBonusFraction ??
       (keep === undefined ? 0 : resolveKeepEffects(keep, keep.level).xpBonusFraction);
-    return buildRevealScript(head, state.pips, { ...deps.content, xpBonusFraction });
+    // ROUND 2H: active roster + the Long Meadow, so a lineage egg's lost
+    // parent can still be named. Active pips win any id collision (there
+    // are none — a Pip is in exactly one of the two).
+    const residents = state.sanctuary?.pips;
+    const names: RevealPipsView =
+      residents === undefined
+        ? state.pips
+        : {
+            ...Object.fromEntries(
+              Object.entries(residents).map(([id, record]) => [id, { name: record.pip.name }]),
+            ),
+            ...state.pips,
+          };
+    return buildRevealScript(head, names, { ...deps.content, xpBonusFraction });
   };
 
   return {
@@ -530,7 +609,7 @@ export function createLootRevealModal(deps: LootRevealModalDeps): LootRevealModa
     xpChip.textContent = `+${script.xpAward} Keep XP`;
     xpChip.hidden = script.xpAward <= 0;
     eggStage.style.display = script.hasEgg ? "" : "none";
-    eggCaption.textContent = "An egg?!";
+    eggCaption.textContent = script.eggCaption;
 
     for (const step of script.steps) {
       if (step.kind === "egg") {

@@ -15,15 +15,20 @@ import { FakeClock } from "../clock";
 import { HOUR_MS, MINUTE_MS, tuning } from "../../content/tuning";
 import { species } from "../../content/species";
 import { LifeStage, PipActivity } from "./types";
-import type { PipNeeds, PipState } from "./types";
-import { applyNeedsDelta, type NeedsTuning } from "./needs";
+import type { ActiveExpedition, PipNeeds, PipState } from "./types";
+import { applyNeedsDelta, effectiveRates, type NeedsTuning } from "./needs";
+import { canReceiveCare, departExpedition, evaluateSulk } from "./machine";
 import {
   adultAt,
   applyEvolution,
   checkEvolution,
+  lifespanMs,
   lifetimeAvgHappiness,
+  pipSeason,
+  updateAging,
   updateEvolutionReadiness,
   updateLifeStage,
+  type LifespanTuning,
   type SpeciesEvolutionRegistry,
 } from "./lifecycle";
 
@@ -310,5 +315,179 @@ describe("applyEvolution — the birth genome (shiny included) survives", () => 
     expect(result.pip.speciesId).toBe("grovepip");
     expect(result.pip.genome).toBe(pip.genome);
     expect(result.pip.genome.shiny).toBe(true);
+  });
+
+  it("ROUND 2H: awards this Pip's own evolve XP (bible §1.1 row 5) — the sole call site", () => {
+    const pip = makePip({ lifeStage: LifeStage.Adult, readyToEvolve: true });
+    const result = applyEvolution(pip, species, 1_000);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.pip.pipXp).toBe(tuning.lifecycle.level.xp.evolve);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// LIFESPAN & AGEING (spec §16 v1.5, docs/lifecycle-bible.md §2) — promise 3.
+// ---------------------------------------------------------------------------
+
+/** A pip with a controlled lifetime-average happiness (via
+ * happinessIntegral/ageMs) and no lifeMs yet — the lifespan tests' base
+ * fixture. `ageMs` is large so `lifeStage` reads as a deliberate choice,
+ * never accidentally Pipling. */
+function pipAt(overrides: Partial<PipState> & { readonly avgHappiness?: number } = {}): PipState {
+  const { avgHappiness, ...rest } = overrides;
+  const ageMs = rest.ageMs ?? 1000 * HOUR_MS;
+  return makePip({
+    lifeStage: LifeStage.Adult,
+    ageMs,
+    happinessIntegral: (avgHappiness ?? 0) * ageMs,
+    ...rest,
+  });
+}
+
+describe("lifespanMs — bible §2.3's formula, pinned against the bible's own worked examples", () => {
+  it("Neglectful (avg < 30, level 3, no buildings) ⇒ ~6.4 days", () => {
+    const pip = pipAt({ avgHappiness: 10, level: 3 });
+    expect(lifespanMs(pip) / HOUR_MS / 24).toBeCloseTo(6.4, 1);
+  });
+
+  it("Ordinary (avg 65–79, level 6, one +0.06 longevity building) ⇒ ~10.7 days", () => {
+    const pip = pipAt({ avgHappiness: 70, level: 6 });
+    expect(lifespanMs(pip, tuning, 0.06) / HOUR_MS / 24).toBeCloseTo(10.7, 1);
+  });
+
+  it("Devoted (avg ≥ 80, level 10, all three +0.21 longevity buildings) ⇒ ~15.6 days", () => {
+    const pip = pipAt({ avgHappiness: 85, level: 10 });
+    expect(lifespanMs(pip, tuning, 0.21) / HOUR_MS / 24).toBeCloseTo(15.6, 1);
+  });
+
+  it("building longevity clamps at buildingBonusMax, never rewarding an over-supplied value", () => {
+    const pip = pipAt({ avgHappiness: 50, level: 1 });
+    const capped = lifespanMs(pip, tuning, tuning.lifecycle.lifespan.buildingBonusMax);
+    const overSupplied = lifespanMs(pip, tuning, tuning.lifecycle.lifespan.buildingBonusMax + 5);
+    expect(overSupplied).toBe(capped);
+  });
+
+  it("a newborn (ageMs = 0, no happiness history) gets the lowest care-quality band, not NaN", () => {
+    const pip = pipAt({ avgHappiness: 0, ageMs: 0, level: 1 });
+    expect(Number.isFinite(lifespanMs(pip))).toBe(true);
+    expect(lifespanMs(pip)).toBeGreaterThan(0);
+  });
+
+  it("care quality is worth roughly 59% of a lifetime (bible §2.3): the Devoted:Neglectful ratio", () => {
+    const neglectful = lifespanMs(pipAt({ avgHappiness: 10, level: 1 }));
+    const devoted = lifespanMs(pipAt({ avgHappiness: 85, level: 1 }));
+    const ratio = devoted / neglectful;
+    // 1.35 / 0.85 ≈ 1.588
+    expect(ratio).toBeCloseTo(1.35 / 0.85, 5);
+  });
+
+  it("levels can only ever EXTEND a lifespan, never shorten it", () => {
+    const base = lifespanMs(pipAt({ avgHappiness: 50, level: 1 }));
+    for (let level = 2; level <= tuning.lifecycle.level.maxLevel; level++) {
+      expect(lifespanMs(pipAt({ avgHappiness: 50, level }))).toBeGreaterThan(base);
+    }
+  });
+});
+
+describe("pipSeason — bible §2.4 (derived, never stored, mechanically inert)", () => {
+  it("a Pipling always reports its own stage, regardless of lifeMs", () => {
+    const pipling = makePip({ lifeStage: LifeStage.Pipling, lifeMs: 999_999_999_999 });
+    expect(pipSeason(pipling)).toBe("pipling");
+  });
+
+  it("walks young → prime → seasoned → elder as lifeMs crosses each fraction of lifespanMs", () => {
+    const pip = pipAt({ avgHappiness: 50, level: 1 });
+    const span = lifespanMs(pip);
+    const { young, prime, seasoned } = tuning.lifecycle.lifespan.seasons;
+
+    expect(pipSeason({ ...pip, lifeMs: 0 })).toBe("young");
+    expect(pipSeason({ ...pip, lifeMs: span * young - 1 })).toBe("young");
+    expect(pipSeason({ ...pip, lifeMs: span * young })).toBe("prime");
+    expect(pipSeason({ ...pip, lifeMs: span * prime - 1 })).toBe("prime");
+    expect(pipSeason({ ...pip, lifeMs: span * prime })).toBe("seasoned");
+    expect(pipSeason({ ...pip, lifeMs: span * seasoned - 1 })).toBe("seasoned");
+    expect(pipSeason({ ...pip, lifeMs: span * seasoned })).toBe("elder");
+    expect(pipSeason({ ...pip, lifeMs: span * 10 })).toBe("elder");
+  });
+
+  it("is purely derived — retuning the season bands re-grades an existing Pip with no stored state to migrate", () => {
+    const pip = pipAt({ avgHappiness: 50, level: 1, lifeMs: 0 });
+    const retuned: LifespanTuning = {
+      lifecycle: {
+        lifespan: { ...tuning.lifecycle.lifespan, seasons: { young: 0, prime: 0, seasoned: 0 } },
+        level: tuning.lifecycle.level,
+      },
+    };
+    // Same Pip, same stored fields — only the tuning changed — and the
+    // word on its card changes immediately, with no migration.
+    expect(pipSeason(pip, tuning)).toBe("young");
+    expect(pipSeason(pip, retuned)).toBe("elder");
+  });
+});
+
+describe("updateAging — bible §2.5: a FLAG, nothing else (promise 3)", () => {
+  it("does not set the flag before lifeMs reaches lifespanMs", () => {
+    const pip = pipAt({ avgHappiness: 50, level: 1 });
+    const span = lifespanMs(pip);
+    expect(updateAging({ ...pip, lifeMs: span - 1 }).readyToRetire).toBeFalsy();
+  });
+
+  it("sets the flag at EXACTLY lifeMs === lifespanMs (inclusive)", () => {
+    const pip = pipAt({ avgHappiness: 50, level: 1 });
+    const span = lifespanMs(pip);
+    expect(updateAging({ ...pip, lifeMs: span }).readyToRetire).toBe(true);
+  });
+
+  it("is sticky — once set, a later happiness improvement (which would grow lifespanMs back past lifeMs) never revokes it", () => {
+    const old = { ...pipAt({ avgHappiness: 10, level: 1 }), lifeMs: 999_999_999_999, readyToRetire: true };
+    // Even with a MUCH higher lifespan (via a devoted-care re-evaluation),
+    // the flag never un-announces.
+    const improved = { ...old, happinessIntegral: 85 * old.ageMs };
+    expect(updateAging(improved).readyToRetire).toBe(true);
+  });
+
+  it("sets ONLY the flag — nothing else on the Pip changes", () => {
+    const pip = pipAt({ avgHappiness: 50, level: 1 });
+    const span = lifespanMs(pip);
+    const before = { ...pip, lifeMs: span * 2 };
+    const aged = updateAging(before);
+    const { readyToRetire, ...restOfAged } = aged;
+    expect(readyToRetire).toBe(true);
+    expect(restOfAged).toEqual(before);
+  });
+
+  it("PROMISE 3: reaching lifespanMs changes literally nothing mechanical — effectiveRates, care legality and expedition legality are all deep-equal before and after", () => {
+    const young = pipAt({ avgHappiness: 50, level: 1, lifeMs: 0 });
+    const span = lifespanMs(young);
+    const old = updateAging({ ...young, lifeMs: 10 * span });
+    expect(old.readyToRetire).toBe(true);
+
+    expect(effectiveRates(old)).toEqual(effectiveRates(young));
+    expect(canReceiveCare(old)).toBe(canReceiveCare(young));
+
+    const trip: ActiveExpedition = { expeditionId: "meadow", departedAt: 0, durationMs: HOUR_MS };
+    const oldResult = departExpedition(old, trip);
+    const youngResult = departExpedition(young, trip);
+    expect(oldResult.ok).toBe(true);
+    expect(oldResult.ok).toBe(youngResult.ok);
+
+    // evaluateSulk: identical except for the two fields THIS test moved.
+    expect(evaluateSulk(old)).toEqual({
+      ...evaluateSulk(young),
+      lifeMs: old.lifeMs,
+      readyToRetire: true,
+    });
+  });
+
+  it("run only from TICK/CATCHUP by contract — RETIRE_PIP is the only action that may ever move a Pip (asserted at the reducer level in core/state.test.ts)", () => {
+    // This function itself never touches sanctuary state — it returns a
+    // PipState, never a GameState — so promise 3/5 hold by construction:
+    // there is no state this function COULD move a Pip into.
+    const pip = pipAt({ avgHappiness: 50, level: 1, lifeMs: lifespanMs(pipAt({ avgHappiness: 50, level: 1 })) });
+    const result = updateAging(pip);
+    expect(result.readyToRetire).toBe(true);
+    const newKeys = Object.keys(result).filter((key) => !(key in pip));
+    expect(newKeys).toEqual(["readyToRetire"]);
   });
 });

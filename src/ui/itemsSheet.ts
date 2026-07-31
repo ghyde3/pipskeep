@@ -33,8 +33,14 @@ const FOOD_EFFECT_LABELS: Readonly<Record<"hunger" | "happiness" | "energy", str
 
 /** "+25 Hunger" / "+50 Hunger, +5 Happiness" — GENERATED from the food's
  * own `hungerRestore`/`sideEffects` numbers (spec §5), never authored, so
- * a tuning rebalance can never leave the Satchel's copy stale. */
+ * a tuning rebalance can never leave the Satchel's copy stale.
+ *
+ * ROUND 2H: an item may override this with `effectCopy` when its real
+ * effect is not a stat the generator can see. Exactly one does — the
+ * Poultice, whose generated line read "+0 Hunger" and so presented the
+ * round's only working cure as the worst food in the game. */
 export function foodEffectLine(food: FoodDef): string {
+  if (food.effectCopy !== undefined) return food.effectCopy;
   const parts = [`+${food.hungerRestore} ${FOOD_EFFECT_LABELS.hunger}`];
   if (food.sideEffects?.happiness !== undefined) {
     parts.push(`+${food.sideEffects.happiness} ${FOOD_EFFECT_LABELS.happiness}`);

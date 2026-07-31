@@ -372,9 +372,23 @@ describe("mastery tier-up XP (bible row 32) — inside ACKNOWLEDGE_REVEAL, paid 
     let state = fresh();
     const pipId = state.activePipId;
     const pipBefore = state.pips[pipId] as PipState;
+    // ROUND 2H: pinned at max Pip level/XP so THIS trip's own Pip XP
+    // (trip + mastery-tier) cannot itself cross a Pip level and pull in
+    // `lifecycle.keepXp.pipLevel` — an entirely different Keep-XP row
+    // this test (Keep XP's OWN mastery-tier row) is not about.
+    const maxLevelXp =
+      contentTuning.lifecycle.level.levelXp[contentTuning.lifecycle.level.levelXp.length - 1] ?? 0;
     state = {
       ...state,
-      pips: { ...state.pips, [pipId]: { ...pipBefore, mastery: { bramblewick: 1 } } },
+      pips: {
+        ...state.pips,
+        [pipId]: {
+          ...pipBefore,
+          mastery: { bramblewick: 1 },
+          level: contentTuning.lifecycle.level.maxLevel,
+          pipXp: maxLevelXp,
+        },
+      },
     };
 
     state = rootReducer(state, {

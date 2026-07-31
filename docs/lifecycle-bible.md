@@ -465,21 +465,46 @@ Modifiers, summed into one channel and clamped once at `cureBonusMax` (0.45):
   carries `contractReduction` (Shelf 0.20, Basin 0.10, clamped at `contractReductionMax` 0.60
   alongside the Pip's own constitution).
 
-**Survival arithmetic**, worst case first — a level-1 Pip, no buildings, no poultices, relying only
-on the free daily roll, against the *shortest* ailment (Lanternfever, 36 h rated ≈ 3 sessions for a
-daily player):
+**Survival arithmetic.** The numbers below are **MEASURED against the shipped reducer**, not derived
+on paper — every one is a seed sweep through the real `rootReducer` with the real content tables,
+and each is pinned by a test so the doc and the game cannot drift apart again.
 
-```
-1 − (0.65 × 0.55 × 0.45) = 83.9 %
-```
+The paper version of this table was wrong by the whole margin, and the way it was wrong is worth
+recording. It claimed a worst case of 83.9 % from `1 − (0.65 × 0.55 × 0.45)`, every term of which
+came from the free daily roll — a route that was specified here, promised to the player on the
+ailment card, and **wired to no reducer at all**. Measured survival for that exact profile was
+0 in 100. The doc was the more optimistic of the two, which is the worst direction for a doc to be
+wrong in, because it is the direction that gets tuned against. The route is wired now
+(`core/pips/ailment.ts`'s `applyDevotedCare`, called from the live TICK arm), and these are its
+real numbers:
 
-The same Pip with three poultices: `1 − (0.45 × 0.35 × 0.25) = 96.1 %`. A level-6 Pip with a
-Poultice Shelf and one poultice: `> 99 %`.
+| Profile | Measured survival |
+|---|---|
+| Level-1 Pip, no buildings, **no poultices**, needs held high (the free daily roll alone) | **81 %** |
+| The same, played through real care actions rather than pinned needs | **81 %** |
+| ...plus **one** poultice | **98 %** |
+| ...plus **two or more** poultices | **100 %** |
+| Needs let slip below the devoted-care floor, no poultice | **0 %** |
+
+Two things follow, and both are the intended shape:
+
+- **The floor is care, not inventory.** A player who tends their Pip survives four times in five
+  with an empty satchel. The old build's distribution was bimodal on *poultices held*, which made
+  survival a function of whether the player happened to be carrying the right item — luck wearing
+  the costume of a choice.
+- **A loss is always downstream of neglect or bad luck, never of ignorance.** The 0 % row is real
+  and is meant to be: it is the outcome for a Pip whose four needs were left under 70 for a day and
+  a half straight while a visible countdown ran down. Every screen involved says what to do.
+
+Note also that the countdown is only ever spent by time the player was **there** for: an absence
+cannot take a Pip below the vigil floor, and cannot take *anything* from a Pip already under it
+(§3.3 rule 2, and the measured table in `applyVigilFloor`'s tests).
 
 **Frequency.** An engaged player running two deep trips a day carries ~0.12 ailment-chance/day → one
-ailment per ~8 days, i.e. **1–2 per Pip lifetime**. Multiplied through survival and the shields of
-§7, roughly **one Pip in six is lost to illness; the rest retire peacefully.** That is "some might
-last a long time, but they don't last forever" with real, rare stakes.
+ailment per ~8 days, i.e. **1–2 per Pip lifetime**. At 81 % survival on care alone, and with the six
+shields of §7 in front of it, **the great majority of Pips retire peacefully; a loss is a rare
+thing that happened for a reason the player can name.** That is "some might last a long time, but
+they don't last forever" with real, rare stakes — and the player always had a lever.
 
 ### 3.6 What a cured Pip carries forward: THE SCAR
 
@@ -848,12 +873,24 @@ And, on a loss, **none of the following change**:
 
 `state.settings.quietKeep: boolean`, default **false**, in the Nook: **"Pips never fall ill."**
 
-Every `ailmentChance` resolves to 0 while it is on, and turning it on **immediately and gently cures
-any ailment in progress** (with the Loyal Turn moment, so the Pip still gets its scar). Turning it
-off again is allowed at any time. **No milestone, no Album entry, no flair and no Keep XP is gated on
-it, and nothing anywhere labels it as easy mode.**
+Every `ailmentChance` resolves to 0 while it is on, and turning it on **immediately and gently
+clears any ailment in progress**. Turning it off again is allowed at any time. **No milestone, no
+Album entry, no flair and no Keep XP is gated on it, and nothing anywhere labels it as easy mode.**
 
-This is three lines of reducer code and it is the complete, unconditional answer to *"it can't be
+**Amended on implementation: the clear pays no rewards.** The spec above said the in-flight ailment
+should clear "with the Loyal Turn moment, so the Pip still gets its scar". It doesn't, and it
+mustn't: the Loyal Turn grants a permanent immunity, 60 Pip XP and 30 Keep XP, so a switch that
+fired it would be an XP-and-immunity printer — flip on, flip off, take a deep trip, repeat — and a
+kindness that is also the optimal strategy stops being a kindness and becomes a chore. Under Quiet
+Keep the ailment **simply never happened**: no scar, no XP, no `lastLossOutcome`. Asserted in
+`core/state.ailments.test.ts`.
+
+Three guarantees for one switch, because the player who reaches for it is the player who most needs
+it to work: contraction is impossible at the source (the reducer withholds the ailment registry from
+both the live and the catch-up settle paths, so not one roll is consumed), anything in flight is
+cleared on the spot, and `resolveAilments` treats the setting as shield zero regardless.
+
+It is a few lines of reducer code and it is the complete, unconditional answer to *"it can't be
 brutal."* A game whose owner is worried about disappointing players should ship the switch that makes
 disappointment impossible, and should not make anyone ask for it.
 

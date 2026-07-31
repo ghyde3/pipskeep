@@ -79,7 +79,24 @@ export interface ExpeditionDef {
    * later is a data change, not a schema change. */
   availableWindow?: { from: string; to: string };
   flavor: string;
+  /**
+   * ROUND 2H — THE RISK LINE (docs/lifecycle-bible.md §7.1, shield one:
+   * "no hidden risk, ever"). Shown on the send-off card ABOVE the button,
+   * always, on every biome — a player who never taps a deep trail must
+   * never encounter the ailment system, and a player who does must be
+   * told in words before they commit. Exactly one of the two shipped
+   * strings, never authored free-form: `content/validate.ts` asserts this
+   * string agrees with whether `content/ailments.ts` actually pools an
+   * ailment for this biome's id, so the two files cannot drift apart.
+   */
+  riskCopy: string;
 }
+
+/** The two, and only two, risk-line strings (bible §7.1) — shared so the
+ * registry and `content/validate.ts`'s consistency check read the exact
+ * same literals rather than two hand-typed copies of the same sentence. */
+export const SAFE_TRAIL_COPY = "Safe trail.";
+export const RISKY_TRAIL_COPY = "Some risk. Pips sometimes come back with a burr.";
 
 export const expeditions: Readonly<Record<ExpeditionId, ExpeditionDef>> = {
   meadow: {
@@ -110,6 +127,7 @@ export const expeditions: Readonly<Record<ExpeditionId, ExpeditionDef>> = {
     eggSpecies: ["mosspip", "cloudpip"],
     flavor:
       "Sun-warmed grass, suspiciously friendly bees, snacks and fallen twigs everywhere.",
+    riskCopy: SAFE_TRAIL_COPY,
   },
   /**
    * ROUND 2B — the level-1 DEEP trip (bible §2.1). 40 minutes is the
@@ -125,17 +143,28 @@ export const expeditions: Readonly<Record<ExpeditionId, ExpeditionDef>> = {
     name: "Bramblewick",
     unlockKeepLevel: tuning.expeditions.bramblewick.unlockKeepLevel,
     durationMs: tuning.expeditions.bramblewick.durationMs,
+    // ROUND 2H: `poultice` (weight 4, bible §3.5 — "drops from all three
+    // deep trails") added on top of the ROUND 2B table, which stays
+    // otherwise unchanged (still load-bearing for the level-1 wood/fiber
+    // ceilings, `content/expeditions.test.ts`). A ~3.5% dilution of the
+    // existing weights; verified against `reachability.test.ts` and the
+    // ceiling assertions.
     lootTable: [
       { itemId: "fiber", weight: 45 },
       { itemId: "honeydrop", weight: 25 },
       { itemId: "berry", weight: 20 },
       { itemId: "toastnut", weight: 20 },
+      { itemId: "poultice", weight: 4 },
     ],
     lootRolls: tuning.expeditions.bramblewick.lootRolls,
     eggChance: tuning.expeditions.bramblewick.eggChance,
     eggSpecies: ["mosspip", "pebblepip"],
     flavor:
       "A hedge with opinions. Twine, honey, and one thorn that will absolutely find you.",
+    // Bramblewick can inflict Brambleburr (content/ailments.ts) — the
+    // FIRST risky trail a level-1 player can reach, so shield one's full
+    // disclosure matters most here.
+    riskCopy: RISKY_TRAIL_COPY,
   },
   /**
    * ROUND 2A: Forest 4 → 6 rolls. At 4 rolls the Forest paid 0.12 Wood
@@ -168,6 +197,7 @@ export const expeditions: Readonly<Record<ExpeditionId, ExpeditionDef>> = {
     eggChance: tuning.expeditions.forest.eggChance,
     eggSpecies: ["mosspip", "pebblepip", "emberpip"],
     flavor: "Tall trees, deep shadows, and something delicious simmering somewhere.",
+    riskCopy: SAFE_TRAIL_COPY,
   },
   /**
    * ROUND 2B — the level-2 DEEP trip. An hour, sized so an overnight
@@ -180,18 +210,22 @@ export const expeditions: Readonly<Record<ExpeditionId, ExpeditionDef>> = {
     name: "Snowdrift",
     unlockKeepLevel: tuning.expeditions.snowdrift.unlockKeepLevel,
     durationMs: tuning.expeditions.snowdrift.durationMs,
+    // ROUND 2H: `poultice` added, same reasoning as Bramblewick's.
     lootTable: [
       { itemId: "frostberry", weight: 30 },
       { itemId: "fiber", weight: 25 },
       { itemId: "cocoabun", weight: 20 },
       { itemId: "wood", weight: 15 },
       { itemId: "stew", weight: 10 },
+      { itemId: "poultice", weight: 4 },
     ],
     lootRolls: tuning.expeditions.snowdrift.lootRolls,
     eggChance: tuning.expeditions.snowdrift.eggChance,
     eggSpecies: ["snowpip", "cloudpip"],
     flavor:
       "Above the treeline everything is quiet, faintly ridiculous, and slightly frozen.",
+    // Snowdrift can inflict Chillshake.
+    riskCopy: RISKY_TRAIL_COPY,
   },
   shore: {
     id: "shore",
@@ -214,6 +248,7 @@ export const expeditions: Readonly<Record<ExpeditionId, ExpeditionDef>> = {
     eggChance: tuning.expeditions.shore.eggChance,
     eggSpecies: ["tidepip", "cloudpip"],
     flavor: "Salt air, glittering tide pools, and treasures the sea forgot to keep.",
+    riskCopy: SAFE_TRAIL_COPY,
   },
   /**
    * ROUND 2B — the level-3 DEEP trip, and the top of the ladder. 90
@@ -228,6 +263,9 @@ export const expeditions: Readonly<Record<ExpeditionId, ExpeditionDef>> = {
     name: "Lanterngrotto",
     unlockKeepLevel: tuning.expeditions.lanterngrotto.unlockKeepLevel,
     durationMs: tuning.expeditions.lanterngrotto.durationMs,
+    // ROUND 2H: `poultice` added, same reasoning as the other two deep
+    // trails. Verified against `expeditions.test.ts`'s Feastpot cadence
+    // pin (still lands inside its 3–4-trip band after the dilution).
     lootTable: [
       { itemId: "shell", weight: 25 },
       { itemId: "driftwood", weight: 20 },
@@ -235,6 +273,7 @@ export const expeditions: Readonly<Record<ExpeditionId, ExpeditionDef>> = {
       { itemId: "emberloaf", weight: 15 },
       { itemId: "wood", weight: 12 },
       { itemId: "feastpot", weight: 2 },
+      { itemId: "poultice", weight: 4 },
     ],
     lootRolls: tuning.expeditions.lanterngrotto.lootRolls,
     eggChance: tuning.expeditions.lanterngrotto.eggChance,
@@ -242,5 +281,7 @@ export const expeditions: Readonly<Record<ExpeditionId, ExpeditionDef>> = {
     eggSpecies: ["emberpip", "lanternpip"],
     flavor:
       "A sea cave that glows on purpose. The rocks are warm. Nobody knows why. Nobody's complaining.",
+    // Lanterngrotto can inflict Lanternfever — the riskiest trail (10%).
+    riskCopy: RISKY_TRAIL_COPY,
   },
 };

@@ -1,0 +1,1085 @@
+/**
+ * ROUND 2H — Pip lifecycle, lineage & risk (spec §16 v1.5, docs/lifecycle-
+ * bible.md). Shared stylesheet for this round's four new UI modules
+ * (pipLevel.ts, ailment.ts, memorial.ts, breeding.ts) — same design
+ * vocabulary as ui.css/sanctuary.css/dailies.css (never edited to get it):
+ * warm cream panels, sage borders, one soft green accent, never a hard red.
+ *
+ * Z-INDEX LADDER (src/ui/layers.test.ts is the source of truth — this is
+ * the human-readable map of what's here):
+ *   5  .pk-ailment-chip           — float, peer of the sound toggle/Nook btn
+ *   23 .pk-growth-wrap--open      — the Growth sheet
+ *   24 .pk-ailment-wrap--open     — the ailment card
+ *   25 .pk-lineage-wrap--open     — "Someone to find"
+ *   26 .pk-breed-wrap--open       — peer of the Long Meadow's retire confirm
+ *   27 .pk-ailment-risk-wrap--open — the risk confirm (reachable from a
+ *      picker this round does not own, so it must clear everything above)
+ *   28 .pk-retireready-wrap--open — the retirement-ready card
+ *   48 .pk-loss--open             — the loss moment (bible §9.5's own pin:
+ *      above the milestone ribbon, below the recovery modal — nothing but
+ *      a corrupt save may ever cover it)
+ */
+
+/* ---------- shared panel/backdrop vocabulary ---------- */
+
+.pk-growth-wrap,
+.pk-ailment-wrap,
+.pk-ailment-risk-wrap,
+.pk-retireready-wrap,
+.pk-lineage-wrap,
+.pk-breed-wrap {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.pk-growth-wrap--open,
+.pk-ailment-wrap--open,
+.pk-lineage-wrap--open,
+.pk-breed-wrap--open,
+.pk-ailment-risk-wrap--open,
+.pk-retireready-wrap--open {
+  visibility: visible;
+}
+
+.pk-growth-wrap--open {
+  z-index: 23;
+}
+.pk-ailment-wrap--open {
+  z-index: 24;
+}
+.pk-lineage-wrap--open {
+  z-index: 25;
+}
+.pk-breed-wrap--open {
+  z-index: 26;
+}
+.pk-ailment-risk-wrap--open {
+  z-index: 27;
+}
+.pk-retireready-wrap--open {
+  z-index: 28;
+}
+
+.pk-growth-backdrop,
+.pk-ailment-backdrop,
+.pk-ailment-risk-backdrop,
+.pk-retireready-backdrop,
+.pk-lineage-backdrop,
+.pk-breed-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(61, 74, 61, 0.32);
+  opacity: 0;
+  transition: opacity 220ms ease;
+}
+
+.pk-growth-wrap--open .pk-growth-backdrop,
+.pk-ailment-wrap--open .pk-ailment-backdrop,
+.pk-ailment-risk-wrap--open .pk-ailment-risk-backdrop,
+.pk-retireready-wrap--open .pk-retireready-backdrop,
+.pk-lineage-wrap--open .pk-lineage-backdrop,
+.pk-breed-wrap--open .pk-breed-backdrop {
+  pointer-events: auto;
+  opacity: 1;
+}
+
+.pk-growth,
+.pk-ailment,
+.pk-ailment-risk,
+.pk-retireready,
+.pk-lineage,
+.pk-breed {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -46%) scale(0.94);
+  box-sizing: border-box;
+  max-width: 100%;
+  background: #fffdf6;
+  border: 1.5px solid rgba(95, 138, 94, 0.25);
+  border-radius: 22px;
+  box-shadow: 0 14px 44px rgba(61, 74, 61, 0.3);
+  padding: 20px 18px calc(env(safe-area-inset-bottom, 0px) + 18px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  opacity: 0;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, sans-serif;
+  color: #3d4a3d;
+  transition:
+    opacity 200ms ease,
+    transform 260ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.pk-growth-wrap--open .pk-growth,
+.pk-ailment-wrap--open .pk-ailment,
+.pk-ailment-risk-wrap--open .pk-ailment-risk,
+.pk-retireready-wrap--open .pk-retireready,
+.pk-lineage-wrap--open .pk-lineage,
+.pk-breed-wrap--open .pk-breed {
+  pointer-events: auto;
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+
+.pk-growth,
+.pk-ailment,
+.pk-ailment-risk,
+.pk-retireready,
+.pk-breed {
+  width: min(360px, 90vw);
+  max-height: 86vh;
+  overflow-y: auto;
+  text-align: center;
+  align-items: center;
+}
+
+.pk-lineage {
+  width: min(440px, 94vw);
+  max-height: min(86vh, 720px);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 400px) {
+  .pk-growth,
+  .pk-ailment,
+  .pk-ailment-risk,
+  .pk-retireready,
+  .pk-breed {
+    width: 96vw;
+  }
+  .pk-lineage {
+    width: 96vw;
+  }
+}
+
+/* Close buttons — one shape, four modules. */
+.pk-growth-close,
+.pk-ailment-close,
+.pk-lineage-close,
+.pk-breed-close {
+  align-self: flex-end;
+  appearance: none;
+  border: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: rgba(95, 138, 94, 0.12);
+  color: #3d4a3d;
+  font: inherit;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: transform 90ms ease;
+}
+.pk-growth-close:active,
+.pk-ailment-close:active,
+.pk-lineage-close:active,
+.pk-breed-close:active {
+  transform: scale(0.9);
+}
+
+/* ---------- pipLevel.ts — the Growth sheet ---------- */
+
+.pk-growth-name {
+  font-size: 16.5px;
+  font-weight: 800;
+}
+
+.pk-growth-level {
+  font-size: 13px;
+  font-weight: 700;
+  color: #5f8a5e;
+}
+
+.pk-growth-bar {
+  width: 100%;
+  height: 10px;
+  border-radius: 6px;
+  background: rgba(95, 138, 94, 0.14);
+  overflow: hidden;
+}
+
+.pk-growth-bar-fill {
+  height: 100%;
+  border-radius: 6px;
+  background: linear-gradient(90deg, #7cc283, #5f8a5e);
+  transition: width 280ms ease;
+}
+
+.pk-growth-line {
+  font-size: 13px;
+  line-height: 1.45;
+  font-style: italic;
+  opacity: 0.85;
+}
+
+.pk-growth-hint {
+  font-size: 11.5px;
+  opacity: 0.6;
+}
+
+.pk-growth-expand {
+  appearance: none;
+  border: none;
+  background: none;
+  color: #5f8a5e;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 4px;
+}
+
+.pk-growth-detail {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: left;
+  background: rgba(95, 138, 94, 0.06);
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+
+.pk-growth-detail-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11.5px;
+}
+
+.pk-growth-detail-label {
+  font-weight: 700;
+  opacity: 0.75;
+}
+
+.pk-growth-detail-value {
+  opacity: 0.85;
+  text-align: right;
+}
+
+/* ---------- ailment.ts — the chip, the card, the risk confirm ---------- */
+
+.pk-ailment-root {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.pk-ailment-chip {
+  pointer-events: none;
+  position: absolute;
+  right: 12px;
+  top: calc(var(--pk-hud-top, 96px) + 10px);
+  z-index: 5;
+  appearance: none;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px solid rgba(201, 123, 138, 0.4);
+  border-radius: 50%;
+  background: rgba(255, 253, 246, 0.92);
+  box-shadow: 0 2px 8px rgba(61, 74, 61, 0.18);
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: transform 90ms ease;
+  animation: pk-ailment-chip-breathe 2600ms ease-in-out infinite;
+}
+
+.pk-ailment-chip--visible {
+  display: flex;
+  pointer-events: auto;
+}
+
+.pk-ailment-chip:active {
+  transform: scale(0.92);
+}
+
+.pk-ailment-chip-glyph {
+  font-size: 18px;
+  color: #c97b8a;
+}
+
+@keyframes pk-ailment-chip-breathe {
+  0%,
+  100% {
+    box-shadow: 0 2px 8px rgba(61, 74, 61, 0.18);
+  }
+  50% {
+    box-shadow: 0 2px 14px rgba(201, 123, 138, 0.45);
+  }
+}
+
+.pk-ailment-ring {
+  --pk-ring-from: #f6c65b;
+  --pk-ring-to: #c97b8a;
+  --pk-ring-frac: 1;
+  width: 84px;
+  height: 84px;
+  border-radius: 50%;
+  padding: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: conic-gradient(
+    var(--pk-ring-from) calc(var(--pk-ring-frac) * 360deg),
+    rgba(95, 138, 94, 0.14) 0
+  );
+}
+
+.pk-ailment-ring::after {
+  content: none;
+}
+
+.pk-ailment-name {
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.pk-ailment-flavor {
+  font-size: 12px;
+  font-style: italic;
+  opacity: 0.75;
+  line-height: 1.4;
+}
+
+.pk-ailment-countdown {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #b1782a;
+  background: rgba(246, 183, 60, 0.16);
+  border-radius: 10px;
+  padding: 6px 10px;
+}
+
+.pk-ailment-message {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #3d6b44;
+  background: rgba(124, 194, 131, 0.18);
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+
+.pk-ailment-actions {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.pk-ailment-poultice {
+  appearance: none;
+  border: none;
+  border-radius: 14px;
+  min-height: 44px;
+  padding: 10px 12px;
+  background: #7cc283;
+  color: #fffdf6;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 800;
+  cursor: pointer;
+  touch-action: manipulation;
+  box-shadow: 0 2px 0 rgba(61, 107, 68, 0.4);
+  transition: transform 90ms ease;
+}
+
+.pk-ailment-poultice:disabled {
+  background: rgba(95, 138, 94, 0.18);
+  color: rgba(61, 74, 61, 0.55);
+  box-shadow: none;
+  cursor: default;
+}
+
+.pk-ailment-poultice:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.pk-ailment-hint {
+  font-size: 11.5px;
+  opacity: 0.65;
+  line-height: 1.4;
+}
+
+/* The free daily chance is EARNED right now — say so brightly, it is the
+   one line on this card that is good news. */
+.pk-ailment-hint--ready {
+  opacity: 1;
+  font-weight: 700;
+  color: #6c9a5f;
+}
+
+/* Where poultices come from. Shown only when the satchel has none, i.e.
+   exactly when the button above it is a dead end. */
+.pk-ailment-hint--source {
+  opacity: 0.9;
+  color: #9c6f2e;
+  background: rgba(246, 183, 60, 0.14);
+  border-radius: 10px;
+  padding: 7px 9px;
+}
+
+.pk-ailment-hint--pause {
+  opacity: 0.6;
+  font-style: italic;
+}
+
+/* SHIELD TWO — "take the long way round". A real switch, not a link:
+   44px tall, hit-target sized, state legible without colour vision (the
+   tick mark carries it, the tint only reinforces). */
+.pk-ailment-risk-careful {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 2px solid rgba(95, 138, 94, 0.3);
+  border-radius: 12px;
+  background: none;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.pk-ailment-risk-careful--on {
+  border-color: #6c9a5f;
+  background: rgba(108, 154, 95, 0.14);
+  color: #4d7346;
+}
+
+.pk-ailment-risk-careful-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 auto;
+  border: 2px solid rgba(95, 138, 94, 0.45);
+  border-radius: 7px;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.pk-ailment-risk-careful--on .pk-ailment-risk-careful-mark {
+  border-color: #6c9a5f;
+  background: #6c9a5f;
+  color: #fffdf6;
+}
+
+.pk-ailment-risk-careful-detail {
+  font-size: 11.5px;
+  line-height: 1.4;
+  opacity: 0.7;
+  padding: 0 4px;
+}
+
+.pk-ailment-risk-heading {
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.pk-ailment-risk-copy {
+  font-size: 13px;
+  line-height: 1.5;
+  opacity: 0.85;
+}
+
+.pk-ailment-risk-expand {
+  appearance: none;
+  border: none;
+  background: none;
+  color: #5f8a5e;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: underline;
+  cursor: pointer;
+  padding: 4px;
+}
+
+.pk-ailment-risk-detail {
+  font-size: 12px;
+  line-height: 1.45;
+  opacity: 0.8;
+  background: rgba(95, 138, 94, 0.06);
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+
+.pk-ailment-risk-actions {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+  margin-top: 4px;
+}
+
+.pk-ailment-risk-cancel,
+.pk-ailment-risk-send {
+  flex: 1;
+  appearance: none;
+  border: none;
+  border-radius: 14px;
+  min-height: 44px;
+  padding: 10px 12px;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 800;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: transform 90ms ease;
+}
+
+.pk-ailment-risk-cancel {
+  background: rgba(95, 138, 94, 0.12);
+  color: #3d4a3d;
+}
+
+.pk-ailment-risk-send {
+  background: #7cc283;
+  color: #fffdf6;
+  box-shadow: 0 2px 0 rgba(61, 107, 68, 0.4);
+}
+
+.pk-ailment-risk-cancel:active,
+.pk-ailment-risk-send:active {
+  transform: scale(0.96);
+}
+
+/* ---------- memorial.ts — the loss moment, retirement, lineage board ---------- */
+
+.pk-memorial-root {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.pk-loss {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  visibility: hidden;
+  z-index: 48;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* The Long Meadow's own warm dusk palette (bible §4) — never black,
+     never a red border, never a shake. */
+  background: linear-gradient(180deg, #fbe9d7 0%, #f3d3c9 55%, #e9c3c9 100%);
+}
+
+.pk-loss--open {
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.pk-loss-panel {
+  width: min(420px, 92vw);
+  box-sizing: border-box;
+  max-height: 90vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  text-align: center;
+  padding: 28px 22px calc(env(safe-area-inset-bottom, 0px) + 22px);
+  font-family:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, sans-serif;
+  color: #4a3d3d;
+}
+
+.pk-loss-name {
+  font-size: 22px;
+  font-weight: 800;
+}
+
+.pk-loss-sub {
+  font-size: 13px;
+  opacity: 0.75;
+  margin-top: -8px;
+}
+
+.pk-loss-headline {
+  font-size: 16px;
+  font-weight: 700;
+  margin-top: 6px;
+}
+
+.pk-loss-body {
+  font-size: 13.5px;
+  line-height: 1.6;
+  opacity: 0.88;
+  max-width: 340px;
+}
+
+.pk-loss-egg {
+  font-size: 12.5px;
+  font-style: italic;
+  opacity: 0.75;
+  max-width: 320px;
+}
+
+.pk-loss-btn {
+  margin-top: 10px;
+  appearance: none;
+  border: none;
+  border-radius: 16px;
+  min-height: 46px;
+  padding: 12px 26px;
+  background: rgba(74, 61, 61, 0.85);
+  color: #fffdf6;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: transform 90ms ease;
+}
+
+.pk-loss-btn:active {
+  transform: scale(0.97);
+}
+
+.pk-retireready-name {
+  font-size: 16.5px;
+  font-weight: 800;
+}
+
+.pk-retireready-sub {
+  font-size: 12px;
+  opacity: 0.75;
+}
+
+.pk-retireready-headline {
+  font-size: 14.5px;
+  font-weight: 700;
+  color: #b1782a;
+}
+
+.pk-retireready-body {
+  font-size: 13px;
+  line-height: 1.5;
+  opacity: 0.85;
+}
+
+.pk-retireready-actions {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+  margin-top: 6px;
+}
+
+.pk-retireready-cancel,
+.pk-retireready-send {
+  flex: 1;
+  appearance: none;
+  border: none;
+  border-radius: 14px;
+  min-height: 44px;
+  padding: 10px 12px;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 800;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: transform 90ms ease;
+}
+
+.pk-retireready-cancel {
+  background: rgba(95, 138, 94, 0.12);
+  color: #3d4a3d;
+}
+
+.pk-retireready-send {
+  background: #f0b878;
+  color: #5c3d1f;
+  box-shadow: 0 2px 0 rgba(180, 130, 60, 0.4);
+}
+
+.pk-retireready-cancel:active,
+.pk-retireready-send:active {
+  transform: scale(0.96);
+}
+
+.pk-lineage-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: center;
+  padding: 4px 20px 8px;
+}
+
+.pk-lineage-title {
+  font-size: 19px;
+  font-weight: 800;
+}
+
+.pk-lineage-blurb {
+  font-size: 12px;
+  line-height: 1.4;
+  opacity: 0.75;
+}
+
+.pk-lineage-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pk-lineage-empty {
+  text-align: center;
+  font-size: 13px;
+  opacity: 0.65;
+  padding: 20px 8px;
+}
+
+.pk-lineage-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(95, 138, 94, 0.06);
+  border: 1.5px solid rgba(95, 138, 94, 0.16);
+  border-radius: 16px;
+  padding: 10px 12px;
+  flex-wrap: wrap;
+}
+
+.pk-lineage-body {
+  flex: 1 1 140px;
+  min-width: 0;
+  text-align: left;
+}
+
+.pk-lineage-line {
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
+.pk-lineage-send {
+  appearance: none;
+  border: none;
+  border-radius: 12px;
+  min-height: 38px;
+  padding: 8px 14px;
+  background: #7cc283;
+  color: #fffdf6;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  touch-action: manipulation;
+  box-shadow: 0 2px 0 rgba(61, 107, 68, 0.4);
+  transition: transform 90ms ease;
+}
+
+.pk-lineage-send:disabled {
+  background: rgba(95, 138, 94, 0.18);
+  color: rgba(61, 74, 61, 0.5);
+  box-shadow: none;
+  cursor: default;
+}
+
+.pk-lineage-send:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+/* ---------- breeding.ts — the clutch sheet ---------- */
+
+.pk-breed-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  text-align: center;
+}
+
+.pk-breed-title {
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.pk-breed-blurb {
+  font-size: 12.5px;
+  opacity: 0.75;
+}
+
+.pk-breed-message {
+  font-size: 13px;
+  font-weight: 700;
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+
+.pk-breed-message--success {
+  color: #3d6b44;
+  background: rgba(124, 194, 131, 0.2);
+}
+
+.pk-breed-message--refusal {
+  color: #9c6f2e;
+  background: rgba(246, 183, 60, 0.18);
+}
+
+.pk-breed-list {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 46vh;
+  overflow-y: auto;
+}
+
+.pk-breed-empty {
+  text-align: center;
+  font-size: 12.5px;
+  opacity: 0.65;
+  padding: 16px 8px;
+}
+
+.pk-breed-row {
+  appearance: none;
+  border: 1.5px solid rgba(95, 138, 94, 0.16);
+  background: rgba(95, 138, 94, 0.05);
+  border-radius: 14px;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition:
+    transform 90ms ease,
+    opacity 120ms ease;
+}
+
+.pk-breed-row:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.pk-breed-row:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.pk-breed-row-body {
+  min-width: 0;
+}
+
+.pk-breed-row-name {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.pk-breed-row-reason {
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+.pk-breed-back {
+  align-self: flex-start;
+  appearance: none;
+  border: none;
+  background: none;
+  color: #5f8a5e;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 2px;
+}
+
+.pk-breed-chosen {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  align-self: flex-start;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.pk-breed-pair {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pk-breed-plus {
+  font-size: 18px;
+  font-weight: 800;
+  opacity: 0.5;
+}
+
+.pk-breed-heading {
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.pk-breed-preview {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  text-align: left;
+  background: rgba(95, 138, 94, 0.06);
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+
+.pk-breed-preview-row {
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
+.pk-breed-actions {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+  margin-top: 4px;
+}
+
+.pk-breed-cancel,
+.pk-breed-send {
+  flex: 1;
+  appearance: none;
+  border: none;
+  border-radius: 14px;
+  min-height: 44px;
+  padding: 10px 12px;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 800;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: transform 90ms ease;
+}
+
+.pk-breed-cancel {
+  background: rgba(95, 138, 94, 0.12);
+  color: #3d4a3d;
+}
+
+.pk-breed-send {
+  background: #7cc283;
+  color: #fffdf6;
+  box-shadow: 0 2px 0 rgba(61, 107, 68, 0.4);
+}
+
+.pk-breed-cancel:active,
+.pk-breed-send:active {
+  transform: scale(0.96);
+}
+
+/* ===========================================================================
+ * ROUND 2H INTEGRATE — the seams inside surfaces this round does not own.
+ *
+ * These four rules style elements the INTEGRATE stage added to
+ * `ui/focusView.ts` (a Pip's own page) rather than to any of the four
+ * lifecycle sheets above. They live here, not in `ui.css`, so that the whole
+ * of round 2H's look is one file: same warm cream/sage vocabulary, same
+ * amber -> dusk-rose danger ramp, and never red.
+ * ======================================================================== */
+
+/* The life row: level chip + season word + (ailing | ready) chip. */
+.pk-focus-life {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.pk-life-chip {
+  font: inherit;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  padding: 5px 9px;
+  border-radius: 999px;
+  border: 1.5px solid transparent;
+  cursor: pointer;
+  /* 2G's own lesson: a tap target under ~28px is a miss on a 375px screen. */
+  min-height: 26px;
+}
+
+.pk-life-chip--level {
+  background: #eaf3e4;
+  border-color: #b7cfa8;
+  color: #38562c;
+}
+
+.pk-life-chip--ailing {
+  background: #fdf0e2;
+  border-color: #e3b483;
+  color: #8a5626;
+}
+
+.pk-life-chip--ready {
+  background: #fbf1d8;
+  border-color: #dfc484;
+  color: #7d6320;
+}
+
+.pk-life-season {
+  font-size: 11px;
+  font-weight: 700;
+  opacity: 0.72;
+}
+
+/* "getting on" earns a touch more presence than the earlier seasons — it is
+ * the standing, unhurried notice that a life is drawing on (promise 3). */
+.pk-life-season--elder {
+  opacity: 0.95;
+  color: #8a6a2a;
+}
+
+/* Per-trail risk line in the expedition picker (promise 1, bible §7.1). */
+.pk-exp-risk {
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.pk-exp-risk--safe {
+  color: #4f7a53;
+  opacity: 0.75;
+}
+
+.pk-exp-risk--risky {
+  color: #9a6327;
+}
+
+/* The lineage thread, on the trail that took someone (promise 4). */
+.pk-exp-lineage {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #7a5a86;
+}
+
+/* The cast-strip chip's "poorly" badge (ui/topBar.ts's `statusGlyph`, round
+ * 2H). Dusk-rose, matching the ailment ring's far end — the same colour the
+ * player will meet again on the ailment card, never the alarm red the rest
+ * of the HUD reserves for an empty need. */
+.pk-chip-status--ailing {
+  background: #c9737f;
+}

@@ -37,9 +37,9 @@ import { PipActivity } from "../pips/types";
 import type { PipId, PipNeeds, PipState } from "../pips/types";
 import { evaluateSulk } from "../pips/machine";
 import type { MachineTuning } from "../pips/machine";
-import type { SanctuaryRecord, SanctuaryState } from "./types";
+import type { SanctuaryReason, SanctuaryRecord, SanctuaryState } from "./types";
 
-export type { SanctuaryRecord, SanctuaryState } from "./types";
+export type { SanctuaryReason, SanctuaryRecord, SanctuaryState } from "./types";
 
 /** A fresh Long Meadow: nobody there yet (bible §11.1 v6 backfill —
  * nothing could have been retired before this round shipped). */
@@ -122,8 +122,15 @@ export type RetireRefusalReason = "unknownPip" | "busy" | "lastPip";
 /** Why a RETRIEVE_PIP ("Ask them home") request did not retrieve.
  * `unknownResident` is structural; `notSettled` = still inside
  * `minStayMs` (bible §2.5 — NOT a countdown, just a settling-in period);
- * `full` = the roster is at cap (a friendly refusal, never a wall). */
-export type RetrieveRefusalReason = "unknownResident" | "notSettled" | "full";
+ * `full` = the roster is at cap (a friendly refusal, never a wall).
+ * `lost` (spec §16 v1.5, docs/lifecycle-bible.md §4) — this resident's
+ * `reason` is `"lost"`: a memorial, not a pause. Only `core/pips/
+ * ailment.ts`'s true-loss transition ever sets that reason, and nothing
+ * may undo it — resurrecting a lost Pip back into the active roster would
+ * break the whole tone of promise 3/4 ("only danger can truly take a
+ * Pip"). An ailing-but-still-alive Pip retired by player choice (bible
+ * §7.6) keeps `reason: "player"`/`"age"` and stays fully retrievable. */
+export type RetrieveRefusalReason = "unknownResident" | "notSettled" | "full" | "lost";
 
 /** What one RETIRE_PIP / RETRIEVE_PIP request did — parked in
  * `state.lastSanctuaryOutcome` for the UI, the same shape as every other
@@ -217,6 +224,7 @@ export function retirePip<S extends SanctuaryHostState>(
   pipId: PipId,
   at: number,
   tuning: SanctuaryTuning = contentTuning.retention.sanctuary,
+  reason: SanctuaryReason = "player",
 ): SanctuaryResult<S> {
   const blocked = retireRefusal(state, pipId, tuning);
   if (blocked !== null) {
@@ -241,6 +249,11 @@ export function retirePip<S extends SanctuaryHostState>(
     retiredAt: at,
     retiredFromKeepLevel: state.keep.level,
     visits: 0,
+    // ROUND 2H — always recorded, never inferred. `"player"` is the
+    // default so every existing caller keeps its exact meaning; the
+    // RETIRE_PIP reducer arm passes `"age"` for a Pip that had already
+    // reached the end of a full life (promise 3).
+    reason,
   };
 
   return {
@@ -281,6 +294,11 @@ export function retrievePip<S extends SanctuaryHostState>(
 
   const record = state.sanctuary.pips[pipId];
   if (record === undefined) return refuse("unknownResident");
+  // ROUND 2H — a "lost" resident is a memorial, never a pause (see
+  // `RetrieveRefusalReason`'s doc comment above). Checked before
+  // `minStayMs`/roster-cap so a lost Pip is NEVER offered "ask them home"
+  // regardless of how long ago they were lost or how much room there is.
+  if (record.reason === "lost") return refuse("lost");
   if (at - record.retiredAt < minStayMs) return refuse("notSettled");
   if (state.rosterOrder.length >= rosterCap) return refuse("full");
 

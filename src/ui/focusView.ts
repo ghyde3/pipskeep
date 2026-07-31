@@ -53,7 +53,12 @@ import type { AssignExpeditionOutcome } from "../core/expeditions";
 import { adultAt } from "../core/pips/lifecycle";
 import type { JobOutcome } from "../core/keep/jobs";
 import type { PlacementId } from "../core/keep";
-import { EXPEDITION_IDS, expeditions } from "../content/expeditions";
+import {
+  EXPEDITION_IDS,
+  SAFE_TRAIL_COPY,
+  expeditions,
+} from "../content/expeditions";
+import type { ExpeditionId } from "../content/expeditions";
 import { tuning } from "../content/tuning";
 import type { Tuning } from "../content/tuning";
 import { jobs as contentJobs } from "../content/jobs";
@@ -79,6 +84,15 @@ import {
 } from "../content/palette";
 import { retireRefusal } from "../core/sanctuary";
 import { isSulking } from "../core/pips/machine";
+// ROUND 2H (spec §16 v1.5): a Pip's own page is where its own life shows.
+// Every one of these is a PURE model helper from a 2H module — the sheets
+// and dialogs they belong to stay in their own files, reached through the
+// optional deps below. `pipStatusBadge`/`pipLevelChipLabel` are the seams
+// those modules published for exactly this.
+import { pipLevelChipLabel } from "./pipLevel";
+import { pipStatusBadge } from "./ailment";
+import { lineageHintFor } from "./memorial";
+import { pipSeason } from "../core/pips/lifecycle";
 import { peekDisplayedMood } from "./topBar";
 import { sound } from "../app/sound";
 
@@ -193,6 +207,20 @@ export interface ExpeditionRowModel {
   /** ROUND 2C (bible §7.2) — the visible egg-pity countdown for this
    * biome; null for a common-only pool (nothing rarer to chase). */
   readonly pityNote: string | null;
+  /**
+   * ROUND 2H (spec §16 v1.5 promise 1, lifecycle bible §7.1) — this trail's
+   * standing risk line, from `content/expeditions.ts`. ALWAYS present, for
+   * every trail: "Safe trail." is as much a promise as the risky line is a
+   * warning, and a player who only ever sees copy on the dangerous ones
+   * learns nothing from its absence. This is the FIRST of promise 1's two
+   * beats (the second is `ui/ailment.ts`'s confirm on the Send tap).
+   */
+  readonly riskCopy: string;
+  /** ROUND 2H (bible §5.3 item 3) — "Someone of Bramble's line is out
+   * there." Set only while a lineage egg from a lost Pip is waiting in
+   * THIS biome; null otherwise. Promise 4's thread, at the exact moment
+   * the player is choosing where to send someone. */
+  readonly lineageHint: string | null;
 }
 
 export interface FocusModel {
@@ -454,7 +482,10 @@ function buildExpeditionRowBase(
   pip: PipState,
   expeditionId: string,
   now: number,
-): Omit<ExpeditionRowModel, "masteryBadge" | "pityNote"> | null {
+): Omit<
+  ExpeditionRowModel,
+  "masteryBadge" | "pityNote" | "riskCopy" | "lineageHint"
+> | null {
   const def = expeditions[expeditionId as keyof typeof expeditions];
   if (def === undefined) return null;
 
@@ -593,6 +624,11 @@ export function buildExpeditionRow(
     ...base,
     masteryBadge: masteryBadgeFor(pip, expeditionId),
     pityNote: pityNoteFor(state, expeditionId),
+    // ROUND 2H splices on two more fields the same way, so none of the
+    // seven status branches above needed touching a second time.
+    riskCopy:
+      expeditions[expeditionId as ExpeditionId]?.riskCopy ?? SAFE_TRAIL_COPY,
+    lineageHint: lineageHintFor(state.lineageEggs, expeditionId),
   };
 }
 
@@ -656,6 +692,22 @@ export function canOfferRetire(state: GameState, pipId: string): boolean {
   return retireRefusal(state, pipId) === null;
 }
 
+/**
+ * ROUND 2H — the season word, in the game's voice rather than the core's
+ * enum. Warm and unhurried on purpose: `pipSeason` is mechanically inert
+ * (it changes no rate and blocks no action), so its only job is to let a
+ * player feel a life passing. "Getting on" is as close to a warning as
+ * this row ever gets; the actual end arrives as `ui/memorial.ts`'s
+ * retirement card, and it is peaceful (promise 3).
+ */
+const SEASON_WORD: Readonly<Record<string, string>> = {
+  pipling: "a Pipling",
+  young: "young",
+  prime: "in their prime",
+  seasoned: "seasoned",
+  elder: "getting on",
+};
+
 export interface FocusViewDeps {
   dispatch(action: GameAction): void;
   getState(): GameState;
@@ -668,6 +720,22 @@ export interface FocusViewDeps {
    * builds its own deps object — passing untouched.
    */
   openRetireConfirm?(pipId: string): void;
+  /**
+   * ROUND 2H THE SEND SEAM (spec §16 v1.5 promise 1). When wired, the Send
+   * button calls this INSTEAD of dispatching `ASSIGN_EXPEDITION` itself, so
+   * `ui/ailment.ts` can put its risk confirm in front of a dangerous trail.
+   * When omitted the view falls back to its own direct dispatch — identical
+   * behaviour to every pre-2H build, which is what keeps this file's ~40
+   * existing tests (each building its own deps object) valid untouched.
+   */
+  requestExpedition?(pipId: string, expeditionId: string): void;
+  /** Open this Pip's Growth sheet (`ui/pipLevel.ts`). Optional — no dep,
+   * no level chip. */
+  openGrowth?(pipId: string): void;
+  /** Open this Pip's ailment card (`ui/ailment.ts`). Optional. */
+  openAilment?(pipId: string): void;
+  /** Open this Pip's retirement-ready card (`ui/memorial.ts`). Optional. */
+  openRetirementReady?(pipId: string): void;
 }
 
 export interface FocusView {
@@ -868,6 +936,70 @@ export function createFocusView(deps: FocusViewDeps): FocusView {
     head.append(name, kind);
     if (titles !== null) head.appendChild(titles);
     head.append(blurb, greetingEl, moodRow);
+
+    // --- ROUND 2H: this Pip's own life (spec §16 v1.5) ---
+    // One row of small taps, each opening the sheet that owns that subject.
+    // Every chip here is drawn ONLY when its dep was wired AND the Pip
+    // actually has that state, so a level-1, healthy, young Pip sees just
+    // its level chip and its season word — never a row of empty slots.
+    const lifeRow = document.createElement("div");
+    lifeRow.className = "pk-focus-life";
+
+    const levelLabel = pipLevelChipLabel(pip);
+    const openGrowth = deps.openGrowth;
+    if (levelLabel !== null && openGrowth !== undefined) {
+      const lv = document.createElement("button");
+      lv.type = "button";
+      lv.className = "pk-life-chip pk-life-chip--level";
+      lv.textContent = levelLabel;
+      lv.title = `${pip.name}'s own growth`;
+      lv.setAttribute("aria-label", `${pip.name} is ${levelLabel} — see how they've grown`);
+      lv.addEventListener("click", () => {
+        sound("ui.tap");
+        openGrowth(pip.id);
+      });
+      lifeRow.appendChild(lv);
+    }
+
+    // The season word (pipling/young/prime/seasoned/elder). Derived, never
+    // stored, mechanically inert — it is the ONLY place a player can watch
+    // a life go by before the retirement card arrives, which is the whole
+    // point of showing it (promise 3: old age should be legible long
+    // before it is imminent, so it never lands as a shock).
+    const season = pipSeason(pip, tuning);
+    const seasonEl = document.createElement("span");
+    seasonEl.className = `pk-life-season pk-life-season--${season}`;
+    seasonEl.textContent = SEASON_WORD[season] ?? season;
+    lifeRow.appendChild(seasonEl);
+
+    const badge = pipStatusBadge(pip);
+    const openAilment = deps.openAilment;
+    const openReady = deps.openRetirementReady;
+    if (badge.kind === "ailing" && openAilment !== undefined) {
+      const ail = document.createElement("button");
+      ail.type = "button";
+      ail.className = "pk-life-chip pk-life-chip--ailing";
+      ail.textContent = badge.label;
+      ail.setAttribute("aria-label", `${pip.name}: ${badge.label} — tend to them`);
+      ail.addEventListener("click", () => {
+        sound("ui.tap");
+        openAilment(pip.id);
+      });
+      lifeRow.appendChild(ail);
+    } else if (badge.kind === "ready" && openReady !== undefined) {
+      const ready = document.createElement("button");
+      ready.type = "button";
+      ready.className = "pk-life-chip pk-life-chip--ready";
+      ready.textContent = badge.label;
+      ready.setAttribute("aria-label", `${pip.name}: ${badge.label}`);
+      ready.addEventListener("click", () => {
+        sound("ui.tap");
+        openReady(pip.id);
+      });
+      lifeRow.appendChild(ready);
+    }
+
+    if (lifeRow.childElementCount > 0) head.appendChild(lifeRow);
     applyGreeting();
 
     // In-panel refusal line (the pip says no, in its own voice).
@@ -946,6 +1078,24 @@ export function createFocusView(deps: FocusViewDeps): FocusView {
         card.appendChild(pity);
       }
 
+      // ROUND 2H (promise 1, bible §7.1): every trail states its own risk,
+      // every time, before the tap. The safe line is drawn too — see the
+      // `riskCopy` field doc for why the reassurance is load-bearing.
+      const riskEl = document.createElement("div");
+      const risky = row.riskCopy !== SAFE_TRAIL_COPY;
+      riskEl.className = `pk-exp-risk pk-exp-risk--${risky ? "risky" : "safe"}`;
+      riskEl.textContent = row.riskCopy;
+      card.appendChild(riskEl);
+
+      // ROUND 2H (promise 4, bible §5.3 item 3): the thread to pull, shown
+      // exactly where the player decides where to send someone.
+      if (row.lineageHint !== null) {
+        const lin = document.createElement("div");
+        lin.className = "pk-exp-lineage";
+        lin.textContent = row.lineageHint;
+        card.appendChild(lin);
+      }
+
       if (row.note !== null) {
         const note = document.createElement("div");
         note.className = "pk-exp-note";
@@ -979,12 +1129,22 @@ export function createFocusView(deps: FocusViewDeps): FocusView {
         send.textContent = "Send";
         send.addEventListener("click", () => {
           sound("ui.tap");
-          deps.dispatch({
-            type: "ASSIGN_EXPEDITION",
-            pipId: model.pipId,
-            expeditionId: row.id,
-            at: deps.clock.now(),
-          });
+          // ROUND 2H (promise 1): route through the send seam when wired, so
+          // a risky trail gets its confirm BEFORE anyone leaves. The fallback
+          // is the pre-2H dispatch, byte-for-byte, and `requestExpedition`
+          // itself degrades to exactly this for a safe trail — so a send is
+          // the same one action either way, from the same `at`.
+          const request = deps.requestExpedition;
+          if (request !== undefined) {
+            request(model.pipId, row.id);
+          } else {
+            deps.dispatch({
+              type: "ASSIGN_EXPEDITION",
+              pipId: model.pipId,
+              expeditionId: row.id,
+              at: deps.clock.now(),
+            });
+          }
         });
         card.appendChild(send);
       }

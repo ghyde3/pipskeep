@@ -86,6 +86,7 @@ export function peekDisplayedMood(state: GameState, pip: PipState): Mood {
 /** Which CSS modifier a status badge wears — decoupled from `pip.activity`
  * so "sulking" can apply no matter what the underlying activity is. */
 export type StatusKind =
+  | "ailing"
   | "onExpedition"
   | "returning"
   | "resting"
@@ -114,6 +115,24 @@ export interface StatusGlyph {
  * the one place that check belongs, ahead of the switch.
  */
 export function statusGlyph(pip: PipState): StatusGlyph | null {
+  // AILING FIRST, ahead of even sulking — ROUND 2H (spec §16 v1.5 promise 1:
+  // "loss is never a surprise"). An ailment is the ONE Pip state with a
+  // countdown attached, so on a strip that answers "does anything need me"
+  // it outranks every other status by definition. Same reasoning as the
+  // sulking-first rule below, one notch more urgent: a Pip can also be
+  // sulking, napping or off on a trail WHILE ailing, and any of those
+  // reported instead would hide the only status the player can lose
+  // someone by missing.
+  //
+  // `!= null` ON PURPOSE, not `!== undefined`: the field is
+  // `AilmentState | null | undefined` — a Pip who has NEVER been ill has
+  // `undefined`, and `core/pips/ailment.ts` writes an explicit `null` on a
+  // CURE. Testing only for `undefined` leaves a cured Pip wearing the
+  // "poorly" badge forever (caught in the browser, not by a test — hence
+  // the cured-Pip case pinned in topBar.test.ts).
+  if (pip.ailment != null) {
+    return { glyph: "♥", label: "poorly", kind: "ailing" };
+  }
   if (isSulking(pip)) return { glyph: "…", label: "sulking", kind: "sulking" };
   switch (pip.activity) {
     case PipActivity.OnExpedition:
@@ -194,7 +213,14 @@ export function castChipAlertLevel(pip: PipState): CastAlertLevel {
     const v = pip.needs[id];
     if (v < min) min = v;
   }
-  if (min < DANGER_BELOW || isSulking(pip)) return "urgent";
+  // ROUND 2H: an ailing Pip always reads urgent, whatever its needs say —
+  // it is the only state in the game with a countdown on it, and a Pip who
+  // has just been fed to full can still be poorly. Same shape as the
+  // sulking clause it sits beside, and the same reason. `!= null` for the
+  // cured-Pip reason spelled out in `statusGlyph`.
+  if (min < DANGER_BELOW || isSulking(pip) || pip.ailment != null) {
+    return "urgent";
+  }
   if (min < WARN_BELOW) return "care";
   return null;
 }

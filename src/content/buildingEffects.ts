@@ -50,4 +50,25 @@ export type BuildingEffect =
   /** Multiplies every Keep XP grant. `fraction` must be > 0. */
   | { readonly kind: "xpBonus"; readonly fraction: number };
 
+/**
+ * ⚠️ ROUND 2H NOTE (docs/lifecycle-bible.md §2.3/§3.5): the bible specifies
+ * two more effect kinds — `remedy` (ailment contract reduction + cure
+ * bonus, for the Poultice Shelf/Wash Basin) and `longevity` (lifespan
+ * bonus, for the Nest Warmer/Sun Bunks/Larder). `core/pips/ailment.ts`'s
+ * `rollContraction` and `core/pips/lifecycle.ts`'s `lifespanMs` already
+ * carry the exact parameters those two channels would feed
+ * (`buildingContractReduction`, `buildingLongevity`) — both documented as
+ * "not wired to any caller this round".
+ *
+ * DELIBERATELY NOT ADDED HERE. `ui/icons.ts`'s `BADGE_FOR_EFFECT_KIND` is
+ * an EXHAUSTIVE `Record<BuildingEffect["kind"], BadgeId>` — widening this
+ * union without a matching case there is a compile break, and `ui/` is out
+ * of this round's content-agent scope. Extending `BuildingEffect` is
+ * therefore a coordinated content+UI change, not a content-only one; it
+ * belongs with whoever next wires `core/keep/effects.ts`'s `foldEffect`
+ * for these two kinds (a `ui/icons.ts` badge-map edit is a one-line part
+ * of that same patch, not a separate task). The Poultice Shelf ships this
+ * round as a real, buildable, reachability-safe placeable with no
+ * `effects` entry — its shelf is real, its wiring is the next round's.
+ */
 export type BuildingEffectKind = BuildingEffect["kind"];

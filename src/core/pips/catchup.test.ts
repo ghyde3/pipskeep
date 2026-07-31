@@ -189,6 +189,93 @@ describe("the 12h rate cap (spec §4.5 rule 3, gate test a)", () => {
   });
 });
 
+describe("ROUND 2H — lifeMs ages by RATE, not by TIMER (spec §16 v1.5, docs/lifecycle-bible.md §2.2, promise 2/5)", () => {
+  it("a 7-day absence ages a Pip's lifeMs by EXACTLY the rate cap, bit-exact vs applyNeedsDelta(cap)", () => {
+    const clock = new FakeClock(SAVED_AT);
+    clock.advance(7 * 24 * HOUR_MS);
+    const pip = makePip({ lifeMs: 0 });
+    const reference = applyNeedsDelta(pip, CAP_MS / HOUR_MS, neutralTuning);
+
+    const { state } = runCatchup(makeState(pip), SAVED_AT, clock.now(), neutralTuning);
+    const after = onlyPip(state);
+
+    expect(after.lifeMs).toBe(CAP_MS);
+    expect(after.lifeMs).toBe(reference.lifeMs);
+    // ageMs (a DIFFERENT clock, bible §2.1) keeps accruing across the
+    // ENTIRE window — the two clocks must never be confused with each
+    // other, even though they start at the same value here.
+    expect(after.ageMs).toBe(7 * 24 * HOUR_MS);
+    expect(after.lifeMs).not.toBe(after.ageMs);
+  });
+
+  it("using the REAL 16h offline rate cap: a 3-week (21-day) absence ages a Pip by exactly 16 hours", () => {
+    const clock = new FakeClock(SAVED_AT);
+    clock.advance(21 * 24 * HOUR_MS);
+    const pip = makePip({ lifeMs: 0, personalityId: "curious" });
+
+    const { state, summary } = runCatchup(makeState(pip), SAVED_AT, clock.now(), tuning);
+    const after = onlyPip(state);
+
+    expect(summary.ratedMs).toBe(tuning.offlineRateCapMs);
+    expect(after.lifeMs).toBe(tuning.offlineRateCapMs);
+    expect(after.lifeMs).toBeLessThan(21 * 24 * HOUR_MS);
+  });
+
+  it("a 30-day absence leaves the SAME lifeMs as a 16-hour absence — the cap, made observable for ageing", () => {
+    const oneDay = onlyPip(
+      runCatchup(
+        makeState(makePip({ lifeMs: 0, personalityId: "curious" })),
+        SAVED_AT,
+        SAVED_AT + tuning.offlineRateCapMs,
+        tuning,
+      ).state,
+    );
+    const month = onlyPip(
+      runCatchup(
+        makeState(makePip({ lifeMs: 0, personalityId: "curious" })),
+        SAVED_AT,
+        SAVED_AT + 30 * 24 * HOUR_MS,
+        tuning,
+      ).state,
+    );
+    expect(month.lifeMs).toBe(oneDay.lifeMs);
+  });
+
+  it("an absence shorter than the cap ages lifeMs by exactly the elapsed time (fully rated)", () => {
+    const clock = new FakeClock(SAVED_AT);
+    clock.advance(5 * HOUR_MS);
+    const pip = makePip({ lifeMs: 1000 });
+
+    const { state } = runCatchup(makeState(pip), SAVED_AT, clock.now(), neutralTuning);
+    expect(onlyPip(state).lifeMs).toBe(1000 + 5 * HOUR_MS);
+  });
+
+  it("a live TICK (no cap in play) ages lifeMs 1:1 with elapsed hours", () => {
+    const pip = makePip({ lifeMs: 500 });
+    const after = applyNeedsDelta(pip, 3, neutralTuning); // 3 hours
+    expect(after.lifeMs).toBe(500 + 3 * HOUR_MS);
+  });
+
+  it("rate-frozen time (past the cap) contributes NOTHING to lifeMs — the whole mechanism behind the ageing cap", () => {
+    const clock = new FakeClock(SAVED_AT);
+    clock.advance(CAP_MS + 5 * HOUR_MS); // 5h past the fixture's 12h cap
+    const pip = makePip({ lifeMs: 0 });
+    const { state, summary } = runCatchup(makeState(pip), SAVED_AT, clock.now(), neutralTuning);
+    expect(summary.cappedMs).toBe(5 * HOUR_MS);
+    expect(onlyPip(state).lifeMs).toBe(CAP_MS); // NOT CAP_MS + 5h
+  });
+
+  it("a resident-style pip (never advanced through the pass) has its lifeMs left untouched — the freeze IS living outside `pips`, not a flag here", () => {
+    // This engine never sees sanctuary residents at all (they are simply
+    // absent from the pips array the reducer hands it) — this pins that
+    // a pip NOT included in the pass is, by construction, unaffected.
+    const resident = makePip({ lifeMs: 12345 });
+    const { state } = runCatchup(makeState(), SAVED_AT, SAVED_AT + 30 * 24 * HOUR_MS, tuning);
+    expect(state.pips).toHaveLength(0);
+    expect(resident.lifeMs).toBe(12345); // untouched — never entered the pass
+  });
+});
+
 describe("clamped elapsed (spec §4.5, gate test b)", () => {
   it("negative elapsed (clock rolled back) changes NOTHING", () => {
     const clock = new FakeClock(SAVED_AT);

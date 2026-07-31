@@ -576,6 +576,14 @@ export const tuning = {
      */
     "wash-basin": { wood: 3, fiber: 2 },
     "play-post": { wood: 4, fiber: 4 },
+    /**
+     * ROUND 2H (docs/lifecycle-bible.md §3.5) — the Poultice Shelf, tier
+     * 5. Wood + fiber only, same reachability rule every station follows:
+     * both are obtainable from the Meadow/Forest at level 1, so this is
+     * safely payable at the tier it actually unlocks on (5), where
+     * Lanterngrotto also opens.
+     */
+    "poultice-shelf": { wood: 7, fiber: 6 },
     larder: { wood: 8, fiber: 5 },
     "nest-warmer": { wood: 5, fiber: 4 },
     "trail-post": { wood: 6, shell: 2 },
@@ -673,6 +681,20 @@ export const tuning = {
     tideroll: { hunger: 60, energy: 5 },
     emberloaf: { hunger: 90, happiness: 10 },
     feastpot: { hunger: 100, happiness: 30, energy: 15 },
+    /**
+     * ROUND 2H — the Poultice (docs/lifecycle-bible.md §3.5), the cure
+     * item for `content/ailments.ts`'s poultice route
+     * (`tuning.lifecycle.ailments.poulticeCureChance`). Zero restore and
+     * no side effects ON PURPOSE: it is a Give Item consumable, not a
+     * meal, so it deliberately fails `foods.test.ts`'s "day away" sizing
+     * loop (which is filtered to only the ten meal-shaped foods) rather
+     * than being force-fit into that arithmetic. Lives HERE, not a
+     * separate registry, because `core/pips/care.ts`'s `giveItem` case
+     * already reads any gift's side effects from THIS table (an unknown
+     * id is a safe no-op gift) — a second consumable registry would be a
+     * second source of truth for exactly the same lookup.
+     */
+    poultice: { hunger: 0 },
   },
 
   /**

@@ -37,6 +37,9 @@ import { decorSets as defaultDecorSets } from "./decorSets";
 import { MOTIF_IDS, BADGE_IDS, type IconSpec } from "./icons";
 import type { BountyTemplate } from "./bountyTemplates";
 import { BOUNTY_TEMPLATES as defaultBountyTemplates } from "./bountyTemplates";
+import type { AilmentDef, AilmentId } from "./ailments";
+import { ailments as defaultAilments, POULTICE_ITEM_ID } from "./ailments";
+import { SAFE_TRAIL_COPY, RISKY_TRAIL_COPY } from "./expeditions";
 
 export interface ContentBundle {
   species: Readonly<Record<SpeciesId, SpeciesDef>>;
@@ -63,16 +66,30 @@ export interface ContentBundle {
   /** Daily bounty templates (retention bible §5.2) — validated for
    * Keep-tier agreement with their own co-gates (progression bible §8.5). */
   bountyTemplates: readonly BountyTemplate[];
+  /** Ailment registry (docs/lifecycle-bible.md §3), keyed by id — the
+   * ROUND 2H checks below cross-reference it against `expeditions` (every
+   * biome's danger flag) and `foods` (the cure item must be real). */
+  ailments: Readonly<Record<AilmentId, AilmentDef>>;
   /** The tuning slice the tier-gate check reads (progression bible §2.4's
-   * "unlock currency" table). Injected like every other registry so a test
-   * can hand in a deliberately-dead ladder and see it rejected. */
+   * "unlock currency" table), PLUS (round 2H) the slice the ailment checks
+   * below need. Injected like every other registry so a test can hand in
+   * a deliberately-dead ladder — or a broken lifecycle number — and see
+   * it rejected. */
   tuning: {
+    readonly offlineRateCapMs: number;
     readonly progression: {
       readonly gridGrowth: Readonly<Record<number, { cols: number; rows: number }>>;
       readonly rosterCapBonusByLevel: Readonly<Record<number, number>>;
       readonly setBonus: {
         readonly tier1LiveAtKeepLevel: number;
         readonly tier2LiveAtKeepLevel: number;
+      };
+    };
+    readonly lifecycle: {
+      readonly ailments: {
+        readonly minDurationMs: number;
+        readonly poulticeCureChance: number;
+        readonly devotedCareCureChance: number;
       };
     };
   };
@@ -94,6 +111,7 @@ export const defaultContentBundle: ContentBundle = {
   speciesLines: defaultSpeciesLines,
   rarityWeights: defaultTuning.eggs.rarityWeights,
   bountyTemplates: defaultBountyTemplates,
+  ailments: defaultAilments,
   tuning: defaultTuning,
 };
 
@@ -361,6 +379,90 @@ export function collectContentIssues(
         `expedition "${e.id}": unlockKeepLevel ${e.unlockKeepLevel} is not a defined Keep level`,
       );
     }
+  }
+
+  // --- Ailments (round 2H, docs/lifecycle-bible.md §3): the five promises
+  // are DATA relationships, not hopes, and a broken one here is exactly
+  // the "invisible until the exact moment a player hits it" failure this
+  // file exists to catch loudly at boot instead of in a playtest. ---
+  const dangerousExpeditionIds = new Set(
+    Object.values(content.ailments).map((a) => a.fromExpeditionId),
+  );
+
+  // A biome flagged dangerous with no ailment pool (or vice versa) is
+  // shield one (bible §7.1, "no hidden risk, ever") broken by construction:
+  // the risk line on the send-off card must agree with whether the biome
+  // can actually inflict anything.
+  for (const e of Object.values(content.expeditions)) {
+    const isDangerous = dangerousExpeditionIds.has(e.id);
+    if (e.riskCopy !== SAFE_TRAIL_COPY && e.riskCopy !== RISKY_TRAIL_COPY) {
+      errors.push(
+        `expedition "${e.id}": riskCopy "${e.riskCopy}" is not one of the two shipped risk-line strings (bible §7.1)`,
+      );
+    } else if (isDangerous && e.riskCopy !== RISKY_TRAIL_COPY) {
+      errors.push(
+        `expedition "${e.id}": has an ailment pool but riskCopy says "${e.riskCopy}" — a dangerous biome must say so (bible §7.1)`,
+      );
+    } else if (!isDangerous && e.riskCopy !== SAFE_TRAIL_COPY) {
+      errors.push(
+        `expedition "${e.id}": has no ailment pool but riskCopy says "${e.riskCopy}" — hidden safety is as misleading as hidden danger`,
+      );
+    }
+  }
+
+  for (const a of Object.values(content.ailments)) {
+    if (!(a.fromExpeditionId in content.expeditions)) {
+      errors.push(
+        `ailment "${a.id}": fromExpeditionId "${a.fromExpeditionId}" is not a defined expedition`,
+      );
+    }
+    if (a.contractChance <= 0 || a.contractChance > 1) {
+      errors.push(`ailment "${a.id}": contractChance ${a.contractChance} out of (0, 1]`);
+    }
+    // A countdown shorter than the offline cap breaks promise 2 BY
+    // CONSTRUCTION (bible §3.3 rule 1): a Pip who is healthy when the app
+    // closes could go critical, or worse, during a single capped absence.
+    if (a.totalMs <= content.tuning.offlineRateCapMs) {
+      errors.push(
+        `ailment "${a.id}": countdown ${a.totalMs}ms does not exceed offlineRateCapMs ${content.tuning.offlineRateCapMs}ms — a healthy Pip could turn critical during one absence, breaking promise 2 (bible §3.3 rule 1)`,
+      );
+    }
+    if (a.totalMs < content.tuning.lifecycle.ailments.minDurationMs) {
+      errors.push(
+        `ailment "${a.id}": countdown ${a.totalMs}ms is shorter than lifecycle.ailments.minDurationMs (${content.tuning.lifecycle.ailments.minDurationMs}ms)`,
+      );
+    }
+    if (a.flavor.trim().length === 0) {
+      errors.push(`ailment "${a.id}": missing flavor text`);
+    }
+  }
+
+  // A cure item that does not exist: the poultice route's item id must
+  // resolve to something `core/pips/care.ts`'s `giveItem` can actually
+  // hand out — the same `foods` oracle every other item reference uses.
+  if (!(POULTICE_ITEM_ID in content.foods)) {
+    errors.push(
+      `ailments: cure item "${POULTICE_ITEM_ID}" (POULTICE_ITEM_ID) does not exist in the food/item registry`,
+    );
+  }
+
+  // An ailment with no cure: the shared cure system (poultice + devoted
+  // care) must have at least one route with real odds, or every ailment
+  // in the game is unwinnable by construction — promise 1's "a real,
+  // actionable chance to save them" would be false for the whole roster.
+  {
+    const cureCfg = content.tuning.lifecycle.ailments;
+    if (cureCfg.poulticeCureChance <= 0 && cureCfg.devotedCareCureChance <= 0) {
+      errors.push(
+        "ailments: no cure route exists (poulticeCureChance and devotedCareCureChance are both non-positive) — every ailment would be unwinnable",
+      );
+    }
+  }
+
+  if (content.tuning.lifecycle.ailments.minDurationMs <= content.tuning.offlineRateCapMs) {
+    errors.push(
+      `lifecycle.ailments.minDurationMs (${content.tuning.lifecycle.ailments.minDurationMs}ms) must exceed offlineRateCapMs (${content.tuning.offlineRateCapMs}ms) — promise 2's whole guarantee rests on this inequality`,
+    );
   }
 
   // --- Egg pools (round 2B, orchestrator ruling #1 — biome-themed egg

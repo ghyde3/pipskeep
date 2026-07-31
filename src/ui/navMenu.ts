@@ -68,10 +68,35 @@ export function albumFilledCount(state: GameState): number {
   return filled;
 }
 
-/** The three destinations, in a fixed order (nearest-to-thumb last is
- * handled by CSS: the popover grows upward, so this order reads top-down). */
+/**
+ * The destinations, in a fixed order (nearest-to-thumb last is handled by
+ * CSS: the popover grows upward, so this order reads top-down).
+ *
+ * ROUND 2H adds two (spec §16 v1.5): the Nursery is permanent — breeding is
+ * the succession mechanic now that Pips are finite, so it needs a standing
+ * door, not one that appears only once you happen to own two eligible Pips.
+ * "Someone to find" is CONDITIONAL and appears only while a lost Pip's egg
+ * is actually waiting somewhere: it is promise 4's thread, and a permanent
+ * empty row would read as a chore the player is failing at (bible §0.3 —
+ * a badge is only ever a positive thing to look at).
+ */
 export function buildNavRows(state: GameState): readonly NavRowModel[] {
   const residents = state.sanctuary.order.length;
+  const seeds = state.lineageEggs ?? [];
+  const lineageRows: NavRowModel[] =
+    seeds.length === 0
+      ? []
+      : [
+          {
+            id: "lineage",
+            label: "Someone to find",
+            hint:
+              seeds.length === 1
+                ? "An egg is waiting out on the trails. Go and fetch it home."
+                : `${seeds.length} eggs are waiting out on the trails.`,
+            badge: seeds.length,
+          },
+        ];
   return [
     {
       id: "album",
@@ -96,6 +121,13 @@ export function buildNavRows(state: GameState): readonly NavRowModel[] {
       hint: "Your streak, today's round, and the milestone shelf.",
       badge: dailyBadgeCount(state),
     },
+    {
+      id: "nursery",
+      label: "The Nursery",
+      hint: "Pair two Pips and start a clutch.",
+      badge: 0,
+    },
+    ...lineageRows,
   ];
 }
 
@@ -108,12 +140,44 @@ export function navBadgeTotal(state: GameState): number {
   return dailyBadgeCount(state);
 }
 
+/**
+ * ROUND 2H (spec §16 v1.5, docs/lifecycle-bible.md §7.7) — THE QUIET KEEP
+ * switch, shield six of six, and the only one that is a SETTING.
+ *
+ * It lives in the Nook rather than a settings screen the game does not
+ * have, and it is a footer control rather than a destination row: it is
+ * not a place, and a player scanning for the Album should not have to
+ * read past it. The copy is deliberately plain and unhedged — a player
+ * looking for this switch is worried, and the last thing they need is a
+ * paragraph about game design philosophy.
+ */
+export interface QuietKeepRowModel {
+  readonly on: boolean;
+  readonly label: string;
+  readonly hint: string;
+}
+
+export function quietKeepRow(state: GameState): QuietKeepRowModel {
+  const on = state.settings?.quietKeep === true;
+  return {
+    on,
+    label: "Quiet Keep",
+    hint: on
+      ? "On — Pips never fall ill here. Turn it off whenever you like."
+      : "Turn it on and Pips never fall ill. Everything else stays exactly the same.",
+  };
+}
+
 export interface NavMenuDeps {
   readonly mount: HTMLElement;
   getState(): GameState;
   /** Called with a row id when the player picks a destination. The menu
    * has already closed itself by then. */
   onPick(id: string): void;
+  /** ROUND 2H — the Quiet Keep switch. Optional so every existing
+   * construction site (and the layer tests) compiles unchanged; when
+   * omitted the switch is simply not drawn. */
+  onSetQuietKeep?(on: boolean): void;
 }
 
 export interface NavMenu {
@@ -199,6 +263,42 @@ export function createNavMenu(deps: NavMenuDeps): NavMenu {
         deps.onPick(row.id);
       });
       panel.appendChild(item);
+    }
+
+    // ROUND 2H — the Quiet Keep switch (shield six). Unlike every row
+    // above it, this does NOT close the menu: a switch you can see change
+    // is a switch you can trust, and closing the popover on toggle would
+    // leave the player wondering whether it took.
+    const setQuiet = deps.onSetQuietKeep;
+    if (setQuiet !== undefined) {
+      const quiet = quietKeepRow(state);
+      const toggle = document.createElement("button");
+      toggle.type = "button";
+      toggle.className = "pk-nav-item pk-nav-quiet";
+      toggle.classList.toggle("pk-nav-quiet--on", quiet.on);
+      toggle.setAttribute("role", "switch");
+      toggle.setAttribute("aria-checked", quiet.on ? "true" : "false");
+
+      const label = document.createElement("span");
+      label.className = "pk-nav-item-label";
+      label.textContent = quiet.label;
+      const mark = document.createElement("span");
+      mark.className = "pk-nav-quiet-mark";
+      mark.setAttribute("aria-hidden", "true");
+      mark.textContent = quiet.on ? "✓" : "";
+      label.appendChild(mark);
+
+      const hint = document.createElement("span");
+      hint.className = "pk-nav-item-hint";
+      hint.textContent = quiet.hint;
+
+      toggle.append(label, hint);
+      toggle.addEventListener("click", () => {
+        sound("ui.tap");
+        setQuiet(!quiet.on);
+        render(deps.getState());
+      });
+      panel.appendChild(toggle);
     }
   };
 

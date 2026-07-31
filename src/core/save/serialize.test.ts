@@ -259,6 +259,42 @@ function richState(seed = SEED): GameState {
     flair: {},
     keepXp: 0,
     lastLevelUp: null,
+    // ROUND 2H (docs/lifecycle-bible.md §5.1/§9.2) — exercised with real
+    // data (a seed and a resolved outcome) so the round-trip test actually
+    // covers both new fields' shapes, same as every other 2C/2F addition
+    // above.
+    lineageEggs: [
+      {
+        pipId: "pip-9",
+        name: "Mossy",
+        genome: {
+          speciesId: "mosspip",
+          palette: "fern",
+          pattern: "plain",
+          accessorySlots: 1,
+          personalityId: "curious",
+          shiny: false,
+        },
+        expeditionId: "bramblewick",
+        level: 5,
+        scars: ["brambleburr"],
+        generation: 1,
+        seededAt: SAVED_AT - 1_000,
+        misses: 1,
+      },
+    ],
+    lastLossOutcome: {
+      kind: "lost",
+      pipId: "pip-9",
+      at: SAVED_AT - 1_000,
+      ailmentId: "brambleburr",
+      fromExpeditionId: "bramblewick",
+    },
+    // ROUND 2H FIX PASS — shield six. Deep-validated (not a transient
+    // echo): the sim reads it on every expedition return and every
+    // ailment resolution, so a setting that silently failed to load would
+    // be the worst possible way for this round to break its promises.
+    settings: { quietKeep: true },
   };
 }
 
@@ -350,6 +386,147 @@ describe("fromSaveBlob round-trip (the Phase 2 gate)", () => {
     expect(restoredRng.stream("egg-rolls").next()).toBe(
       fresh.stream("egg-rolls").next(),
     );
+  });
+});
+
+describe("ROUND 2H FIX PASS — the new deep-validated fields survive the wire", () => {
+  it("an in-flight ailment keeps its free-daily-cure day stamp", () => {
+    const base = richState();
+    const pipId = base.rosterOrder[0] as string;
+    const pip = base.pips[pipId] as PipState;
+    const state: GameState = {
+      ...base,
+      pips: {
+        ...base.pips,
+        [pipId]: {
+          ...pip,
+          ailment: {
+            id: "brambleburr",
+            contractedAt: SAVED_AT - 5_000,
+            fromExpeditionId: "bramblewick",
+            remainingMs: 12 * 60 * 60 * 1000,
+            totalMs: 48 * 60 * 60 * 1000,
+            cureAttempts: 2,
+            lastCareRollDay: 19_675,
+          },
+        },
+      },
+    };
+    const restored = mustLoad(overWire(toSaveBlob(state, SAVED_AT)));
+    expect(restored.state.pips[pipId]?.ailment).toStrictEqual(state.pips[pipId]?.ailment);
+  });
+
+  // A save written before the field existed reads as `undefined`, which is
+  // ELIGIBLE — an old save can only ever gain a free chance, never lose one.
+  it("an ailment with no day stamp round-trips as absent, not as zero", () => {
+    const base = richState();
+    const pipId = base.rosterOrder[0] as string;
+    const pip = base.pips[pipId] as PipState;
+    const state: GameState = {
+      ...base,
+      pips: {
+        ...base.pips,
+        [pipId]: {
+          ...pip,
+          ailment: {
+            id: "brambleburr",
+            contractedAt: SAVED_AT - 5_000,
+            fromExpeditionId: "bramblewick",
+            remainingMs: 12 * 60 * 60 * 1000,
+            totalMs: 48 * 60 * 60 * 1000,
+            cureAttempts: 0,
+          },
+        },
+      },
+    };
+    const restored = mustLoad(overWire(toSaveBlob(state, SAVED_AT)));
+    expect(restored.state.pips[pipId]?.ailment?.lastCareRollDay).toBeUndefined();
+  });
+
+  it("a mid-flight CAREFUL trip settles as the careful trip the player chose", () => {
+    const base = richState();
+    const pipId = base.rosterOrder[0] as string;
+    const pip = base.pips[pipId] as PipState;
+    const state: GameState = {
+      ...base,
+      pips: {
+        ...base.pips,
+        [pipId]: {
+          ...pip,
+          activity: PipActivity.OnExpedition,
+          expedition: {
+            expeditionId: "bramblewick",
+            departedAt: SAVED_AT - 1_000,
+            durationMs: 60 * 60 * 1000,
+            careful: true,
+          },
+        },
+      },
+    };
+    const restored = mustLoad(overWire(toSaveBlob(state, SAVED_AT)));
+    expect(restored.state.pips[pipId]?.expedition?.careful).toBe(true);
+  });
+
+  it("an ORDINARY trip round-trips with no `careful` key at all (undefined, never false)", () => {
+    const base = richState();
+    const pipId = base.rosterOrder[0] as string;
+    const pip = base.pips[pipId] as PipState;
+    const state: GameState = {
+      ...base,
+      pips: {
+        ...base.pips,
+        [pipId]: {
+          ...pip,
+          activity: PipActivity.OnExpedition,
+          expedition: {
+            expeditionId: "meadow",
+            departedAt: SAVED_AT - 1_000,
+            durationMs: 60 * 60 * 1000,
+          },
+        },
+      },
+    };
+    const restored = mustLoad(overWire(toSaveBlob(state, SAVED_AT)));
+    expect(restored.state.pips[pipId]?.expedition?.careful).toBeUndefined();
+  });
+
+  it("the Quiet Keep setting survives (deep-validated, not a transient echo)", () => {
+    const restored = mustLoad(overWire(toSaveBlob(richState(), SAVED_AT)));
+    expect(restored.state.settings?.quietKeep).toBe(true);
+    const off = mustLoad(
+      overWire(toSaveBlob({ ...richState(), settings: { quietKeep: false } }, SAVED_AT)),
+    );
+    expect(off.state.settings?.quietKeep).toBe(false);
+  });
+
+  it("a pre-2H save with no `settings` at all loads with the field simply absent", () => {
+    const { settings: _dropped, ...withoutSettings } = richState();
+    const restored = mustLoad(overWire(toSaveBlob(withoutSettings as GameState, SAVED_AT)));
+    expect(restored.state.settings).toBeUndefined();
+  });
+
+  it("every sanctuary reason — player, age and lost — survives the wire", () => {
+    const base = richState();
+    const resident = base.pips[base.rosterOrder[0] as string] as PipState;
+    for (const reason of ["player", "age", "lost"] as const) {
+      const state: GameState = {
+        ...base,
+        sanctuary: {
+          pips: {
+            "pip-99": {
+              pip: { ...resident, id: "pip-99" },
+              retiredAt: SAVED_AT - 10_000,
+              retiredFromKeepLevel: 3,
+              visits: 1,
+              reason,
+            },
+          },
+          order: ["pip-99"],
+        },
+      };
+      const restored = mustLoad(overWire(toSaveBlob(state, SAVED_AT)));
+      expect(restored.state.sanctuary.pips["pip-99"]?.reason).toBe(reason);
+    }
   });
 });
 

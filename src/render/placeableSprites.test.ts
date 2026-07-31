@@ -50,10 +50,12 @@ describe("placeableSprites — every catalog item has real art", () => {
     expect(orphans).toEqual([]);
   });
 
-  it("the catalog is the 45 items the bible's §5 target names", () => {
-    expect(placeables.length).toBe(13);
+  it("the catalog is the bible's §5 target, plus round 2H's Poultice Shelf", () => {
+    // ROUND 2H (docs/lifecycle-bible.md §3.5) adds one station — the
+    // Poultice Shelf — on top of the 45 items round 2F's bible §5 named.
+    expect(placeables.length).toBe(14);
     expect(decorations.length).toBe(32);
-    expect(drawableItemIds().length).toBe(45);
+    expect(drawableItemIds().length).toBe(46);
   });
 });
 

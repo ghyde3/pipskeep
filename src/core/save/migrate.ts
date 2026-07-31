@@ -562,6 +562,81 @@ export const MIGRATIONS: Readonly<Record<number, MigrationStep>> = {
     }
     return out;
   },
+
+  /**
+   * v8 → v9 (round 2H — spec §16 v1.5, docs/lifecycle-bible.md §9.2): PER-PIP
+   * LEVELS + LIFESPAN — this migration's slice of the round's ONE shared
+   * schema bump.
+   *
+   * Every Pip already owned — active in `state.pips` AND resident in the
+   * Long Meadow (`state.sanctuary.pips[*].pip`) — is granted:
+   *
+   *   - `level: migrationGrantLevel` (2) with `pipXp` set to EXACTLY that
+   *     level's cumulative threshold (never a guess, never above what
+   *     the curve says level 2 costs) — "a veteran's Pips arrive with a
+   *     season already behind them", a small, provably safe thank-you
+   *     (0.01 seasoning at level 2 — no balance guard moves).
+   *   - `lifeMs: 0` / `readyToRetire: false` — a brand-new lifespan
+   *     clock for every Pip, regardless of how long (by `ageMs`) they
+   *     have already been played. The REJECTED alternative (deriving
+   *     `lifeMs` from `ageMs`, even scaled) is recorded in this file's
+   *     module doc and in serialize.ts: it would make a returning
+   *     veteran's Pips closer to retirement than a new player's, which
+   *     is exactly the punishment the brief forbids. `readyToRetire`
+   *     follows from `lifeMs: 0` and is written explicitly so a
+   *     round-trip through `serialize.ts` is byte-equal.
+   *
+   * Ailment/lineage/breeding fields (`ailment`, `scars`, `resistances`,
+   * `generation`, `parentIds`, `lastBredAt`, `clutches`,
+   * `GameState.lineageEggs`/`lastLossOutcome`/`settings`,
+   * `SanctuaryRecord.reason`, `Egg.lineageGenome`/`lineageParentIds`) are
+   * this SAME v9 bump's OTHER slices (docs/lifecycle-bible.md's ailments/
+   * lineage/breeding work) and are not this step's concern — they are
+   * all OPTIONAL fields with safe defaults (the same `undefined ≡`
+   * contract this step's own fields use), so their absence here is not a
+   * gap this step needs to fill.
+   */
+  8: (blob) => {
+    const out: Record<string, unknown> = { ...blob, schemaVersion: 9 };
+    const state = blob["state"];
+    if (isPlainRecord(state)) {
+      const grantLevel = contentTuning.lifecycle.level.migrationGrantLevel;
+      const grantXp = contentTuning.lifecycle.level.levelXp[grantLevel - 1] ?? 0;
+
+      const migratePip = (pip: unknown): unknown => {
+        if (!isPlainRecord(pip)) return pip;
+        return {
+          ...pip,
+          level: grantLevel,
+          pipXp: grantXp,
+          lifeMs: 0,
+          readyToRetire: false,
+        };
+      };
+
+      const pips = state["pips"];
+      const migratedPips = isPlainRecord(pips)
+        ? Object.fromEntries(
+            Object.entries(pips).map(([pipId, pip]) => [pipId, migratePip(pip)]),
+          )
+        : pips;
+
+      const sanctuary = state["sanctuary"];
+      let migratedSanctuary = sanctuary;
+      if (isPlainRecord(sanctuary) && isPlainRecord(sanctuary["pips"])) {
+        const residents = Object.fromEntries(
+          Object.entries(sanctuary["pips"]).map(([pipId, record]) => {
+            if (!isPlainRecord(record)) return [pipId, record];
+            return [pipId, { ...record, pip: migratePip(record["pip"]) }];
+          }),
+        );
+        migratedSanctuary = { ...sanctuary, pips: residents };
+      }
+
+      out["state"] = { ...state, pips: migratedPips, sanctuary: migratedSanctuary };
+    }
+    return out;
+  },
 };
 
 export type MigrateResult =

@@ -153,6 +153,29 @@ export const placeables: readonly PlaceableDef[] = [
     unlockKeepLevel: 2,
     icon: { motif: "post" },
   },
+  // ---- ROUND 2H: the Poultice Shelf (bible §3.5, docs/lifecycle-bible.md) ----
+  {
+    id: "poultice-shelf",
+    name: "Poultice Shelf",
+    cost: tuning.placeableCosts["poultice-shelf"],
+    footprint: { w: 1, h: 1 },
+    spriteRef: "placeable/poultice-shelf",
+    flavor:
+      "Jars of leaves, wraps and something sharp-smelling, always within reach. Everything you'd want on a bad night.",
+    // No `effects` entry: the bible's `remedy` BuildingEffect kind (ailment
+    // contract reduction + cure bonus) is a coordinated content+UI change
+    // (see `content/buildingEffects.ts`'s round 2H note — `ui/icons.ts`'s
+    // exhaustive badge map would need a matching case, and `ui/` is out of
+    // this round's content-agent scope). The shelf is real, buildable and
+    // reachability-safe today; its mechanical wiring is a follow-up.
+    //
+    // Tier 5 (bible §3.5) — lands alongside Lanterngrotto, the riskiest
+    // trail, so the answer to "what if" is on the Build sheet the same
+    // tier the question first gets sharp. Payable at level 5 with plain
+    // wood/fiber (`core/economy/reachability.test.ts`).
+    unlockKeepLevel: 5,
+    icon: { motif: "leaf" },
+  },
   {
     id: "larder",
     name: "Larder",

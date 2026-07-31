@@ -929,6 +929,40 @@ const drawLarder: DrawFn = (wrap, w, h, tileW) => {
   wrap.addChild(g);
 };
 
+// ROUND 2H (docs/lifecycle-bible.md §3.5) — the Poultice Shelf: a small
+// open shelf of wrapped bundles and jars, echoing the Larder's "the
+// pantry that keeps" shape at a fraction of the footprint (1×1, like the
+// Wash Basin it stands beside on the Build sheet).
+const drawPoulticeShelf: DrawFn = (wrap, w, h, tileW) => {
+  ground(wrap, w * 0.75);
+  const g = new Graphics();
+  const u = w * 0.5;
+  const bh = tileW * 0.9;
+  const stroke = Math.max(1.5, tileW * 0.03);
+  // A single open shelf plank on two brackets.
+  g.roundRect(-u * 0.62, -bh * 0.42, u * 1.24, u * 0.12, u * 0.04)
+    .fill(tone.woodLight)
+    .stroke({ width: stroke * 0.7, color: tone.woodDark, alpha: 0.6 });
+  g.roundRect(-u * 0.5, -bh * 0.3, u * 0.1, bh * 0.3, u * 0.03).fill(tone.woodDark);
+  g.roundRect(u * 0.4, -bh * 0.3, u * 0.1, bh * 0.3, u * 0.03).fill(tone.woodDark);
+  // A moss-green jar, stoppered in linen.
+  g.roundRect(-u * 0.42, -bh * 0.78, u * 0.24, u * 0.36, u * 0.05)
+    .fill(tone.moss)
+    .stroke({ width: stroke * 0.6, color: tone.mossDark, alpha: 0.6 });
+  g.roundRect(-u * 0.4, -bh * 0.86, u * 0.2, u * 0.1, u * 0.03).fill(tone.linen);
+  // A wrapped bundle of leaves, tied off.
+  g.roundRect(-u * 0.08, -bh * 0.74, u * 0.28, u * 0.32, u * 0.06)
+    .fill(tone.linen)
+    .stroke({ width: stroke * 0.6, color: tone.woodDark, alpha: 0.35 });
+  g.moveTo(-u * 0.08, -bh * 0.58)
+    .lineTo(u * 0.2, -bh * 0.58)
+    .stroke({ width: stroke * 0.7, color: tone.fiber });
+  // A small berry-red stoppered vial — the sharp-smelling something.
+  g.roundRect(u * 0.24, -bh * 0.68, u * 0.16, u * 0.26, u * 0.05).fill(tone.berry);
+  g.circle(u * 0.32, -bh * 0.68, u * 0.06).fill(tone.woodDark);
+  wrap.addChild(g);
+};
+
 const drawNestWarmer: DrawFn = (wrap, w, h, tileW) => {
   ground(wrap, w * 0.85);
   const g = new Graphics();
@@ -1695,6 +1729,8 @@ const RESOLVERS: Readonly<Record<string, { draw: DrawFn; flat: boolean }>> = {
   "wash-basin": { draw: drawWashBasin, flat: false },
   "play-post": { draw: drawPlayPost, flat: false },
   larder: { draw: drawLarder, flat: false },
+  // ROUND 2H (docs/lifecycle-bible.md §3.5) — the tenth station.
+  "poultice-shelf": { draw: drawPoulticeShelf, flat: false },
   "nest-warmer": { draw: drawNestWarmer, flat: false },
   "trail-post": { draw: drawTrailPost, flat: false },
   workbench: { draw: drawWorkbench, flat: false },

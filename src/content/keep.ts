@@ -95,7 +95,10 @@ export const keepLevels: readonly KeepLevelDef[] = [
     level: 5,
     cost: costFor(5),
     headline: "The Lanterngrotto",
-    unlocks: ["Lanterngrotto expedition", "+2 columns of ground"],
+    // ROUND 2H (docs/lifecycle-bible.md §3.5): the Poultice Shelf lands on
+    // the same tier as the riskiest trail, so the answer to "what if" is
+    // on the Build sheet the same tier the question first gets sharp.
+    unlocks: ["Lanterngrotto expedition", "+2 columns of ground", "the Poultice Shelf"],
   },
   {
     level: 6,

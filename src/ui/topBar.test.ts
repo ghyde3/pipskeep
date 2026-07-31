@@ -428,3 +428,84 @@ describe("createTopBar — the cast strip", () => {
     expect(root.querySelectorAll(".pk-castchip")).toHaveLength(2);
   });
 });
+
+// ---------------------------------------------------------------------------
+// ROUND 2H — the cast strip answers "does anything need me" (spec §16 v1.5).
+//
+// The strip is the ONE surface on screen at all times, so it is where promise
+// 1 ("loss is never a surprise") either holds or quietly fails: a Pip on a
+// countdown the player never sees is precisely the surprise the promise
+// forbids. These pin the ordering, not just the presence.
+// ---------------------------------------------------------------------------
+
+describe("ROUND 2H — an ailing Pip on the cast strip", () => {
+  const ailing = (overrides: Partial<PipState> = {}): PipState =>
+    makePip({
+      ailment: {
+        id: "brambleburr",
+        contractedAt: 0,
+        fromExpeditionId: "bramblewick",
+        remainingMs: 10 * 60 * 60 * 1000,
+        totalMs: 48 * 60 * 60 * 1000,
+        cureAttempts: 0,
+      },
+      ...overrides,
+    });
+
+  it("wears the poorly badge", () => {
+    expect(statusGlyph(ailing())?.kind).toBe("ailing");
+    expect(statusGlyph(ailing())?.label).toBe("poorly");
+  });
+
+  it("reports POORLY ahead of sulking, resting, gathering or a trail", () => {
+    // The N1 rule this file already enforces for sulking, one notch up: a
+    // Pip can be poorly AND doing any of these, and reporting the other
+    // thing would hide the only status with a countdown attached.
+    expect(statusGlyph(ailing({ sulking: true }))?.kind).toBe("ailing");
+    expect(
+      statusGlyph(ailing({ activity: PipActivity.Sulking }))?.kind,
+    ).toBe("ailing");
+    for (const activity of [
+      PipActivity.Resting,
+      PipActivity.AssignedJob,
+      PipActivity.OnExpedition,
+      PipActivity.Returning,
+      PipActivity.Idle,
+    ]) {
+      expect(statusGlyph(ailing({ activity }))?.kind, activity).toBe("ailing");
+    }
+  });
+
+  it("rings urgent even with every need full", () => {
+    // A Pip fed to 100 can still be poorly. If the ring keyed off needs
+    // alone, the one Pip on a clock would be the calmest chip on screen.
+    expect(castChipAlertLevel(makePip())).toBeNull();
+    expect(castChipAlertLevel(ailing())).toBe("urgent");
+  });
+
+  // THE BUG THIS ROUND ACTUALLY SHIPPED, caught in the browser and not by
+  // any test: `core/pips/ailment.ts` writes an explicit `ailment: null` on a
+  // cure (a Pip who has never been ill has `undefined` instead). A check
+  // written as `!== undefined` therefore left a CURED Pip wearing the
+  // "poorly" badge and an urgent ring forever — the player pays a poultice,
+  // watches the cure land, and the HUD keeps insisting something is wrong.
+  it("drops the badge and the ring the instant a cure lands (ailment: null, not undefined)", () => {
+    const cured = makePip({ ailment: null, scars: ["brambleburr"] });
+    expect(statusGlyph(cured)).toBeNull();
+    expect(castChipAlertLevel(cured)).toBeNull();
+    // ...and the same Pip mid-nap or mid-sulk falls back to reporting THAT,
+    // rather than staying stuck on the healed ailment.
+    expect(
+      statusGlyph(makePip({ ailment: null, activity: PipActivity.Resting }))?.kind,
+    ).toBe("resting");
+  });
+
+  it("leaves a healthy Pip's badge and ring exactly as they were", () => {
+    // The 2H clause is additive: no `ailment` field, no behaviour change.
+    expect(statusGlyph(makePip({ activity: PipActivity.Resting }))?.kind).toBe(
+      "resting",
+    );
+    expect(statusGlyph(makePip({ activity: PipActivity.Idle }))).toBeNull();
+    expect(castChipAlertLevel(makePip({ sulking: true }))).toBe("urgent");
+  });
+});

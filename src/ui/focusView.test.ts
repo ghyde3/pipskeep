@@ -26,9 +26,12 @@ import {
   personalityBlurb,
   pityNoteFor,
   canOfferRetire,
+  createFocusView,
 } from "./focusView";
 import { tripsForTier } from "../core/progression/mastery";
-import { expeditions } from "../content/expeditions";
+import { installFakeDom } from "./fakeDom";
+import type { FakeElement } from "./fakeDom";
+import { SAFE_TRAIL_COPY, expeditions } from "../content/expeditions";
 
 const needs = (overrides: Partial<PipNeeds> = {}): PipNeeds => ({
   hunger: 80,
@@ -561,5 +564,161 @@ describe("canOfferRetire — the focus view's Long Meadow door", () => {
 
   it("is false for an id that is not in the roster (defensive)", () => {
     expect(canOfferRetire(twoPipState(), "pip-nobody")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ROUND 2H — the lifecycle seams inside a Pip's own page (spec §16 v1.5).
+//
+// Every one of these guards a WIRING decision, which is the class of thing
+// this codebase has shipped dead five times: core computes it, and nothing
+// ever puts it in front of the player. A model field with no assertion that
+// it reaches a row is exactly that failure one commit early.
+// ---------------------------------------------------------------------------
+
+describe("ROUND 2H — expedition rows carry the risk line and the lineage thread", () => {
+  it("PROMISE 1: EVERY row states its risk, on every status, including the safe ones", () => {
+    // The reassurance is load-bearing. A player who only ever sees copy on
+    // the dangerous trails learns nothing from its absence on the others —
+    // "no line" and "not dangerous" are not the same message.
+    for (const expeditionId of Object.keys(expeditions)) {
+      const row = buildExpeditionRow(
+        makeState({ keep: { level: 6, placements: {} } }),
+        makePip(),
+        expeditionId,
+        0,
+      );
+      expect(row, expeditionId).not.toBeNull();
+      expect(row?.riskCopy.length, expeditionId).toBeGreaterThan(0);
+      expect(row?.riskCopy, expeditionId).toBe(
+        expeditions[expeditionId as keyof typeof expeditions].riskCopy,
+      );
+    }
+  });
+
+  it("PROMISE 1: the three quick trails read safe and the three deep trails warn", () => {
+    const riskOf = (id: string): string =>
+      buildExpeditionRow(
+        makeState({ keep: { level: 6, placements: {} } }),
+        makePip(),
+        id,
+        0,
+      )?.riskCopy ?? "";
+    for (const safe of ["meadow", "forest", "shore"]) {
+      expect(riskOf(safe), safe).toBe(SAFE_TRAIL_COPY);
+    }
+    for (const risky of ["bramblewick", "snowdrift", "lanterngrotto"]) {
+      expect(riskOf(risky), risky).not.toBe(SAFE_TRAIL_COPY);
+      expect(riskOf(risky).length, risky).toBeGreaterThan(0);
+    }
+  });
+
+  it("PROMISE 4: a lost Pip's egg shows up as a hint on THAT biome's row only", () => {
+    const state = makeState({
+      keep: { level: 6, placements: {} },
+      lineageEggs: [
+        {
+          pipId: "gone-1",
+          name: "Bramble",
+          genome: makePip().genome,
+          expeditionId: "bramblewick",
+          level: 4,
+          scars: [],
+          generation: 1,
+          seededAt: 0,
+          misses: 0,
+        },
+      ],
+    });
+    const hit = buildExpeditionRow(state, makePip(), "bramblewick", 0);
+    expect(hit?.lineageHint).toContain("Bramble");
+    // ...and nowhere else — the thread points at ONE place, which is what
+    // makes it a quest instead of ambient noise.
+    for (const other of ["meadow", "forest", "shore", "snowdrift", "lanterngrotto"]) {
+      expect(
+        buildExpeditionRow(state, makePip(), other, 0)?.lineageHint,
+        other,
+      ).toBeNull();
+    }
+  });
+
+  it("has no lineage hint anywhere in a Keep that has never lost anyone", () => {
+    for (const expeditionId of Object.keys(expeditions)) {
+      expect(
+        buildExpeditionRow(
+          makeState({ keep: { level: 6, placements: {} } }),
+          makePip(),
+          expeditionId,
+          0,
+        )?.lineageHint,
+        expeditionId,
+      ).toBeNull();
+    }
+  });
+});
+
+describe("ROUND 2H — THE SEND SEAM: the Send button routes through the risk confirm", () => {
+  // This is the assertion promise 1 lives or dies on at the UI layer. If
+  // `focusView` keeps dispatching ASSIGN_EXPEDITION itself, `ui/ailment.ts`'s
+  // confirm never gets a chance to run and a player can walk a Pip into a
+  // dangerous biome having been told nothing. The seam is optional by
+  // design (every pre-2H caller still works), which is exactly why it needs
+  // a test proving main.ts's wired path is the one that fires.
+  function sendableState(): GameState {
+    return makeState({
+      keep: { level: 6, placements: {} },
+      pip: makePip({ needs: needs() }),
+    });
+  }
+
+  function clickSend(deps: Record<string, unknown>): void {
+    const dom = installFakeDom();
+    try {
+      const view = createFocusView(
+        deps as unknown as Parameters<typeof createFocusView>[0],
+      );
+      view.sync(sendableState());
+      view.open();
+      const root = view.el as unknown as FakeElement;
+      const send = root
+        .querySelectorAll(".pk-exp-send")
+        .find((el) => el.textContent === "Send");
+      expect(send, "no Send button was rendered").toBeDefined();
+      send?.click();
+    } finally {
+      dom.uninstall();
+    }
+  }
+
+  it("calls requestExpedition — and does NOT dispatch — when the seam is wired", () => {
+    const dispatched: unknown[] = [];
+    const requested: Array<[string, string]> = [];
+    clickSend({
+      dispatch: (a: unknown) => dispatched.push(a),
+      getState: () => sendableState(),
+      clock: { now: () => 0 },
+      requestExpedition: (pipId: string, expeditionId: string) =>
+        requested.push([pipId, expeditionId]),
+    });
+    expect(requested).toHaveLength(1);
+    expect(requested[0]?.[0]).toBe("pip-1");
+    expect(
+      dispatched.some(
+        (a) => (a as { type?: string }).type === "ASSIGN_EXPEDITION",
+      ),
+      "the seam was wired but the view dispatched anyway — the confirm would be bypassed",
+    ).toBe(false);
+  });
+
+  it("falls back to its own dispatch when the seam is absent (every pre-2H caller)", () => {
+    const dispatched: Array<{ type?: string }> = [];
+    clickSend({
+      dispatch: (a: { type?: string }) => dispatched.push(a),
+      getState: () => sendableState(),
+      clock: { now: () => 0 },
+    });
+    expect(dispatched.filter((a) => a.type === "ASSIGN_EXPEDITION")).toHaveLength(
+      1,
+    );
   });
 });

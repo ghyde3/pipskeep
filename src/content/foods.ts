@@ -43,6 +43,13 @@ export const FOOD_IDS = [
   "tideroll",
   "emberloaf",
   "feastpot",
+  // ROUND 2H — the Poultice (docs/lifecycle-bible.md §3.5). NOT a meal:
+  // `hungerRestore` is 0 on purpose, so it sits outside `foods.test.ts`'s
+  // "servings to cover a day away" sizing loop (that loop is filtered to
+  // MEAL_FOOD_IDS, not this full tuple). It lives in this registry rather
+  // than a bespoke one because `core/pips/care.ts`'s `giveItem` case
+  // already looks up any gifted id here for its side effects.
+  "poultice",
 ] as const;
 export type FoodId = (typeof FOOD_IDS)[number];
 
@@ -75,6 +82,19 @@ export interface FoodDef {
   availableWindow?: { from: string; to: string };
   /** Loot-reveal ceremony tier; absent = "common" (see `FoodRevealTier`). */
   revealTier?: FoodRevealTier;
+  /**
+   * ROUND 2H — an OVERRIDE for the Satchel's generated effect line
+   * (`ui/itemsSheet.ts`'s `foodEffectLine`), for the one item whose real
+   * effect is not a stat at all.
+   *
+   * Generated-from-numbers is the right default and stays the default:
+   * it cannot go stale when tuning moves. But the Poultice restores zero
+   * Hunger and cures an ailment, so the generated line rendered it as
+   * "+0 Hunger" — the worst food in the game — while the only working
+   * cure in the round sat unrecognised in the player's own satchel. An
+   * item whose effect the generator cannot see says so here.
+   */
+  effectCopy?: string;
 }
 
 export const foods: Readonly<Record<FoodId, FoodDef>> = {
@@ -172,5 +192,23 @@ export const foods: Readonly<Record<FoodId, FoodDef>> = {
     // gets the loot-reveal showstopper treatment, not a common flip
     // (content bible §8.2.3).
     revealTier: "rare",
+  },
+  // ROUND 2H — the ailments cure item (docs/lifecycle-bible.md §3.5).
+  // `POULTICE_ITEM_ID` in `content/ailments.ts` names this id; keep the two
+  // in sync (`validate.ts` checks it, `content/ailments.test.ts` pins it).
+  // Findable on all three deep trails (weight 4, `content/expeditions.ts`)
+  // — generous on purpose, since it is the player's real, actionable
+  // answer to promise 1 ("a real, actionable chance to save them").
+  poultice: {
+    id: "poultice",
+    name: "Poultice",
+    hungerRestore: tuning.foods.poultice.hunger,
+    cost: {},
+    flavor:
+      "A warm wrap of leaves and something sharp-smelling underneath. Smells like it works.",
+    revealTier: "uncommon",
+    // The one item in the game whose effect is not a stat. Without this
+    // the Satchel advertised the round's only working cure as "+0 Hunger".
+    effectCopy: "Give it to an ailing Pip — a real chance to cure them",
   },
 };
