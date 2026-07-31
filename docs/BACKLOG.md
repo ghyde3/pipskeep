@@ -55,6 +55,12 @@ Unfenced by §16 v1.6. The Keep-upgrade registry has carried `effect: "attractio
 
 ---
 
+## Owner decisions (2026-07-31)
+
+- **Web only, for now.** No Steam/App Store wrapper — no Tauri, no Capacitor, no native build or signing pipeline. Do not add a packaging round or a runtime dependency for it. This simplifies round 2I: PWA push via the existing vite-plugin-pwa service worker is the whole notification story, and the only platform wrinkle left is iOS needing add-to-home-screen (16.4+).
+- **Music is the owner's, not an agent's.** Do not generate, source, or scaffold a soundtrack. The procedural SFX engine from round 2A stays as-is; leave the `sound(slotId)` seam alone unless asked.
+- **Art remains the biggest gap and is unassigned.** Spec §11 still describes the "Placeholder Standard": every Pip is procedurally drawn. `render/spriteResolver.ts` is the single swap point and has held up through 14 species forms, accessories and jitter — real sprite sheets should drop in there without touching anything else. This is a money-and-taste decision, not an orchestration problem.
+
 ## Standing recommendations not yet scheduled
 
 - **Day 30 is thin.** Round 2F's design pass said so plainly: day 14 has four named pulls, day 30 has Renown and little else. 2H (individual Pips that develop and are finite) is the main answer; if it lands and day 30 is still thin, that is the next design problem.
